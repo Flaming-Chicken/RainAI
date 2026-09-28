@@ -44,3 +44,22 @@ fn test_subtractive_filterbank_16_bands() {
     const { assert!(LEARNED_DRIFT[0] > 0.0) };
     const { assert!(LEARNED_DRIFT[3] < 0.0) };
 }
+
+#[test]
+fn test_procedural_parallel_buffer_generation() {
+    let mut synth = ProceduralSynthesizer::new(48000.0);
+    let state = RainState {
+        is_playing: true,
+        master_volume: 1.0,
+        ..Default::default()
+    };
+
+    let mut buffer = vec![FoaFrame::default(); 512];
+    synth.process_buffer_parallel(&state, &mut buffer, 128);
+
+    let active_frames = buffer.iter().filter(|f| f.w.abs() > 1e-4).count();
+    assert!(
+        active_frames > 450,
+        "Parallel procedural synthesis should generate non-zero audio across chunks: got {active_frames}/512"
+    );
+}
