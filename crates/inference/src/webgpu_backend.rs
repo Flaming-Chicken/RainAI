@@ -692,7 +692,9 @@ impl GpuInferenceRunner {
 
         let buffer_slice = self.foa_staging_buffer.slice(..);
         let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
+        buffer_slice.map_async(wgpu::MapMode::Read, move |v| {
+            let _ = sender.send(v);
+        });
 
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
 
@@ -786,7 +788,9 @@ impl GpuInferenceRunner {
 
         let buffer_slice = self.foa_staging_buffer.slice(..);
         let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
+        buffer_slice.map_async(wgpu::MapMode::Read, move |v| {
+            let _ = sender.send(v);
+        });
 
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
 
