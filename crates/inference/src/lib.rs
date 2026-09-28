@@ -20,6 +20,7 @@
 //! - [`model`]: Data models representing layer weights, precision formats, and model manifests.
 
 pub mod asset_manager;
+pub mod compute_router;
 pub mod engram;
 pub mod kernels;
 pub mod model;
@@ -29,6 +30,7 @@ pub mod weight_cache_manager;
 pub mod weight_loader;
 
 pub use asset_manager::*;
+pub use compute_router::*;
 pub use engram::*;
 pub use kernels::*;
 pub use model::*;

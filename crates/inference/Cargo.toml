@@ -21,6 +21,7 @@ bytemuck = { workspace = true }
 ringbuf = { workspace = true }
 candle-core = { workspace = true }
 candle-nn = { workspace = true }
+spodeian-ml-utils = { workspace = true }
 futures-intrusive = { workspace = true }
 safetensors = { workspace = true }
 
