@@ -278,11 +278,20 @@ impl SharedAudioState {
     }
 }
 
-/// Native desktop audio runner using CPAL
+/// Native desktop audio runner using CPAL with dedicated background neural inference thread
 #[cfg(not(target_arch = "wasm32"))]
 pub struct DesktopAudioEngine {
     _stream: cpal::Stream,
     pub state: SharedAudioState,
+    _shutdown: Arc<std::sync::atomic::AtomicBool>,
+    _inference_thread: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for DesktopAudioEngine {
+    fn drop(&mut self) {
+        self._shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -322,6 +331,45 @@ impl DesktopAudioEngine {
         let mut rb = AudioRingBuffer::new(12000);
 
         let err_fn = |err| tracing::error!("An error occurred on the audio stream: {err}");
+
+        let (foa_tx, foa_rx) = std::sync::mpsc::sync_channel::<crate::decoder::FoaFrame>(4096);
+        let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_state = state.clone();
+        let worker_shutdown = shutdown.clone();
+
+        let inference_handle = std::thread::Builder::new()
+            .name("rainai-neural-synthesis".into())
+            .spawn(move || {
+                let weight_cache = inference::weight_loader::WeightLoader::load_embedded_ternary().unwrap_or_default();
+                let mut runner = inference::runner::InferenceRunner::new(quality_tier, weight_cache);
+
+                while !worker_shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+                    let rain = if let Ok(guard) = worker_state.rain.read() {
+                        guard.clone()
+                    } else {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        continue;
+                    };
+
+                    if !rain.is_playing {
+                        std::thread::sleep(std::time::Duration::from_millis(15));
+                        continue;
+                    }
+
+                    let cond = rain.to_conditioning_array();
+                    let (nw, nx, ny, nz) = if rain.use_consistency_jump && runner.has_consistency_jump_head() {
+                        runner.fast_consistency_step(&cond)
+                    } else {
+                        runner.step(&cond)
+                    };
+
+                    let frame = crate::decoder::FoaFrame::new(nw, nx, ny, nz);
+                    if foa_tx.try_send(frame).is_err() {
+                        std::thread::sleep(std::time::Duration::from_micros(500));
+                    }
+                }
+            })
+            .ok();
 
         let stream = match supported_config.sample_format() {
             cpal::SampleFormat::F32 => device
@@ -432,23 +480,27 @@ impl DesktopAudioEngine {
                                     SynthesisMode::PhysicalSynth => physical_synth.process_frame(&synth_state),
                                     SynthesisMode::ProceduralFilterbank => foa_proc,
                                     SynthesisMode::NeuralAi => {
-                                        let (nw, nx, ny, nz) = if runner.use_consistency_jump && runner.has_consistency_jump_head() {
-                                            runner.fast_consistency_step(&cond)
-                                        } else {
-                                            runner.step(&cond)
-                                        };
-                                        crate::decoder::FoaFrame::new(nw, nx, ny, nz)
-                                    }
-                                    SynthesisMode::HybridAdaptive => {
-                                        if blend >= 0.999 {
-                                            foa_proc
-                                        } else {
+                                        foa_rx.try_recv().unwrap_or_else(|_| {
                                             let (nw, nx, ny, nz) = if runner.use_consistency_jump && runner.has_consistency_jump_head() {
                                                 runner.fast_consistency_step(&cond)
                                             } else {
                                                 runner.step(&cond)
                                             };
-                                            let foa_neural = crate::decoder::FoaFrame::new(nw, nx, ny, nz);
+                                            crate::decoder::FoaFrame::new(nw, nx, ny, nz)
+                                        })
+                                    }
+                                    SynthesisMode::HybridAdaptive => {
+                                        if blend >= 0.999 {
+                                            foa_proc
+                                        } else {
+                                            let foa_neural = foa_rx.try_recv().unwrap_or_else(|_| {
+                                                let (nw, nx, ny, nz) = if runner.use_consistency_jump && runner.has_consistency_jump_head() {
+                                                    runner.fast_consistency_step(&cond)
+                                                } else {
+                                                    runner.step(&cond)
+                                                };
+                                                crate::decoder::FoaFrame::new(nw, nx, ny, nz)
+                                            });
 
                                             crate::decoder::FoaFrame::new(
                                                 foa_proc.w * blend + foa_neural.w * (1.0 - blend),
@@ -549,6 +601,8 @@ impl DesktopAudioEngine {
         Ok(Self {
             _stream: stream,
             state,
+            _shutdown: shutdown,
+            _inference_thread: inference_handle,
         })
     }
 }
