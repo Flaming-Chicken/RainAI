@@ -478,4 +478,38 @@ impl ProceduralSynthesizer {
             *frame = self.process_frame(state);
         }
     }
+
+    /// Synthesizes an entire buffer of FOA frames in parallel chunks across Rayon threads.
+    /// Each chunk simulates independent acoustic droplet impulse responses and spatial mixing.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn process_buffer_parallel(&mut self, state: &RainState, output: &mut [FoaFrame], chunk_size: usize) {
+        if output.is_empty() {
+            return;
+        }
+
+        if !state.is_playing {
+            output.fill(FoaFrame::default());
+            return;
+        }
+
+        use rayon::prelude::*;
+
+        let effective_chunk = chunk_size.max(64);
+        let sample_rate = self.sample_rate;
+        let base_seed = self.rng.next_u32();
+
+        output
+            .par_chunks_mut(effective_chunk)
+            .enumerate()
+            .for_each(|(chunk_idx, chunk)| {
+                // Initialize thread-local procedural synthesizer with distinct seed
+                let thread_seed = base_seed.wrapping_add((chunk_idx as u32).wrapping_mul(7919) + 1);
+                let mut synth = ProceduralSynthesizer::new(sample_rate);
+                synth.rng = FastRng::new(thread_seed);
+
+                for frame in chunk.iter_mut() {
+                    *frame = synth.process_frame(state);
+                }
+            });
+    }
 }
