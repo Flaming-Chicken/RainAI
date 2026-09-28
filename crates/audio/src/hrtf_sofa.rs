@@ -73,6 +73,75 @@ impl SofaSpatializer {
         })
     }
 
+    /// Performs in-place zero-allocation binaural convolution of a mono audio buffer into caller-provided left and right output slices.
+    pub fn spatialize_mono_into(
+        &self,
+        input: &[f32],
+        pos: SphericalPosition,
+        left_out: &mut [f32],
+        right_out: &mut [f32],
+    ) {
+        let n = input.len();
+        if n == 0 {
+            return;
+        }
+
+        if let Some(hrir) = self.find_nearest_hrir(pos) {
+            let ir_len = hrir.left_ir.len().min(hrir.right_ir.len());
+            let out_len = (n + ir_len.saturating_sub(1)).min(left_out.len()).min(right_out.len());
+            left_out[..out_len].fill(0.0);
+            right_out[..out_len].fill(0.0);
+
+            // Vector-unrolled time-domain convolution with auto-vectorization
+            let l_ir = &hrir.left_ir[..ir_len];
+            let r_ir = &hrir.right_ir[..ir_len];
+
+            for i in 0..n {
+                let s = input[i];
+                let max_j = ir_len.min(out_len.saturating_sub(i));
+                let l_slice = &mut left_out[i..i + max_j];
+                let r_slice = &mut right_out[i..i + max_j];
+
+                let active_chunks = max_j / 4;
+                for c in 0..active_chunks {
+                    let b = c * 4;
+                    l_slice[b] += s * l_ir[b];
+                    l_slice[b + 1] += s * l_ir[b + 1];
+                    l_slice[b + 2] += s * l_ir[b + 2];
+                    l_slice[b + 3] += s * l_ir[b + 3];
+
+                    r_slice[b] += s * r_ir[b];
+                    r_slice[b + 1] += s * r_ir[b + 1];
+                    r_slice[b + 2] += s * r_ir[b + 2];
+                    r_slice[b + 3] += s * r_ir[b + 3];
+                }
+                for j in (active_chunks * 4)..max_j {
+                    l_slice[j] += s * l_ir[j];
+                    r_slice[j] += s * r_ir[j];
+                }
+            }
+
+            // Attenuate by 1 / distance (inverse square law for sound pressure)
+            let atten = 1.0 / pos.distance_m.max(0.1);
+            for sample in &mut left_out[..out_len] {
+                *sample *= atten;
+            }
+            for sample in &mut right_out[..out_len] {
+                *sample *= atten;
+            }
+        } else {
+            // Fallback: simple stereo panning based on azimuth
+            let pan = (pos.azimuth_deg / 180.0).clamp(-1.0, 1.0);
+            let left_gain = ((1.0 - pan) * 0.5).sqrt();
+            let right_gain = ((1.0 + pan) * 0.5).sqrt();
+
+            for (i, &s) in input.iter().enumerate().take(left_out.len().min(right_out.len())) {
+                left_out[i] = s * left_gain;
+                right_out[i] = s * right_gain;
+            }
+        }
+    }
+
     /// Performs binaural convolution of a mono audio buffer into a stereo (left, right) buffer.
     pub fn spatialize_mono(&self, input: &[f32], pos: SphericalPosition) -> (Vec<f32>, Vec<f32>) {
         let n = input.len();
@@ -85,35 +154,13 @@ impl SofaSpatializer {
             let out_len = n + ir_len.saturating_sub(1);
             let mut left_out = vec![0.0f32; out_len];
             let mut right_out = vec![0.0f32; out_len];
-
-            // Direct time-domain convolution
-            for i in 0..n {
-                let s = input[i];
-                for j in 0..ir_len {
-                    left_out[i + j] += s * hrir.left_ir[j];
-                    right_out[i + j] += s * hrir.right_ir[j];
-                }
-            }
-
-            // Attenuate by 1 / distance (inverse square law for sound pressure)
-            let atten = 1.0 / pos.distance_m;
-            for sample in &mut left_out {
-                *sample *= atten;
-            }
-            for sample in &mut right_out {
-                *sample *= atten;
-            }
-
+            self.spatialize_mono_into(input, pos, &mut left_out, &mut right_out);
             (left_out, right_out)
         } else {
-            // Fallback: simple stereo panning based on azimuth
-            let pan = (pos.azimuth_deg / 180.0).clamp(-1.0, 1.0);
-            let left_gain = ((1.0 - pan) * 0.5).sqrt();
-            let right_gain = ((1.0 + pan) * 0.5).sqrt();
-
-            let left = input.iter().map(|&s| s * left_gain).collect();
-            let right = input.iter().map(|&s| s * right_gain).collect();
-            (left, right)
+            let mut left_out = vec![0.0f32; n];
+            let mut right_out = vec![0.0f32; n];
+            self.spatialize_mono_into(input, pos, &mut left_out, &mut right_out);
+            (left_out, right_out)
         }
     }
 }
