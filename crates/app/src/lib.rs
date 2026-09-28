@@ -339,8 +339,10 @@ impl eframe::App for TemplateApp {
         // 1. Render navbar (Top Panel)
         components::navbar::render_navbar(self, ui, &constraints);
 
-        // 2. Render bottom spectrogram waterfall panel
-        render_spectrogram_panel(ui, &self.spectrogram_history);
+        // 2. Render bottom spectrogram waterfall panel (Progressive disclosure: visible in advanced inspector mode)
+        if self.rain_view.show_advanced_inspector {
+            render_spectrogram_panel(ui, &self.spectrogram_history);
+        }
 
         // 3. Central content area
         egui::CentralPanel::default().show(ui, |ui| {

@@ -86,6 +86,7 @@ pub struct RainView {
     pub share_notice: Option<String>,
     pub enable_gpu_radar: bool,
     pub dragged_source: Option<RadarDragSource>,
+    pub show_advanced_inspector: bool,
 }
 
 impl Default for RainView {
@@ -101,6 +102,7 @@ impl Default for RainView {
             share_notice: None,
             enable_gpu_radar: false,
             dragged_source: None,
+            show_advanced_inspector: false,
         }
     }
 }
@@ -147,17 +149,43 @@ impl RainView {
                 self.share_notice = None;
             }
 
-            self.render_tabs(ui);
-            ui.separator();
+            // Subtle Ambient Atmospheric Aura & Ripple Visualizer
+            self.render_subtle_ambient_viewport(ui, rain);
             ui.add_space(8.0);
 
-            match self.current_tab {
-                RainTab::Weather => self.render_weather_tab(ui, rain),
-                RainTab::Surfaces => self.render_surfaces_tab(ui, rain),
-                RainTab::SpatialSounds => self.render_spatial_sounds_tab(ui, rain),
-                RainTab::Presets => self.render_presets_tab(ui, rain),
-                RainTab::Export => self.render_export_tab(ui, rain, audio_state),
-                RainTab::Telemetry => self.render_telemetry_tab(ui, rain, audio_state),
+            // Progressive Disclosure: Advanced Studio & DSP Inspector Drawer
+            ui.horizontal(|ui| {
+                let inspector_text = if self.show_advanced_inspector {
+                    "🔽 Hide Advanced Studio & DSP Inspector"
+                } else {
+                    "🎛 Open Advanced Studio & DSP Inspector (554 Parameters, Radar & Telemetry)"
+                };
+
+                let btn = egui::Button::new(
+                    egui::RichText::new(inspector_text)
+                        .size(13.0)
+                        .strong()
+                );
+
+                if ui.add(btn).clicked() {
+                    self.show_advanced_inspector = !self.show_advanced_inspector;
+                }
+            });
+
+            if self.show_advanced_inspector {
+                ui.add_space(6.0);
+                self.render_tabs(ui);
+                ui.separator();
+                ui.add_space(8.0);
+
+                match self.current_tab {
+                    RainTab::Weather => self.render_weather_tab(ui, rain),
+                    RainTab::Surfaces => self.render_surfaces_tab(ui, rain),
+                    RainTab::SpatialSounds => self.render_spatial_sounds_tab(ui, rain),
+                    RainTab::Presets => self.render_presets_tab(ui, rain),
+                    RainTab::Export => self.render_export_tab(ui, rain, audio_state),
+                    RainTab::Telemetry => self.render_telemetry_tab(ui, rain, audio_state),
+                }
             }
         });
 
@@ -225,6 +253,99 @@ impl RainView {
     #[cfg(not(target_arch = "wasm32"))]
     fn sync_wasm_telemetry(&self, _rain: &RainState) {
         // No-op for Desktop/Native. Telemetry is routed directly through native audio queues.
+    }
+
+    fn render_subtle_ambient_viewport(&mut self, ui: &mut egui::Ui, rain: &mut RainState) {
+        ui.group(|ui| {
+            ui.set_min_height(140.0);
+            
+            // Atmospheric Title and Mode Indicator
+            ui.horizontal(|ui| {
+                let status_icon = if rain.is_playing { "🌧" } else { "☁" };
+                let mode_name = match rain.synthesis_mode {
+                    SynthesisMode::NeuralAi => "Neural Mamba-2 Generative Acoustic Flow",
+                    SynthesisMode::PhysicalSynth => "Fluid Dynamics Simulation (Synth-Rain)",
+                    SynthesisMode::ProceduralFilterbank => "Resonant Subtractive Filterbank",
+                    SynthesisMode::HybridAdaptive => "Autonomous Hybrid Adaptive Stream",
+                };
+                ui.label(egui::RichText::new(format!("{status_icon} Ambient Soundscape · {mode_name}")).size(15.0).strong());
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if rain.is_playing {
+                        ui.colored_label(Color32::from_rgb(100, 220, 160), "● Live Generating");
+                    } else {
+                        ui.colored_label(Color32::from_rgb(150, 150, 160), "○ Paused");
+                    }
+                });
+            });
+
+            ui.add_space(4.0);
+
+            // Subtle Ripple / Aura Canvas
+            let avail_w = ui.available_width();
+            let canvas_h = 75.0;
+            let (response, painter) = ui.allocate_painter(Vec2::new(avail_w, canvas_h), egui::Sense::hover());
+            let rect = response.rect;
+
+            // Background ambient fill
+            painter.rect_filled(rect, 4.0, Color32::from_rgb(12, 16, 22));
+
+            let center = rect.center();
+            let t = rain.drift_time;
+            let intensity = rain.weather.intensity.clamp(0.05, 1.0);
+
+            // Draw calm, subtle expanding concentric acoustic ripples
+            let ripple_count = 4;
+            for i in 0..ripple_count {
+                let phase = (t * 0.4 + i as f32 * (1.0 / ripple_count as f32)) % 1.0;
+                let radius = 10.0 + phase * (rect.width() * 0.42);
+                let alpha = ((1.0 - phase) * 45.0 * intensity) as u8;
+                
+                let stroke_color = if rain.is_playing {
+                    Color32::from_rgba_premultiplied(90, 160, 240, alpha)
+                } else {
+                    Color32::from_rgba_premultiplied(70, 80, 95, alpha / 2)
+                };
+                
+                painter.circle_stroke(center, radius, Stroke::new(1.2, stroke_color));
+            }
+
+            // Subtle center node representing listener position
+            let node_color = if rain.is_playing {
+                Color32::from_rgb(110, 190, 255)
+            } else {
+                Color32::from_rgb(90, 100, 115)
+            };
+            painter.circle_filled(center, 4.5, node_color);
+
+            ui.add_space(6.0);
+
+            // Clean, minimal atmospheric selector row
+            ui.horizontal_wrapped(|ui| {
+                ui.label(egui::RichText::new("Ambiance Presets:").size(12.0));
+                
+                let builtins = WeatherPreset::builtins();
+                for preset in builtins.iter().take(4) {
+                    let is_active = rain.weather.intensity == preset.state.weather.intensity
+                        && rain.surfaces.tin == preset.state.surfaces.tin;
+                    
+                    let btn_text = if is_active {
+                        format!("✓ {}", preset.name)
+                    } else {
+                        preset.name.clone()
+                    };
+
+                    if ui.selectable_label(is_active, btn_text).clicked() {
+                        rain.weather = preset.state.weather.clone();
+                        rain.surfaces = preset.state.surfaces.clone();
+                        rain.wind = preset.state.wind.clone();
+                        rain.side_sounds = preset.state.side_sounds.clone();
+                        rain.noise_color = preset.state.noise_color;
+                        self.share_notice = Some(format!("Loaded atmosphere preset: '{}'", preset.name));
+                    }
+                }
+            });
+        });
     }
 
     fn render_header(&mut self, ui: &mut egui::Ui, rain: &mut RainState) {
