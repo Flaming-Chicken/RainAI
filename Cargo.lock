@@ -2867,6 +2867,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shared",
+ "spodeian-ml-utils",
  "thiserror 2.0.20",
  "tracing",
  "wasm-bindgen",
@@ -5012,6 +5013,16 @@ dependencies = [
 
 [[package]]
 name = "safetensors"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc0cdb7198d738a111f6df8fef42cb175412c311d0c4ac9126ff4e550ad1a0e8"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "safetensors"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "79b079b829cb27a1c3c374341345ed2e8b2c0c839034522cee576c140bd7f846"
@@ -5438,6 +5449,19 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "spodeian-ml-utils"
+version = "0.1.0"
+dependencies = [
+ "candle-core",
+ "candle-nn",
+ "safetensors 0.5.3",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tracing",
 ]
 
 [[package]]

@@ -261,4 +261,99 @@ fn test_rk4_continuous_flow_trajectory_solver() {
     );
 }
 
+#[test]
+fn test_hardware_compute_router_candle_and_wgsl() {
+    use candle_core::{DType, Device, Tensor};
+    use candle_nn::VarBuilder;
+    use inference::compute_router::{CandleFlowBackend, HardwareComputeRouter, WgslComputeBackend};
+    use spodeian_ml_utils::VelocityFlowHead;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    let device = Device::Cpu;
+    let dim = 2;
+    let num_freqs = 2;
+    let hidden_dim = 4;
+
+    // 1. Build Candle velocity flow head
+    let mut tensors = HashMap::new();
+    let time_dim = num_freqs * 2;
+    tensors.insert(
+        "flow_time_proj.weight".to_string(),
+        Tensor::zeros((hidden_dim, time_dim), DType::F32, &device).unwrap(),
+    );
+    tensors.insert(
+        "flow_time_proj.bias".to_string(),
+        Tensor::zeros(hidden_dim, DType::F32, &device).unwrap(),
+    );
+    tensors.insert(
+        "flow_hidden.weight".to_string(),
+        Tensor::zeros((hidden_dim, dim + hidden_dim), DType::F32, &device).unwrap(),
+    );
+    tensors.insert(
+        "flow_hidden.bias".to_string(),
+        Tensor::zeros(hidden_dim, DType::F32, &device).unwrap(),
+    );
+    tensors.insert(
+        "flow_out.weight".to_string(),
+        Tensor::zeros((dim, hidden_dim), DType::F32, &device).unwrap(),
+    );
+    tensors.insert(
+        "flow_out.bias".to_string(),
+        Tensor::zeros(dim, DType::F32, &device).unwrap(),
+    );
+
+    let vb = VarBuilder::from_tensors(tensors, DType::F32, &device);
+    let head = VelocityFlowHead::new(vb, dim, num_freqs, hidden_dim).unwrap();
+
+    let candle_backend = Arc::new(CandleFlowBackend::new("candle-cpu", head, device));
+    let wgsl_backend = Arc::new(WgslComputeBackend::new(dim));
+
+    // 2. Test router with Candle prioritized
+    let router = HardwareComputeRouter::new(vec![
+        candle_backend.clone(),
+        wgsl_backend.clone(),
+    ]);
+
+    let active_backend = router.select_backend().unwrap();
+    assert_eq!(active_backend.backend_name(), "candle-cpu");
+
+    let x0 = vec![1.0f32, -0.5f32];
+    let traj_candle = router.solve_trajectory(&x0, 5).unwrap();
+    assert_eq!(traj_candle.len(), dim);
+
+    // 3. Test fallback to WGSL when Candle is unavailable
+    let unavailable_candle = Arc::new(CandleFlowBackend {
+        name: "candle-cuda",
+        head: VelocityFlowHead::new(
+            VarBuilder::from_tensors(HashMap::new(), DType::F32, &Device::Cpu),
+            dim,
+            num_freqs,
+            hidden_dim,
+        ).unwrap_or_else(|_| {
+            let mut t = HashMap::new();
+            t.insert("flow_time_proj.weight".into(), Tensor::zeros((hidden_dim, time_dim), DType::F32, &Device::Cpu).unwrap());
+            t.insert("flow_time_proj.bias".into(), Tensor::zeros(hidden_dim, DType::F32, &Device::Cpu).unwrap());
+            t.insert("flow_hidden.weight".into(), Tensor::zeros((hidden_dim, dim + hidden_dim), DType::F32, &Device::Cpu).unwrap());
+            t.insert("flow_hidden.bias".into(), Tensor::zeros(hidden_dim, DType::F32, &Device::Cpu).unwrap());
+            t.insert("flow_out.weight".into(), Tensor::zeros((dim, hidden_dim), DType::F32, &Device::Cpu).unwrap());
+            t.insert("flow_out.bias".into(), Tensor::zeros(dim, DType::F32, &Device::Cpu).unwrap());
+            VelocityFlowHead::new(VarBuilder::from_tensors(t, DType::F32, &Device::Cpu), dim, num_freqs, hidden_dim).unwrap()
+        }),
+        device: Device::Cpu,
+        available: false, // Simulated CUDA hardware absent
+    });
+
+    let fallback_router = HardwareComputeRouter::new(vec![
+        unavailable_candle,
+        wgsl_backend.clone(),
+    ]);
+
+    let fallback_backend = fallback_router.select_backend().unwrap();
+    assert_eq!(fallback_backend.backend_name(), "webgpu-wgsl-custom");
+
+    let traj_wgsl = fallback_router.solve_trajectory(&x0, 5).unwrap();
+    assert_eq!(traj_wgsl.len(), dim);
+}
+
 

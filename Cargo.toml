@@ -31,6 +31,7 @@ spodeian-telemetry = { path = "../spodeian-core/crates/spodeian-telemetry" }
 spodeian-export = { path = "../spodeian-core/crates/spodeian-export" }
 spodeian-web-utils = { path = "../spodeian-core/crates/spodeian-web-utils" }
 spodeian-ui = { path = "../spodeian-core/crates/spodeian-ui" }
+spodeian-ml-utils = { path = "../spodeian-core/crates/spodeian-ml-utils" }
 candle-core = "0.11"
 candle-nn = "0.11"
 criterion = "0.5"
