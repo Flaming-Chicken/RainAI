@@ -116,8 +116,10 @@ pub struct CandleRMSNorm {
 
 impl CandleRMSNorm {
     pub fn new(dim: usize, eps: f64, vs: VarBuilder) -> Result<Self> {
-        let weight = vs.get((dim,), "weight")
-            .unwrap_or_else(|_| Tensor::ones((dim,), DType::F32, vs.device()).unwrap());
+        let weight = match vs.get((dim,), "weight") {
+            Ok(t) => t,
+            Err(_) => Tensor::ones((dim,), DType::F32, vs.device())?,
+        };
         Ok(Self { weight, eps })
     }
 
@@ -160,12 +162,18 @@ pub struct CandleLearnedQuantizer {
 
 impl CandleLearnedQuantizer {
     pub fn new(dim: usize, initial_bits: f32, vs: VarBuilder) -> Result<Self> {
-        let beta = vs.get((dim,), "beta")
-            .unwrap_or_else(|_| Tensor::full(initial_bits, (dim,), vs.device()).unwrap());
-        let lambda_param = vs.get((dim,), "lambda_param")
-            .unwrap_or_else(|_| Tensor::full(0.5f32, (dim,), vs.device()).unwrap());
-        let delta_prune = vs.get((dim,), "delta_prune")
-            .unwrap_or_else(|_| Tensor::full(0.05f32, (dim,), vs.device()).unwrap());
+        let beta = match vs.get((dim,), "beta") {
+            Ok(t) => t,
+            Err(_) => Tensor::full(initial_bits, (dim,), vs.device())?,
+        };
+        let lambda_param = match vs.get((dim,), "lambda_param") {
+            Ok(t) => t,
+            Err(_) => Tensor::full(0.5f32, (dim,), vs.device())?,
+        };
+        let delta_prune = match vs.get((dim,), "delta_prune") {
+            Ok(t) => t,
+            Err(_) => Tensor::full(0.05f32, (dim,), vs.device())?,
+        };
         Ok(Self {
             beta,
             lambda_param,
@@ -232,10 +240,14 @@ pub struct CandleEngramBank {
 impl CandleEngramBank {
     pub fn new(bank_size: usize, embed_dim: usize, vs: VarBuilder) -> Result<Self> {
         let num_hash_heads = 4;
-        let bank = vs.get((bank_size, embed_dim), "bank")
-            .unwrap_or_else(|_| Tensor::randn(0.0f32, 0.02f32, (bank_size, embed_dim), vs.device()).unwrap());
-        let hash_projections = vs.get((num_hash_heads, embed_dim), "hash_projections")
-            .unwrap_or_else(|_| Tensor::randn(0.0f32, 1.0f32, (num_hash_heads, embed_dim), vs.device()).unwrap());
+        let bank = match vs.get((bank_size, embed_dim), "bank") {
+            Ok(t) => t,
+            Err(_) => Tensor::randn(0.0f32, 0.02f32, (bank_size, embed_dim), vs.device())?,
+        };
+        let hash_projections = match vs.get((num_hash_heads, embed_dim), "hash_projections") {
+            Ok(t) => t,
+            Err(_) => Tensor::randn(0.0f32, 1.0f32, (num_hash_heads, embed_dim), vs.device())?,
+        };
         let fuse_gate = linear(embed_dim * 2, embed_dim, vs.pp("fuse_gate"))?;
         Ok(Self {
             bank_size,
@@ -738,8 +750,10 @@ pub struct CandleThinkingBlock {
 impl CandleThinkingBlock {
     pub fn new(dim: usize, cond_dim: usize, vs: VarBuilder) -> Result<Self> {
         let step_embed_dim = 32;
-        let step_embed = vs.get((16, step_embed_dim), "step_embed")
-            .unwrap_or_else(|_| Tensor::randn(0.0f32, 0.02f32, (16, step_embed_dim), vs.device()).unwrap());
+        let step_embed = match vs.get((16, step_embed_dim), "step_embed") {
+            Ok(t) => t,
+            Err(_) => Tensor::randn(0.0f32, 0.02f32, (16, step_embed_dim), vs.device())?,
+        };
         let fc1 = linear(dim + cond_dim + step_embed_dim, 128, vs.pp("fc1"))?;
         let fc2 = linear(128, dim, vs.pp("fc2"))?;
         let halt_gate = linear(dim + cond_dim + step_embed_dim, 1, vs.pp("halt_gate"))?;
@@ -821,10 +835,14 @@ impl CandleMambaSSDBlock {
         let b_proj = linear(d_model, d_state, vs.pp("b_proj"))?;
         let c_proj = linear(d_model, d_state, vs.pp("c_proj"))?;
         let out_proj = linear(d_model, d_model, vs.pp("out_proj"))?;
-        let a_log = vs.get((d_model, d_state), "a_log")
-            .unwrap_or_else(|_| Tensor::zeros((d_model, d_state), DType::F32, vs.device()).unwrap());
-        let d_param = vs.get((d_model,), "d_param")
-            .unwrap_or_else(|_| Tensor::ones((d_model,), DType::F32, vs.device()).unwrap());
+        let a_log = match vs.get((d_model, d_state), "a_log") {
+            Ok(t) => t,
+            Err(_) => Tensor::zeros((d_model, d_state), DType::F32, vs.device())?,
+        };
+        let d_param = match vs.get((d_model,), "d_param") {
+            Ok(t) => t,
+            Err(_) => Tensor::ones((d_model,), DType::F32, vs.device())?,
+        };
 
         Ok(Self {
             d_model,
@@ -961,12 +979,16 @@ impl CandleInvasiveMetaController {
     pub fn new(num_experts: usize, d_state: usize, vs: VarBuilder) -> Result<Self> {
         let in_dim = num_experts + 4 + 3 + 2 + 1; // 18
         let telemetry_proj = linear(4, 32, vs.pp("telemetry_proj"))?;
-        let telem_a_log = vs.get((32, d_state), "telem_a_log")
-            .unwrap_or_else(|_| Tensor::zeros((32, d_state), DType::F32, vs.device()).unwrap());
+        let telem_a_log = match vs.get((32, d_state), "telem_a_log") {
+            Ok(t) => t,
+            Err(_) => Tensor::zeros((32, d_state), DType::F32, vs.device())?,
+        };
         let telem_b_proj = linear(32, d_state, vs.pp("telem_b_proj"))?;
         let telem_c_proj = linear(32, d_state, vs.pp("telem_c_proj"))?;
-        let telem_d = vs.get((32,), "telem_d")
-            .unwrap_or_else(|_| Tensor::ones((32,), DType::F32, vs.device()).unwrap());
+        let telem_d = match vs.get((32,), "telem_d") {
+            Ok(t) => t,
+            Err(_) => Tensor::ones((32,), DType::F32, vs.device())?,
+        };
 
         let fusion_fc1 = linear(in_dim + 32, 64, vs.pp("fusion_fc1"))?;
         let fusion_fc2 = linear(64, 64, vs.pp("fusion_fc2"))?;
