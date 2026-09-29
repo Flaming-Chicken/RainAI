@@ -280,6 +280,48 @@ impl BogackiShampine23 {
             accepted,
         }
     }
+
+    /// Integrates trajectory from $t=0$ to $t=1$ with dynamic step-size control using RK23.
+    pub fn solve_adaptive_trajectory<F>(
+        x0: &[f32],
+        initial_h: f32,
+        min_h: f32,
+        max_h: f32,
+        tol: f32,
+        max_iterations: usize,
+        mut velocity_fn: F,
+    ) -> Result<(Vec<f32>, usize), String>
+    where
+        F: FnMut(&[f32], f32) -> Vec<f32>,
+    {
+        let mut current_x = x0.to_vec();
+        let mut t = 0.0f32;
+        let mut h = initial_h.clamp(min_h, max_h);
+        let mut steps = 0;
+
+        while t < 1.0 - 1e-6 {
+            if steps >= max_iterations {
+                return Err(format!("RK23 exceeded maximum iterations ({max_iterations}) at t = {t:.4}"));
+            }
+
+            if t + h > 1.0 {
+                h = 1.0 - t;
+            }
+
+            let result = Self::step(&current_x, t, h, tol, &mut velocity_fn);
+
+            if result.accepted || h <= min_h {
+                current_x = result.x_next;
+                t += h;
+                steps += 1;
+                h = result.recommended_h.clamp(min_h, max_h);
+            } else {
+                h = result.recommended_h.clamp(min_h, max_h);
+            }
+        }
+
+        Ok((current_x, steps))
+    }
 }
 
 /// Learned Flow Step-Size Controller (Neural ODE Step Modulator).
