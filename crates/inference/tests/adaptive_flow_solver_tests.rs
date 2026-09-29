@@ -169,5 +169,120 @@ fn test_hardware_compute_router_with_adaptive_solvers() {
         FlowSolverAlgorithm::LearnedCurvature { tol: 1e-3, initial_h: 0.05 },
     );
     assert!(learned_res.is_ok());
+
+    // 5. Adaptive Tsit5
+    let tsit5_res = router.solve_trajectory_with_solver(
+        &x0,
+        FlowSolverAlgorithm::AdaptiveTsit5 { tol: 1e-3, initial_h: 0.1 },
+    );
+    assert!(tsit5_res.is_ok());
+
+    // 6. Adaptive Heun2
+    let heun2_res = router.solve_trajectory_with_solver(
+        &x0,
+        FlowSolverAlgorithm::AdaptiveHeun2 { tol: 1e-3, initial_h: 0.1 },
+    );
+    assert!(heun2_res.is_ok());
+
+    // 7. DpmSolverPP
+    let dpm_res = router.solve_trajectory_with_solver(
+        &x0,
+        FlowSolverAlgorithm::DpmSolverPP { steps: 12 },
+    );
+    assert!(dpm_res.is_ok());
 }
 
+#[test]
+fn test_tsitouras54_adaptive_trajectory_convergence() {
+    use inference::kernels::Tsitouras54;
+
+    let x0 = vec![10.0f32];
+    let initial_h = 0.05f32;
+    let min_h = 0.001f32;
+    let max_h = 0.20f32;
+    let tol = 1e-4f32;
+
+    // dx/dt = -0.5 * x => x(1.0) = 10.0 * e^(-0.5) = 6.0653066
+    let velocity = |x: &[f32], _t: f32| -> Vec<f32> {
+        vec![-0.5f32 * x[0]]
+    };
+
+    let solve_res = Tsitouras54::solve_adaptive_trajectory(
+        &x0,
+        initial_h,
+        min_h,
+        max_h,
+        tol,
+        500,
+        velocity,
+    );
+
+    assert!(solve_res.is_ok());
+    let (final_x, steps) = match solve_res {
+        Ok(v) => v,
+        Err(_) => (vec![0.0], 0),
+    };
+
+    let expected = 10.0f32 * (-0.5f32).exp();
+    assert!((final_x[0] - expected).abs() < 5e-3);
+    assert!(steps > 0);
+}
+
+#[test]
+fn test_heun_adaptive2_convergence() {
+    use inference::kernels::HeunAdaptive2;
+
+    let x0 = vec![5.0f32];
+    let initial_h = 0.05f32;
+    let min_h = 0.001f32;
+    let max_h = 0.20f32;
+    let tol = 1e-3f32;
+
+    // dx/dt = -x => x(1.0) = 5.0 * e^(-1.0) = 1.8393972
+    let velocity = |x: &[f32], _t: f32| -> Vec<f32> {
+        vec![-x[0]]
+    };
+
+    let solve_res = HeunAdaptive2::solve_adaptive_trajectory(
+        &x0,
+        initial_h,
+        min_h,
+        max_h,
+        tol,
+        500,
+        velocity,
+    );
+
+    assert!(solve_res.is_ok());
+    let (final_x, steps) = match solve_res {
+        Ok(v) => v,
+        Err(_) => (vec![0.0], 0),
+    };
+
+    let expected = 5.0f32 * (-1.0f32).exp();
+    assert!((final_x[0] - expected).abs() < 5e-3);
+    assert!(steps > 0);
+}
+
+#[test]
+fn test_dpm_solver_pp_multistep_convergence() {
+    use inference::kernels::DpmSolverPP;
+
+    let x0 = vec![4.0f32];
+    let steps = 15;
+
+    // dx/dt = -x => x(1.0) = 4.0 * e^(-1.0) = 1.4715178
+    let velocity = |x: &[f32], _t: f32| -> Vec<f32> {
+        vec![-x[0]]
+    };
+
+    let solve_res = DpmSolverPP::solve_fast_trajectory(&x0, steps, velocity);
+    assert!(solve_res.is_ok());
+    let final_x = match solve_res {
+        Ok(v) => v,
+        Err(_) => vec![0.0],
+    };
+
+    let expected = 4.0f32 * (-1.0f32).exp();
+    assert!((final_x[0] - expected).abs() < 2e-2);
+}

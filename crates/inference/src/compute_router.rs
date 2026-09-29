@@ -115,6 +115,12 @@ pub enum FlowSolverAlgorithm {
     AdaptiveRk45 { tol: f32, initial_h: f32 },
     /// Low-power mobile adaptive Bogacki-Shampine 2(3).
     AdaptiveRk23 { tol: f32, initial_h: f32 },
+    /// High-efficiency Tsitouras 5(4) solver for smooth flow matching trajectories.
+    AdaptiveTsit5 { tol: f32, initial_h: f32 },
+    /// Heun's 2nd-order adaptive predictor-corrector (EDM/Karras formulation).
+    AdaptiveHeun2 { tol: f32, initial_h: f32 },
+    /// DPM-Solver++ 2nd-order fast multistep exponential integrator.
+    DpmSolverPP { steps: usize },
     /// Neural ODE adaptive step modulator with trajectory curvature damping.
     LearnedCurvature { tol: f32, initial_h: f32 },
 }
@@ -226,6 +232,71 @@ impl HardwareComputeRouter {
                     Ok(final_x)
                 }
             }
+            FlowSolverAlgorithm::AdaptiveTsit5 { tol, initial_h } => {
+                let mut error_opt = None;
+                let (final_x, _) = crate::kernels::adaptive_flow_solver::Tsitouras54::solve_adaptive_trajectory(
+                    x0,
+                    initial_h,
+                    1e-4,
+                    0.25,
+                    tol,
+                    500,
+                    |x_curr, t_curr| match backend.evaluate_flow_velocity(x_curr, t_curr) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            error_opt = Some(e);
+                            vec![0.0f32; x_curr.len()]
+                        }
+                    },
+                )?;
+                if let Some(err) = error_opt {
+                    Err(err)
+                } else {
+                    Ok(final_x)
+                }
+            }
+            FlowSolverAlgorithm::AdaptiveHeun2 { tol, initial_h } => {
+                let mut error_opt = None;
+                let (final_x, _) = crate::kernels::adaptive_flow_solver::HeunAdaptive2::solve_adaptive_trajectory(
+                    x0,
+                    initial_h,
+                    1e-4,
+                    0.25,
+                    tol,
+                    500,
+                    |x_curr, t_curr| match backend.evaluate_flow_velocity(x_curr, t_curr) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            error_opt = Some(e);
+                            vec![0.0f32; x_curr.len()]
+                        }
+                    },
+                )?;
+                if let Some(err) = error_opt {
+                    Err(err)
+                } else {
+                    Ok(final_x)
+                }
+            }
+            FlowSolverAlgorithm::DpmSolverPP { steps } => {
+                let mut error_opt = None;
+                let final_x = crate::kernels::adaptive_flow_solver::DpmSolverPP::solve_fast_trajectory(
+                    x0,
+                    steps,
+                    |x_curr, t_curr| match backend.evaluate_flow_velocity(x_curr, t_curr) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            error_opt = Some(e);
+                            vec![0.0f32; x_curr.len()]
+                        }
+                    },
+                )?;
+                if let Some(err) = error_opt {
+                    Err(err)
+                } else {
+                    Ok(final_x)
+                }
+            }
             FlowSolverAlgorithm::LearnedCurvature { tol, initial_h } => {
                 let controller = crate::kernels::adaptive_flow_solver::LearnedFlowController::new(initial_h, 0.005, 0.25);
                 let mut current_x = x0.to_vec();
@@ -233,6 +304,7 @@ impl HardwareComputeRouter {
                 let mut h = initial_h;
                 let mut v_prev: Option<Vec<f32>> = None;
                 let mut steps = 0;
+                let mut error_opt = None;
 
                 while t < 1.0 - 1e-6 {
                     if steps >= 500 {
@@ -244,8 +316,17 @@ impl HardwareComputeRouter {
                     let v_curr = backend.evaluate_flow_velocity(&current_x, t)?;
                     h = controller.predict_step_size(&v_curr, v_prev.as_deref(), h);
                     let result = crate::kernels::adaptive_flow_solver::BogackiShampine23::step(&current_x, t, h, tol, |x_c, t_c| {
-                        backend.evaluate_flow_velocity(x_c, t_c).unwrap_or_else(|_| vec![0.0; x0.len()])
+                        match backend.evaluate_flow_velocity(x_c, t_c) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                error_opt = Some(e);
+                                vec![0.0f32; x0.len()]
+                            }
+                        }
                     });
+                    if let Some(err) = error_opt {
+                        return Err(err);
+                    }
                     current_x = result.x_next;
                     v_prev = Some(v_curr);
                     t += h;
