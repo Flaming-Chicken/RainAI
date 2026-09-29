@@ -100,3 +100,74 @@ fn test_learned_flow_controller_curvature_damping() {
     assert!(h_curved >= controller.min_h);
     assert!(h_straight <= controller.max_h);
 }
+
+#[test]
+fn test_bogacki_shampine_adaptive_trajectory_convergence() {
+    let x0 = vec![4.0f32];
+    let initial_h = 0.05f32;
+    let min_h = 0.001f32;
+    let max_h = 0.20f32;
+    let tol = 1e-3f32;
+
+    // dx/dt = -0.3 * x => x(1.0) = 4.0 * e^(-0.3)
+    let velocity = |x: &[f32], _t: f32| -> Vec<f32> {
+        vec![-0.3f32 * x[0]]
+    };
+
+    let solve_res = BogackiShampine23::solve_adaptive_trajectory(
+        &x0,
+        initial_h,
+        min_h,
+        max_h,
+        tol,
+        500,
+        velocity,
+    );
+
+    assert!(solve_res.is_ok());
+    let (final_x, steps) = match solve_res {
+        Ok(v) => v,
+        Err(_) => (vec![0.0], 0),
+    };
+
+    let expected = 4.0f32 * (-0.3f32).exp();
+    assert!((final_x[0] - expected).abs() < 5e-3);
+    assert!(steps > 0);
+}
+
+#[test]
+fn test_hardware_compute_router_with_adaptive_solvers() {
+    use inference::compute_router::{FlowSolverAlgorithm, HardwareComputeRouter, WgslComputeBackend};
+    use std::sync::Arc;
+
+    let backend = Arc::new(WgslComputeBackend::new(4));
+    let router = HardwareComputeRouter::new(vec![backend]);
+
+    let x0 = vec![1.0f32, -0.5f32, 0.2f32, 0.8f32];
+
+    // 1. Fixed RK4
+    let rk4_res = router.solve_trajectory_with_solver(&x0, FlowSolverAlgorithm::FixedRk4 { steps: 10 });
+    assert!(rk4_res.is_ok());
+
+    // 2. Adaptive RK45
+    let rk45_res = router.solve_trajectory_with_solver(
+        &x0,
+        FlowSolverAlgorithm::AdaptiveRk45 { tol: 1e-3, initial_h: 0.1 },
+    );
+    assert!(rk45_res.is_ok());
+
+    // 3. Adaptive RK23
+    let rk23_res = router.solve_trajectory_with_solver(
+        &x0,
+        FlowSolverAlgorithm::AdaptiveRk23 { tol: 1e-3, initial_h: 0.1 },
+    );
+    assert!(rk23_res.is_ok());
+
+    // 4. Learned Curvature
+    let learned_res = router.solve_trajectory_with_solver(
+        &x0,
+        FlowSolverAlgorithm::LearnedCurvature { tol: 1e-3, initial_h: 0.05 },
+    );
+    assert!(learned_res.is_ok());
+}
+
