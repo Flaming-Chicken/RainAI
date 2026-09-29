@@ -9,7 +9,10 @@ pub mod quant_activations;
 pub mod rk4_flow_solver;
 pub mod ternary_simd;
 
-pub use adaptive_flow_solver::{AdaptiveStepResult, BogackiShampine23, DormandPrince45, LearnedFlowController};
+pub use adaptive_flow_solver::{
+    AdaptiveStepResult, BogackiShampine23, DormandPrince45, DpmSolverPP, HeunAdaptive2,
+    LearnedFlowController, Tsitouras54,
+};
 pub use bf16_simd::bf16_matmul_simd_f32;
 pub use int8_simd::int8_matmul_simd_f32;
 pub use layer_forward::dense_projection;
