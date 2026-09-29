@@ -34,6 +34,7 @@ fn test_wgsl_shader_compilation() {
                 ("mamba2_ssd.wgsl", include_str!("../src/shaders/mamba2_ssd.wgsl")),
                 ("dense_soup_dispatch.wgsl", include_str!("../src/shaders/dense_soup_dispatch.wgsl")),
                 ("mla_attention.wgsl", include_str!("../src/shaders/mla_attention.wgsl")),
+                ("rk4_flow_matching.wgsl", include_str!("../src/shaders/rk4_flow_matching.wgsl")),
                 ("droplet_panning.wgsl", include_str!("../../app/src/shaders/droplet_panning.wgsl")),
             ];
 
@@ -41,6 +42,14 @@ fn test_wgsl_shader_compilation() {
                 let _module = device.create_shader_module(ShaderModuleDescriptor {
                     label: Some(name),
                     source: ShaderSource::Wgsl(source.into()),
+                });
+            }
+
+            // Test FP16 shader if logical device enabled SHADER_F16
+            if device.features().contains(Features::SHADER_F16) {
+                let _module_f16 = device.create_shader_module(ShaderModuleDescriptor {
+                    label: Some("rk4_flow_matching_f16.wgsl"),
+                    source: ShaderSource::Wgsl(include_str!("../src/shaders/rk4_flow_matching_f16.wgsl").into()),
                 });
             }
         }
