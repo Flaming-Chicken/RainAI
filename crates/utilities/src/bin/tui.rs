@@ -1286,7 +1286,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
 
                     // Modal Dismissals
                     if app.show_help_modal {
-                        if key.code == KeyCode::Esc || key.code == KeyCode::Char('?') || key.code == KeyCode::Char('q') {
+                        if key.code == KeyCode::Esc || key.code == KeyCode::Char('?') || key.code == KeyCode::Char('h') || key.code == KeyCode::Char('q') {
                             app.show_help_modal = false;
                         }
                         continue;
@@ -1314,7 +1314,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                             app.shutdown();
                             return Ok(());
                         }
-                        KeyCode::Char('?') => app.show_help_modal = true,
+                        KeyCode::Char('?') | KeyCode::Char('h') => app.show_help_modal = true,
                         KeyCode::Char('g') => app.show_tuning_modal = !app.show_tuning_modal,
                         KeyCode::Char('r') => app.show_audit_modal = !app.show_audit_modal,
                         KeyCode::Char('m') => {
@@ -1604,7 +1604,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
 
     // Overlays / Modals
     if app.show_help_modal {
-        render_help_modal(f, f.size());
+        render_help_modal(f, app, f.size());
     } else if app.show_source_modal {
         render_source_modal(f, app, f.size());
     } else if app.show_tuning_modal {
@@ -2656,39 +2656,65 @@ fn render_audit_modal(f: &mut ratatui::Frame, app: &App, area: Rect) {
 }
 
 /// Universal Quick-Help Modal Overlay.
-fn render_help_modal(f: &mut ratatui::Frame, area: Rect) {
-    let modal_area = centered_rect(75, 88, area);
+fn render_help_modal(f: &mut ratatui::Frame, app: &App, area: Rect) {
+    let modal_area = centered_rect(80, 92, area);
     f.render_widget(Clear, modal_area);
+
+    let is_paused = app.training_steering.pause_signal.load(Ordering::SeqCst);
+    let train_status = if app.is_training_active.load(Ordering::SeqCst) {
+        if is_paused { "PAUSED" } else { "AUTONOMOUS RUNNING" }
+    } else {
+        "IDLE / READY"
+    };
+
+    let solver_name = app.tuning_state.param_name_and_val(8).1;
+    let solver_tol = app.tuning_state.param_name_and_val(9).1;
+    let precision_str = if app.tuning_state.fp16_mode {
+        "FP16 Energy-Saver (Adreno/Mali Turbo)"
+    } else {
+        "FP32 High-Precision (Studio Reference)"
+    };
+    let governor_str = format!(
+        "Target ~{}% compute ({})",
+        app.target_resource_pct,
+        if app.terminal_focused { "FOCUSED" } else { "UNFOCUSED / THROTTLED" }
+    );
+    let audio_mode_str = if app.continuous_audio_stream {
+        "Continuous Live Stream"
+    } else {
+        "On-Demand Preview"
+    };
+    let audio_out_str = if app.audio_preview.is_muted { "MUTED" } else { "ACTIVE (48kHz)" };
 
     let help_text = vec![
         Line::from(Span::styled(
-            " RainAI Studio Universal Command Reference ",
+            " RainAI Studio Universal Command & Telemetry Reference ",
             Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("Autonomous In-Process Operation:", Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD)),
-        ]),
-        Line::from("  • All training and data processing runs in-process on background Rust worker threads."),
-        Line::from("  • Rehydrates previous session state automatically; saves atomic safetensors on close."),
-        Line::from("  • Dynamic Resource Governor: ~80% host compute when focused, throttles to ~50% when unfocused."),
-        Line::from("  • 15 GB Rolling Quota: Automated rotation preserves high-diversity chunks while freeing disk."),
+        Line::from(Span::styled("Current Live Engine State:", Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD))),
+        Line::from(format!("  • Training Status     : {} (Flight Stage: {})", train_status, app.flight_stage)),
+        Line::from(format!("  • Probability Solver  : {}", solver_name)),
+        Line::from(format!("  • Solver Tolerance (ε): {}", solver_tol)),
+        Line::from(format!("  • WebGPU Precision    : {}", precision_str)),
+        Line::from(format!("  • Resource Governor   : {}", governor_str)),
+        Line::from(format!("  • Audio Monitoring    : {} | Output: {}", audio_mode_str, audio_out_str)),
+        Line::from(format!("  • Active Tuning LR    : {:.6} | Batch: {} (Accum: {})",
+            app.tuning_state.learning_rate, app.tuning_state.batch_size, app.tuning_state.accumulation_steps)),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("Global Navigation & Shortcuts:", Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD)),
-        ]),
+        Line::from(Span::styled("Global Navigation & Hotkey Commands:", Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD))),
         Line::from("  [0]..[3] or Tab/BackTab   : Switch active tabs (0:Flight Deck, 1:Dataset, 2:Blueprint, 3:Logs)"),
         Line::from("  [Space]                   : Pause / Resume in-process training"),
+        Line::from("  [g]                       : Open / Close Granular Hyperparameter Tuning Drawer"),
         Line::from("  [s]                       : Trigger Autonomous Data Freshening & Quota Balancing"),
         Line::from("  [d]                       : Deploy converged models to WebGPU & Inference Engine"),
         Line::from("  [c]                       : Toggle Audio Monitor Mode (Continuous Live Stream / On-Demand)"),
         Line::from("  [m]                       : Mute / Unmute audio monitor"),
-        Line::from("  [g]                       : Open / Close Granular Hyperparameter Tuning Drawer"),
         Line::from("  [r]                       : Open Audio Audit & Review Modal (HITL A/B & Rating)"),
-        Line::from("  [?]                       : Toggle this Quick-Help Reference Modal"),
-        Line::from("  [q]                       : Graceful shutdown (saves checkpoints and exits)"),
+        Line::from("  [?] / [h]                 : Toggle this Quick-Help & Telemetry Reference Overlay"),
+        Line::from("  [q]                       : Graceful shutdown (atomic safetensors checkpoint & session save)"),
         Line::from(""),
-        Line::from(Span::styled("Press [Esc], [?], or [q] to close this window.", Style::default().fg(COLOR_SUCCESS))),
+        Line::from(Span::styled("Press [Esc], [?], [h], or [q] to close this window.", Style::default().fg(COLOR_SUCCESS))),
     ];
 
     let help_para = Paragraph::new(help_text)

@@ -2,6 +2,7 @@ use audio::decoder::DecodeMode;
 use audio::export::render_wav_stream;
 use audio::SharedAudioState;
 use eframe::egui::{self, Color32, Pos2, Stroke, Vec2};
+use inference::compute_router::FlowSolverAlgorithm;
 use shared::{
     GovernorOptimizationProfile, HardwareStressProfile, MetaControllerInterceptionMode,
     NoiseColor, QualityTier, RainState, SynthesisMode, WeatherPreset,
@@ -87,6 +88,16 @@ pub struct RainView {
     pub enable_gpu_radar: bool,
     pub dragged_source: Option<RadarDragSource>,
     pub show_advanced_inspector: bool,
+
+    // Phase 22: Flow Solver, WebGPU Governor & UX Telemetry
+    pub flow_solver: FlowSolverAlgorithm,
+    pub live_step_trajectory: Vec<f32>,
+    pub webgpu_fp16: bool,
+    pub simulated_thermal_level: f32,
+    pub audio_status_label: String,
+    pub toast_notification: Option<(String, f64)>,
+    pub noise_masking_enabled: bool,
+    pub hrtf_profile: String,
 }
 
 impl Default for RainView {
@@ -103,6 +114,15 @@ impl Default for RainView {
             enable_gpu_radar: false,
             dragged_source: None,
             show_advanced_inspector: false,
+
+            flow_solver: FlowSolverAlgorithm::AdaptiveRk45 { tol: 1e-3, initial_h: 0.1 },
+            live_step_trajectory: vec![0.10, 0.09, 0.11, 0.08, 0.12, 0.10, 0.09, 0.10],
+            webgpu_fp16: true,
+            simulated_thermal_level: 0.22,
+            audio_status_label: "Ready (48kHz Spatial FOA)".into(),
+            toast_notification: None,
+            noise_masking_enabled: false,
+            hrtf_profile: "Kemar-Compact-Standard".into(),
         }
     }
 }
@@ -147,6 +167,28 @@ impl RainView {
             }
             if dismiss_notice {
                 self.share_notice = None;
+            }
+
+            let mut dismiss_toast = false;
+            let current_time = ui.input(|i| i.time);
+            if let Some((toast_msg, expiry)) = &self.toast_notification {
+                if current_time < *expiry {
+                    ui.group(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("🔔");
+                            ui.colored_label(Color32::from_rgb(255, 215, 120), toast_msg);
+                            if ui.button("Dismiss").clicked() {
+                                dismiss_toast = true;
+                            }
+                        });
+                    });
+                    ui.add_space(4.0);
+                } else {
+                    dismiss_toast = true;
+                }
+            }
+            if dismiss_toast {
+                self.toast_notification = None;
             }
 
             // Subtle Ambient Atmospheric Aura & Ripple Visualizer
@@ -401,6 +443,16 @@ impl RainView {
                     ui.selectable_value(&mut self.decode_mode, DecodeMode::Surround71, DecodeMode::Surround71.label());
                     ui.selectable_value(&mut self.decode_mode, DecodeMode::RawFoaPassthrough, DecodeMode::RawFoaPassthrough.label());
                 });
+
+            ui.add_space(8.0);
+
+            // Audio Status Indicator Badge
+            let status_badge_color = if rain.is_playing {
+                Color32::from_rgb(60, 200, 120)
+            } else {
+                Color32::from_rgb(140, 150, 160)
+            };
+            ui.colored_label(status_badge_color, format!("● {}", self.audio_status_label));
 
             ui.add_space(8.0);
 
@@ -662,6 +714,15 @@ impl RainView {
                 render_col2(&mut cols[2], rain);
             });
         }
+
+        ui.add_space(8.0);
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.label("🌊 Active Flow Solver Dynamics:");
+                ui.colored_label(Color32::from_rgb(100, 200, 255), self.flow_solver.name());
+            });
+            ui.label("Acoustic impact velocities for the 9-material surface continuous mixture are integrated along probability flow ODE trajectories.");
+        });
     }
 
     fn render_spatial_side_sounds(&mut self, ui: &mut egui::Ui, rain: &mut RainState) {
@@ -876,6 +937,61 @@ impl RainView {
                     ui.colored_label(Color32::from_rgb(100, 240, 160), "droplet_panning.wgsl active (96 aerodynamic GPU particles)");
                 }
             });
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.label(egui::RichText::new("🌊 Probability Flow Solver (Continuous ODE Trajectory)").strong());
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Solver:");
+                egui::ComboBox::from_id_salt("flow_solver_select")
+                    .selected_text(self.flow_solver.short_name())
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_label(matches!(self.flow_solver, FlowSolverAlgorithm::FixedRk4 { .. }), "Fixed RK4 (10 Steps)").clicked() {
+                            self.flow_solver = FlowSolverAlgorithm::FixedRk4 { steps: 10 };
+                        }
+                        if ui.selectable_label(matches!(self.flow_solver, FlowSolverAlgorithm::AdaptiveRk45 { .. }), "Adaptive RK45 (Dormand-Prince)").clicked() {
+                            self.flow_solver = FlowSolverAlgorithm::AdaptiveRk45 { tol: 1e-3, initial_h: 0.1 };
+                        }
+                        if ui.selectable_label(matches!(self.flow_solver, FlowSolverAlgorithm::AdaptiveRk23 { .. }), "Adaptive RK23 (Bogacki-Shampine)").clicked() {
+                            self.flow_solver = FlowSolverAlgorithm::AdaptiveRk23 { tol: 1e-3, initial_h: 0.1 };
+                        }
+                        if ui.selectable_label(matches!(self.flow_solver, FlowSolverAlgorithm::AdaptiveTsit5 { .. }), "Adaptive Tsit5 (Tsitouras 5(4) FSAL)").clicked() {
+                            self.flow_solver = FlowSolverAlgorithm::AdaptiveTsit5 { tol: 1e-3, initial_h: 0.1 };
+                        }
+                        if ui.selectable_label(matches!(self.flow_solver, FlowSolverAlgorithm::AdaptiveHeun2 { .. }), "Adaptive Heun2 (EDM 2nd-Order)").clicked() {
+                            self.flow_solver = FlowSolverAlgorithm::AdaptiveHeun2 { tol: 1e-3, initial_h: 0.1 };
+                        }
+                        if ui.selectable_label(matches!(self.flow_solver, FlowSolverAlgorithm::DpmSolverPP { .. }), "DPM-Solver++ (Fast Multistep)").clicked() {
+                            self.flow_solver = FlowSolverAlgorithm::DpmSolverPP { steps: 12 };
+                        }
+                        if ui.selectable_label(matches!(self.flow_solver, FlowSolverAlgorithm::LearnedCurvature { .. }), "Learned Curvature (Neural ODE)").clicked() {
+                            self.flow_solver = FlowSolverAlgorithm::LearnedCurvature { tol: 1e-3, initial_h: 0.05 };
+                        }
+                    });
+                ui.label(egui::RichText::new(self.flow_solver.name()).size(11.0).italics());
+            });
+
+            // Live step-size trajectory visualization
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Adaptive Step-Size Trajectory (h_i) & Curvature:").size(11.0));
+            let traj_w = (ui.available_width() - 8.0).max(180.0);
+            let traj_h = 28.0;
+            let (traj_resp, traj_painter) = ui.allocate_painter(Vec2::new(traj_w, traj_h), egui::Sense::hover());
+            let traj_rect = traj_resp.rect;
+            traj_painter.rect_filled(traj_rect, 3.0, Color32::from_rgb(15, 20, 28));
+
+            let step_count = self.live_step_trajectory.len();
+            if step_count > 1 {
+                let dx = traj_rect.width() / (step_count - 1) as f32;
+                let max_h = self.live_step_trajectory.iter().copied().fold(0.15f32, f32::max);
+                for i in 0..(step_count - 1) {
+                    let h0 = self.live_step_trajectory[i];
+                    let h1 = self.live_step_trajectory[i + 1];
+                    let p0 = Pos2::new(traj_rect.left() + i as f32 * dx, traj_rect.bottom() - (h0 / max_h) * (traj_h - 6.0) - 3.0);
+                    let p1 = Pos2::new(traj_rect.left() + (i + 1) as f32 * dx, traj_rect.bottom() - (h1 / max_h) * (traj_h - 6.0) - 3.0);
+                    traj_painter.line_segment([p0, p1], Stroke::new(1.5, Color32::from_rgb(100, 210, 255)));
+                }
+            }
         });
     }
 
@@ -1262,7 +1378,7 @@ impl RainView {
 
         let is_mobile = ui.available_width() < 650.0;
 
-        let render_telemetry_buf = |ui: &mut egui::Ui, rain: &RainState| {
+        let mut render_telemetry_buf = |ui: &mut egui::Ui, rain: &RainState| {
             ui.group(|ui| {
                 ui.label(egui::RichText::new("Dynamic Ring Buffer & Latency Telemetry").strong());
                 ui.add_space(4.0);
@@ -1317,6 +1433,35 @@ impl RainView {
 
                 ui.label(format!("GPU WebGPU Headroom: {:.0}%", rain.telemetry.gpu_headroom * 100.0));
                 ui.add(egui::ProgressBar::new(rain.telemetry.gpu_headroom));
+
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new("⚡ WebGPU Compute Utilization & Thermal Headroom").strong());
+                let gpu_util = (1.0 - rain.telemetry.gpu_headroom).clamp(0.0, 1.0);
+                ui.horizontal(|ui| {
+                    ui.label(format!("Active WebGPU Compute Load: {:.0}%", gpu_util * 100.0));
+                    ui.add(egui::ProgressBar::new(gpu_util).text(format!("{:.0}%", gpu_util * 100.0)));
+                });
+
+                ui.horizontal(|ui| {
+                    let prec_str = if self.webgpu_fp16 { "FP16 (Mobile WGSL Accelerated)" } else { "FP32 (Standard IEEE)" };
+                    ui.label(format!("Shader Precision: {}", prec_str));
+                    if ui.button(if self.webgpu_fp16 { "Switch to FP32" } else { "Switch to FP16" }).clicked() {
+                        self.webgpu_fp16 = !self.webgpu_fp16;
+                    }
+                });
+
+                let thermal_color = if self.simulated_thermal_level < 0.40 {
+                    Color32::from_rgb(80, 220, 140)
+                } else if self.simulated_thermal_level < 0.70 {
+                    Color32::from_rgb(240, 200, 60)
+                } else {
+                    Color32::from_rgb(255, 90, 80)
+                };
+                ui.horizontal(|ui| {
+                    ui.label("Thermal Throttle Level:");
+                    ui.colored_label(thermal_color, format!("{:.0}%", self.simulated_thermal_level * 100.0));
+                });
+                ui.add(egui::ProgressBar::new(self.simulated_thermal_level).text(if self.simulated_thermal_level > 0.70 { "THROTTLED" } else { "NOMINAL" }));
             });
         };
 

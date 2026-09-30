@@ -6,6 +6,8 @@ use spodeian_cache::{ContentAddressedStorage, PreferentialRouter};
 use spodeian_cache::StorageTier;
 #[allow(unused_imports)]
 use tracing::{error, info, warn};
+use audio::decoder::DecodeMode;
+use inference::compute_router::FlowSolverAlgorithm;
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast;
@@ -117,6 +119,146 @@ pub fn trigger_pwa_install() {
 }
 
 pub const DEDICATED_STORAGE_KEY: &str = "serverless_template_app_state";
+pub const FIRST_LAUNCH_STORAGE_KEY: &str = "rainai_first_launch_done";
+pub const SESSION_STORAGE_KEY: &str = "rainai_persistent_session_state";
+
+/// Persistent session parameters surviving reboots and browser relaunches.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PersistentSessionState {
+    pub flow_solver: FlowSolverAlgorithm,
+    pub active_preset_name: String,
+    pub master_volume: f32,
+    pub decode_mode: DecodeMode,
+    pub noise_masking_enabled: bool,
+    pub noise_masking_threshold_db: f32,
+    pub hrtf_profile: String,
+    pub webgpu_fp16_enabled: bool,
+    pub show_advanced_inspector: bool,
+}
+
+impl Default for PersistentSessionState {
+    fn default() -> Self {
+        Self {
+            flow_solver: FlowSolverAlgorithm::AdaptiveRk45 { tol: 1e-3, initial_h: 0.1 },
+            active_preset_name: "Gentle Summer Rain".to_string(),
+            master_volume: 0.60,
+            decode_mode: DecodeMode::BinauralHeadphones,
+            noise_masking_enabled: false,
+            noise_masking_threshold_db: -40.0,
+            hrtf_profile: "Kemar-Compact-Standard".to_string(),
+            webgpu_fp16_enabled: true,
+            show_advanced_inspector: false,
+        }
+    }
+}
+
+pub fn is_first_launch(storage: Option<&dyn eframe::Storage>) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(window) = web_sys::window() {
+            if let Ok(Some(local_storage)) = window.local_storage() {
+                if let Ok(Some(val)) = local_storage.get_item(FIRST_LAUNCH_STORAGE_KEY) {
+                    return val != "true";
+                }
+            }
+        }
+    }
+
+    if let Some(storage) = storage {
+        if let Some(val) = storage.get_string(FIRST_LAUNCH_STORAGE_KEY) {
+            return val != "true";
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let flag_path = std::env::temp_dir().join(FIRST_LAUNCH_STORAGE_KEY);
+        if flag_path.exists() {
+            return false;
+        }
+    }
+
+    true
+}
+
+pub fn mark_first_launch_done(storage: Option<&mut dyn eframe::Storage>) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(window) = web_sys::window() {
+            if let Ok(Some(local_storage)) = window.local_storage() {
+                let _ = local_storage.set_item(FIRST_LAUNCH_STORAGE_KEY, "true");
+            }
+        }
+    }
+
+    if let Some(storage) = storage {
+        storage.set_string(FIRST_LAUNCH_STORAGE_KEY, "true".to_string());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let flag_path = std::env::temp_dir().join(FIRST_LAUNCH_STORAGE_KEY);
+        let _ = std::fs::write(flag_path, "true");
+    }
+}
+
+pub fn load_session_state(storage: Option<&dyn eframe::Storage>) -> PersistentSessionState {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(window) = web_sys::window() {
+            if let Ok(Some(local_storage)) = window.local_storage() {
+                if let Ok(Some(content)) = local_storage.get_item(SESSION_STORAGE_KEY) {
+                    if let Ok(session) = serde_json::from_str::<PersistentSessionState>(&content) {
+                        return session;
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(storage) = storage {
+        if let Some(raw) = storage.get_string(SESSION_STORAGE_KEY) {
+            if let Ok(session) = serde_json::from_str::<PersistentSessionState>(&raw) {
+                return session;
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let path = std::env::temp_dir().join(SESSION_STORAGE_KEY);
+        if let Ok(content) = std::fs::read_to_string(path) {
+            if let Ok(session) = serde_json::from_str::<PersistentSessionState>(&content) {
+                return session;
+            }
+        }
+    }
+
+    PersistentSessionState::default()
+}
+
+pub fn save_session_state(storage: Option<&mut dyn eframe::Storage>, session: &PersistentSessionState) {
+    if let Ok(json_str) = serde_json::to_string(session) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(window) = web_sys::window() {
+                if let Ok(Some(local_storage)) = window.local_storage() {
+                    let _ = local_storage.set_item(SESSION_STORAGE_KEY, &json_str);
+                }
+            }
+        }
+
+        if let Some(storage) = storage {
+            storage.set_string(SESSION_STORAGE_KEY, json_str.clone());
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let path = std::env::temp_dir().join(SESSION_STORAGE_KEY);
+            let _ = std::fs::write(path, json_str);
+        }
+    }
+}
 
 /// Robust dual-format deserializer for AppState, attempting JSON first and falling back to RON.
 pub fn deserialize_app_state(content: &str) -> Result<shared::AppState, String> {
