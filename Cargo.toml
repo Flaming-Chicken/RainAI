@@ -25,13 +25,14 @@ audio = { path = "crates/audio" }
 inference = { path = "crates/inference" }
 app = { path = "crates/app" }
 utilities = { path = "crates/utilities" }
-spodeian-cache = { path = "../spodeian-core/crates/spodeian-cache" }
-spodeian-tokens = { path = "../spodeian-core/crates/spodeian-tokens" }
-spodeian-telemetry = { path = "../spodeian-core/crates/spodeian-telemetry" }
-spodeian-export = { path = "../spodeian-core/crates/spodeian-export" }
-spodeian-web-utils = { path = "../spodeian-core/crates/spodeian-web-utils" }
-spodeian-ui = { path = "../spodeian-core/crates/spodeian-ui" }
-spodeian-ml-utils = { path = "../spodeian-core/crates/spodeian-ml-utils" }
+spodeian-cache = { path = "../spodeian-core/crates/spodeian-cache", version = "^1.0.0" }
+spodeian-tokens = { path = "../spodeian-core/crates/spodeian-tokens", version = "^1.0.0" }
+spodeian-telemetry = { path = "../spodeian-core/crates/spodeian-telemetry", version = "^1.0.0" }
+spodeian-export = { path = "../spodeian-core/crates/spodeian-export", version = "^1.0.0" }
+spodeian-web-utils = { path = "../spodeian-core/crates/spodeian-web-utils", version = "^1.0.0" }
+spodeian-ui = { path = "../spodeian-core/crates/spodeian-ui", version = "^1.0.0" }
+spodeian-ml-utils = { path = "../spodeian-core/crates/spodeian-ml-utils", version = "^0.1.0" }
+
 candle-core = "0.11"
 candle-nn = "0.11"
 criterion = "0.5"
