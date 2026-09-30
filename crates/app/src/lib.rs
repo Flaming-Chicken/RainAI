@@ -117,12 +117,15 @@ impl TemplateApp {
 
         let first_launch = is_first_launch(cc.storage);
         #[allow(unused_variables)]
-        let (mut state, loaded_from_storage) = if first_launch {
+        let (state, loaded_from_storage) = if first_launch {
             info!("First launch detected! Auto-starting Gentle Summer Rain default soundscape at 60% volume.");
-            let mut s = shared::AppState::default();
-            s.rain = shared::preset::WeatherPreset::gentle_summer_rain().state;
-            s.rain.is_playing = true;
-            s.rain.master_volume = 0.60;
+            let mut rain_state = shared::preset::WeatherPreset::gentle_summer_rain().state;
+            rain_state.is_playing = true;
+            rain_state.master_volume = 0.60;
+            let s = shared::AppState {
+                rain: rain_state,
+                ..Default::default()
+            };
             (s, false)
         } else if let Some(saved) = load_state_multi_tier(cc.storage) {
             (saved, true)
@@ -132,13 +135,15 @@ impl TemplateApp {
         };
 
         let session = load_session_state(cc.storage);
-        let mut rain_view = RainView::default();
-        rain_view.flow_solver = session.flow_solver;
-        rain_view.decode_mode = session.decode_mode;
-        rain_view.webgpu_fp16 = session.webgpu_fp16_enabled;
-        rain_view.show_advanced_inspector = session.show_advanced_inspector;
-        rain_view.noise_masking_enabled = session.noise_masking_enabled;
-        rain_view.hrtf_profile = session.hrtf_profile;
+        let mut rain_view = RainView {
+            flow_solver: session.flow_solver,
+            decode_mode: session.decode_mode,
+            webgpu_fp16: session.webgpu_fp16_enabled,
+            show_advanced_inspector: session.show_advanced_inspector,
+            noise_masking_enabled: session.noise_masking_enabled,
+            hrtf_profile: session.hrtf_profile,
+            ..Default::default()
+        };
 
         if first_launch {
             rain_view.toast_notification = Some((
