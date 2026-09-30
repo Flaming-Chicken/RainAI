@@ -19,6 +19,8 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 hound = { workspace = true }
 spodeian-cache = { workspace = true }
+spodeian-ml-utils = { workspace = true }
+
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 cpal = "0.15"
