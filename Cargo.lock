@@ -1413,8 +1413,10 @@ name = "desktop"
 version = "0.2.0"
 dependencies = [
  "app",
+ "audio",
  "eframe",
  "mimalloc",
+ "shared",
  "spodeian-telemetry",
  "tracing",
  "tracing-subscriber",
