@@ -5427,7 +5427,7 @@ dependencies = [
 
 [[package]]
 name = "spodeian-cache"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "base64 0.22.1",
  "js-sys",
@@ -5443,7 +5443,7 @@ dependencies = [
 
 [[package]]
 name = "spodeian-export"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "bson",
  "miniz_oxide",
@@ -5467,7 +5467,7 @@ dependencies = [
 
 [[package]]
 name = "spodeian-telemetry"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "console_error_panic_hook",
  "tracing",
@@ -5477,7 +5477,7 @@ dependencies = [
 
 [[package]]
 name = "spodeian-tokens"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -5485,7 +5485,7 @@ dependencies = [
 
 [[package]]
 name = "spodeian-ui"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "egui",
  "serde",
@@ -5494,7 +5494,7 @@ dependencies = [
 
 [[package]]
 name = "spodeian-web-utils"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "js-sys",
  "tracing",
