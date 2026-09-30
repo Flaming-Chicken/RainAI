@@ -151,7 +151,7 @@ impl DatabaseHealthWorker {
                 // 2. Trickle in & categorise new data
                 if auto_balance || force_freshen {
                     iteration += 1;
-                    if iteration % 2 == 0 || force_freshen {
+                    if iteration.is_multiple_of(2) || force_freshen {
                         if let Ok(Some(action_desc)) = Self::trickle_in_and_categorize(
                             &manifest_path,
                             &sources_path,
@@ -475,7 +475,7 @@ impl DatabaseHealthWorker {
         let target_path = target_candidates
             .iter()
             .find(|p| Path::new(p).exists())
-            .map(|p| PathBuf::from(p))
+            .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("data/rain/ATTRIBUTIONS.txt"));
 
         if let Some(parent) = target_path.parent() {
@@ -575,7 +575,7 @@ impl DatabaseHealthWorker {
             // Fallback for directory without manifest
             let mut wav_files: Vec<_> = entries
                 .flatten()
-                .filter(|e| e.path().extension().map_or(false, |ext| ext == "wav"))
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "wav"))
                 .collect();
 
             wav_files.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());

@@ -152,6 +152,18 @@ impl TemplateApp {
             ));
         }
 
+        if let Some(ir_hash) = &session.custom_ir_hash {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let cache_dir = std::path::Path::new("data/cache/ir");
+                if let Ok(cas) = spodeian_cache::ContentAddressedStorage::new(cache_dir) {
+                    if let Ok(bytes) = cas.get(ir_hash) {
+                        let _ = rain_view.load_custom_ir_bytes("cached_ir.wav", &bytes, Some(cache_dir));
+                    }
+                }
+            }
+        }
+
         #[cfg(target_arch = "wasm32")]
         {
             if !loaded_from_storage && !first_launch {
@@ -210,8 +222,10 @@ impl TemplateApp {
             hrtf_profile: self.rain_view.hrtf_profile.clone(),
             webgpu_fp16_enabled: self.rain_view.webgpu_fp16,
             show_advanced_inspector: self.rain_view.show_advanced_inspector,
+            custom_ir_hash: self.rain_view.custom_ir_meta.as_ref().map(|m| m.sha256_hash.clone()),
         };
         save_session_state(None, &session);
+
         mark_first_launch_done(None);
 
         if let Ok(json_str) = serde_json::to_string(&self.state) {
@@ -364,6 +378,7 @@ impl eframe::App for TemplateApp {
             hrtf_profile: self.rain_view.hrtf_profile.clone(),
             webgpu_fp16_enabled: self.rain_view.webgpu_fp16,
             show_advanced_inspector: self.rain_view.show_advanced_inspector,
+            custom_ir_hash: self.rain_view.custom_ir_meta.as_ref().map(|m| m.sha256_hash.clone()),
         };
         save_session_state(Some(storage), &session);
         mark_first_launch_done(Some(storage));

@@ -134,6 +134,8 @@ pub struct PersistentSessionState {
     pub hrtf_profile: String,
     pub webgpu_fp16_enabled: bool,
     pub show_advanced_inspector: bool,
+    #[serde(default)]
+    pub custom_ir_hash: Option<String>,
 }
 
 impl Default for PersistentSessionState {
@@ -148,9 +150,11 @@ impl Default for PersistentSessionState {
             hrtf_profile: "Kemar-Compact-Standard".to_string(),
             webgpu_fp16_enabled: true,
             show_advanced_inspector: false,
+            custom_ir_hash: None,
         }
     }
 }
+
 
 pub fn is_first_launch(storage: Option<&dyn eframe::Storage>) -> bool {
     #[cfg(target_arch = "wasm32")]

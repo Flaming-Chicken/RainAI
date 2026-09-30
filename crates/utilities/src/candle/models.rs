@@ -1071,9 +1071,9 @@ impl CandleInvasiveMetaController {
 // 3. Physics-Informed & HWIL Loss Functions
 // ============================================================================
 
-/// Trajectory loss with 1st-order finite difference velocity smoothness penalty:
-/// $\mathcal{L} = \text{MSE}(z_{pred}, z_{target}) + \lambda_{vel} \|(z_{pred} - z_{prev}) - (z_{target} - z_{prev})\|^2$.
-
+/// 1-Step Consistency Distillation Jump Head.
+/// Predicts the multi-step converged latent delta in a single forward pass,
+/// enabling sub-millisecond, 1-step Euler inference on edge / WebGPU devices.
 pub struct CandleConsistencyHead {
     fc1: Linear,
     fc2: Linear,

@@ -440,9 +440,7 @@ impl CandleManifestDataset {
             let s_idx1 = surface_tag_to_idx(&meta.surface_tag);
             if surface_mixup_prob > 0.0 && rng.gen_range(0.0f32..1.0f32) < surface_mixup_prob {
                 let dirichlet_weights = sample_sparse_dirichlet_surfaces(&mut rng, 0.25);
-                for i in 0..8 {
-                    cond[522 + i] = dirichlet_weights[i];
-                }
+                cond[522..530].copy_from_slice(&dirichlet_weights);
             } else {
                 cond[s_idx1] = 1.0;
             }

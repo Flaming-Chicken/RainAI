@@ -163,4 +163,137 @@ impl SofaSpatializer {
             (left_out, right_out)
         }
     }
+
+    /// Loads a custom impulse response from raw file bytes (`.wav` or `.sofa` JSON).
+    /// Stores the raw bytes into `spodeian-cache` for zero-copy reuse and updates the active HRIR.
+    pub fn load_custom_ir_from_bytes(
+        &mut self,
+        file_name: &str,
+        data: &[u8],
+        cache_dir: Option<&std::path::Path>,
+    ) -> Result<CustomIrMetadata, String> {
+        if data.is_empty() {
+            return Err("Custom IR file payload is empty".to_string());
+        }
+
+        let is_wav = file_name.to_lowercase().ends_with(".wav");
+        let mut left_ir = Vec::new();
+        let mut right_ir = Vec::new();
+        let mut sample_rate = self.sample_rate;
+        let mut channels = 1;
+
+        if is_wav {
+            let cursor = std::io::Cursor::new(data);
+            let mut reader = hound::WavReader::new(cursor)
+                .map_err(|e| format!("Invalid WAV format: {}", e))?;
+            let spec = reader.spec();
+            channels = spec.channels as usize;
+            sample_rate = spec.sample_rate;
+
+            let raw_samples: Vec<f32> = match spec.sample_format {
+                hound::SampleFormat::Float => reader
+                    .samples::<f32>()
+                    .filter_map(Result::ok)
+                    .collect(),
+                hound::SampleFormat::Int => {
+                    let max_val = (1i64 << (spec.bits_per_sample.saturating_sub(1))) as f32;
+                    reader
+                        .samples::<i32>()
+                        .filter_map(Result::ok)
+                        .map(|s| s as f32 / max_val)
+                        .collect()
+                }
+            };
+
+            if raw_samples.is_empty() {
+                return Err("WAV file contains no decodable audio samples".to_string());
+            }
+
+            if channels == 1 {
+                left_ir = raw_samples.clone();
+                right_ir = raw_samples;
+            } else {
+                for (i, &s) in raw_samples.iter().enumerate() {
+                    if i % channels == 0 {
+                        left_ir.push(s);
+                    } else if i % channels == 1 {
+                        right_ir.push(s);
+                    }
+                }
+                if right_ir.is_empty() {
+                    right_ir = left_ir.clone();
+                }
+            }
+        } else {
+            // Assume JSON/SOFA formatted impulse response coefficients
+            if let Ok(val) = serde_json::from_slice::<serde_json::Value>(data) {
+                let left_val = val.get("left_ir").or_else(|| val.get("left"));
+                let right_val = val.get("right_ir").or_else(|| val.get("right"));
+
+                if let Some(arr) = left_val.and_then(|v| v.as_array()) {
+                    left_ir = arr.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+                    if let Some(r_arr) = right_val.and_then(|v| v.as_array()) {
+                        right_ir = r_arr.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+                    } else {
+                        right_ir = left_ir.clone();
+                    }
+                    if let Some(sr) = val.get("sample_rate").or_else(|| val.get("SampleRate")).and_then(|v| v.as_u64()) {
+                        sample_rate = sr as u32;
+                    }
+                    channels = 2;
+                } else if let Some(arr) = val.as_array() {
+                    left_ir = arr.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+                    right_ir = left_ir.clone();
+                } else {
+                    return Err("Unsupported SOFA/JSON IR schema".to_string());
+                }
+            } else {
+                return Err("Could not parse file as WAV or SOFA/JSON".to_string());
+            }
+        }
+
+        let sample_count = left_ir.len().max(right_ir.len());
+        if sample_count == 0 {
+            return Err("Decoded impulse response contains 0 samples".to_string());
+        }
+
+        // Store into spodeian-cache CAS for zero-copy reuse
+        let sha256_hash = spodeian_cache::ContentAddressedStorage::compute_sha256(data);
+        let tier = spodeian_cache::PreferentialRouter::determine_tier(data.len(), "audio/wav", true);
+
+        if let Some(dir) = cache_dir {
+            if let Ok(cas) = spodeian_cache::ContentAddressedStorage::new(dir) {
+                let _ = cas.put(data);
+            }
+        }
+
+        // Replace default center HRIR with user custom impulse response
+        self.impulse_responses.retain(|h| h.position != SphericalPosition::new(0.0, 0.0, 1.0));
+        self.add_hrir(SphericalPosition::new(0.0, 0.0, 1.0), left_ir, right_ir);
+
+        Ok(CustomIrMetadata {
+            name: file_name.to_string(),
+            sha256_hash,
+            format: if is_wav { "wav".to_string() } else { "sofa".to_string() },
+            sample_rate,
+            channels,
+            sample_count,
+            byte_size: data.len(),
+            tier,
+        })
+    }
 }
+
+/// Metadata describing custom impulse response (IR) files for HRTF spatialization.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CustomIrMetadata {
+    pub name: String,
+    pub sha256_hash: String,
+    pub format: String,
+    pub sample_rate: u32,
+    pub channels: usize,
+    pub sample_count: usize,
+    pub byte_size: usize,
+    pub tier: spodeian_cache::StorageTier,
+}
+
