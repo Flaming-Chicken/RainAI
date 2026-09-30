@@ -98,6 +98,8 @@ pub struct RainView {
     pub toast_notification: Option<(String, f64)>,
     pub noise_masking_enabled: bool,
     pub hrtf_profile: String,
+    pub custom_ir_meta: Option<audio::CustomIrMetadata>,
+    pub custom_ir_status: Option<String>,
 }
 
 impl Default for RainView {
@@ -123,9 +125,12 @@ impl Default for RainView {
             toast_notification: None,
             noise_masking_enabled: false,
             hrtf_profile: "Kemar-Compact-Standard".into(),
+            custom_ir_meta: None,
+            custom_ir_status: None,
         }
     }
 }
+
 
 impl RainView {
     pub fn render(&mut self, ui: &mut egui::Ui, rain: &mut RainState, audio_state: Option<&SharedAudioState>) {
@@ -1001,13 +1006,87 @@ impl RainView {
             self.render_spatial_side_sounds(ui, rain);
             ui.add_space(8.0);
             self.render_spatial_radar(ui, rain);
+            ui.add_space(8.0);
+            self.render_custom_ir_selector(ui);
         } else {
             ui.columns(2, |cols| {
                 self.render_spatial_side_sounds(&mut cols[0], rain);
                 self.render_spatial_radar(&mut cols[1], rain);
             });
+            ui.add_space(8.0);
+            self.render_custom_ir_selector(ui);
         }
     }
+
+    /// Renders custom impulse response (IR) file picker and spodeian-cache zero-copy reuse controls.
+    fn render_custom_ir_selector(&mut self, ui: &mut egui::Ui) {
+        ui.group(|ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("🎧 Personalized HRTF Impulse Response (.wav, .sofa)").strong());
+                ui.add_space(8.0);
+
+                let btn = egui::Button::new("📂 Import Custom IR File...");
+                if ui.add(btn).clicked() {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Impulse Response (*.wav, *.sofa, *.json)", &["wav", "sofa", "json"])
+                            .pick_file()
+                        {
+                            if let Ok(bytes) = std::fs::read(&path) {
+                                let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("custom_ir.wav");
+                                let cache_dir = std::path::Path::new("target/spodeian_cache");
+                                let _ = self.load_custom_ir_bytes(file_name, &bytes, Some(cache_dir));
+                            }
+                        }
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        self.custom_ir_status = Some("Web file picking supported via drag-and-drop or cache API tier".to_string());
+                    }
+                }
+            });
+
+            if let Some(ref meta) = self.custom_ir_meta {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Active IR:").strong());
+                    ui.colored_label(Color32::from_rgb(0, 220, 180), &meta.name);
+                    ui.label(format!("| Format: {} | Rate: {} Hz | Samples: {} | Tier: {}", meta.format, meta.sample_rate, meta.sample_count, meta.tier.label()));
+                });
+                ui.label(egui::RichText::new(format!("SHA-256 CAS: {}", meta.sha256_hash)).weak().size(11.0));
+            } else if let Some(ref status) = self.custom_ir_status {
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new(status).weak());
+            } else {
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new("Default Ambisonic FOA virtual acoustics active. Supply custom measured HRIRs (.wav, .sofa) for personalized acoustic spatialization.").weak());
+            }
+        });
+    }
+
+    /// Programmatically loads custom IR bytes, stores into spodeian-cache, and updates UI state.
+    pub fn load_custom_ir_bytes(
+        &mut self,
+        name: &str,
+        bytes: &[u8],
+        cache_dir: Option<&std::path::Path>,
+    ) -> Result<audio::CustomIrMetadata, String> {
+        let mut spatializer = audio::SofaSpatializer::new(48000);
+        let meta = spatializer.load_custom_ir_from_bytes(name, bytes, cache_dir)?;
+        self.custom_ir_status = Some(format!(
+            "Loaded: {} ({:.1} KB, {} Hz, {})",
+            meta.name,
+            meta.byte_size as f32 / 1024.0,
+            meta.sample_rate,
+            meta.tier.label()
+        ));
+        self.hrtf_profile = format!("Custom: {}", name);
+        self.custom_ir_meta = Some(meta.clone());
+        Ok(meta)
+    }
+
 
     fn render_presets_tab(&mut self, ui: &mut egui::Ui, rain: &mut RainState) {
         ui.heading("Curated Atmospheric Presets");

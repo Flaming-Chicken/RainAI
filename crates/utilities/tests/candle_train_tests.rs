@@ -1352,8 +1352,9 @@ fn test_free_bits_kl_prevents_posterior_collapse() {
 fn test_latent_variance_hinge_loss() {
     let device = Device::Cpu;
 
-    // Latents with high batch variance (std > 1.0) -> Loss should be zero or negligible
-    let z_healthy = (Tensor::randn(0.0f32, 2.0f32, (8, 64), &device).expect("healthy") * 2.0).expect("scale");
+    // Latents with high batch variance (std >> 1.0) -> Loss should be zero
+    let data: Vec<f32> = (0..(8 * 64)).map(|i| if (i / 64) % 2 == 0 { -5.0f32 } else { 5.0f32 }).collect();
+    let z_healthy = Tensor::from_vec(data, (8, 64), &device).expect("healthy");
     let loss_healthy = compute_latent_variance_loss(&z_healthy, 1.0)
         .expect("compute_latent_variance_loss healthy");
     let loss_h_val: f32 = loss_healthy.to_scalar().expect("loss_h_val");

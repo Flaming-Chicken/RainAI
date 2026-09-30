@@ -1,4 +1,5 @@
 #![allow(unsafe_code)]
+#![allow(clippy::excessive_precision, clippy::manual_memcpy, clippy::chunks_exact_to_as_chunks)]
 //! Neural Inference Runtime for Continuous Mixed-Precision RainAI Models.
 //!
 //! Exposes unified execution engines across CPU SIMD vector baselines, Hugging Face Candle

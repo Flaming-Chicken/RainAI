@@ -197,10 +197,6 @@ pub fn compute_expert_diversity_loss(prob_history: &[Tensor]) -> Result<Tensor> 
     }
 }
 
-/// 1-Step Consistency Distillation Jump Head.
-/// Predicts the multi-step converged latent delta in a single forward pass,
-/// enabling sub-millisecond, 1-step Euler inference on edge / WebGPU devices.
-
 /// Beta-VAE loss: Reconstruction MSE + $\beta \cdot \text{KL}(q(z|x) \| p(z))$.
 /// Beta-VAE loss with Free-Bits thresholding to prevent posterior collapse:
 /// For each latent dimension d, enforces KL_d >= free_bits nats.

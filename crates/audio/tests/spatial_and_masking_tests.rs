@@ -68,3 +68,76 @@ fn test_ambient_noise_masking_adaptation() {
     assert!(rec_loud.gain_boost_db > rec_quiet.gain_boost_db);
     assert!(rec_loud.low_cut_hz >= 80.0);
 }
+
+#[test]
+fn test_custom_ir_wav_and_sofa_loading_with_cas_cache() {
+    let mut spatializer = SofaSpatializer::new(48000);
+    let temp_dir = std::env::temp_dir().join(format!(
+        "rainai_cas_test_{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    ));
+
+    // 1. Synthesize a 48kHz stereo WAV impulse response in memory
+    let spec = hound::WavSpec {
+        channels: 2,
+        sample_rate: 48000,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    {
+        let mut writer = hound::WavWriter::new(&mut cursor, spec).expect("create wav writer");
+        // Center impulse with decaying tail
+        writer.write_sample(8000i16).unwrap();
+        writer.write_sample(8000i16).unwrap();
+        for i in 1..64 {
+            let val = (8000.0 * (-0.1 * i as f32).exp()) as i16;
+            writer.write_sample(val).unwrap();
+            writer.write_sample(val).unwrap();
+        }
+        writer.finalize().expect("finalize wav");
+    }
+    let wav_bytes = cursor.into_inner();
+
+    // 2. Load custom IR into spatializer with CAS caching
+    let meta_wav = spatializer
+        .load_custom_ir_from_bytes("living_room_reverb.wav", &wav_bytes, Some(&temp_dir))
+        .expect("load custom wav ir");
+
+    assert_eq!(meta_wav.name, "living_room_reverb.wav");
+    assert_eq!(meta_wav.format, "wav");
+    assert_eq!(meta_wav.sample_rate, 48000);
+    assert_eq!(meta_wav.channels, 2);
+    assert_eq!(meta_wav.sample_count, 64);
+    assert_eq!(meta_wav.byte_size, wav_bytes.len());
+    assert!(!meta_wav.sha256_hash.is_empty());
+
+    // 3. Verify zero-copy CAS storage
+    let cas = spodeian_cache::ContentAddressedStorage::new(&temp_dir).expect("open CAS");
+    assert!(cas.contains(&meta_wav.sha256_hash));
+    let cached_bytes = cas.get(&meta_wav.sha256_hash).expect("retrieve CAS blob");
+    assert_eq!(cached_bytes, wav_bytes);
+
+    // 4. Verify binaural convolution with the custom IR
+    let input = vec![1.0f32, 0.0, 0.0, 0.0];
+    let (left, right) = spatializer.spatialize_mono(&input, SphericalPosition::new(0.0, 0.0, 1.0));
+    assert!(left.len() >= 64);
+    assert!(right.len() >= 64);
+    assert!(left[0] > 0.0);
+    assert!(right[0] > 0.0);
+
+    // 5. Test JSON/SOFA impulse response loading
+    let sofa_json = r#"{
+        "left": [0.8, 0.4, 0.2, 0.1],
+        "right": [0.1, 0.2, 0.4, 0.8]
+    }"#;
+    let meta_sofa = spatializer
+        .load_custom_ir_from_bytes("studio_booth.sofa", sofa_json.as_bytes(), None)
+        .expect("load custom sofa ir");
+    assert_eq!(meta_sofa.name, "studio_booth.sofa");
+    assert_eq!(meta_sofa.format, "sofa");
+    assert_eq!(meta_sofa.channels, 2);
+    assert_eq!(meta_sofa.sample_count, 4);
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
