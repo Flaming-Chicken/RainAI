@@ -115,17 +115,41 @@ impl TemplateApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         info!("Initializing RainAI Studio...");
 
-        let mut loaded_from_storage = true;
-        #[allow(unused_mut)]
-        let mut state = load_state_multi_tier(cc.storage).unwrap_or_else(|| {
+        let first_launch = is_first_launch(cc.storage);
+        #[allow(unused_variables)]
+        let (mut state, loaded_from_storage) = if first_launch {
+            info!("First launch detected! Auto-starting Gentle Summer Rain default soundscape at 60% volume.");
+            let mut s = shared::AppState::default();
+            s.rain = shared::preset::WeatherPreset::gentle_summer_rain().state;
+            s.rain.is_playing = true;
+            s.rain.master_volume = 0.60;
+            (s, false)
+        } else if let Some(saved) = load_state_multi_tier(cc.storage) {
+            (saved, true)
+        } else {
             warn!("No saved state found in storage, initializing fresh defaults.");
-            loaded_from_storage = false;
-            AppState::default()
-        });
+            (shared::AppState::default(), false)
+        };
+
+        let session = load_session_state(cc.storage);
+        let mut rain_view = RainView::default();
+        rain_view.flow_solver = session.flow_solver;
+        rain_view.decode_mode = session.decode_mode;
+        rain_view.webgpu_fp16 = session.webgpu_fp16_enabled;
+        rain_view.show_advanced_inspector = session.show_advanced_inspector;
+        rain_view.noise_masking_enabled = session.noise_masking_enabled;
+        rain_view.hrtf_profile = session.hrtf_profile;
+
+        if first_launch {
+            rain_view.toast_notification = Some((
+                "Welcome to RainAI! Auto-playing Gentle Summer Rain soundscape.".to_string(),
+                25.0,
+            ));
+        }
 
         #[cfg(target_arch = "wasm32")]
         {
-            if !loaded_from_storage {
+            if !loaded_from_storage && !first_launch {
                 if let Some(win) = web_sys::window() {
                     let inner_w = win.inner_width().ok().and_then(|v| v.as_f64()).unwrap_or(1024.0);
                     if inner_w < 650.0 {
@@ -157,13 +181,34 @@ impl TemplateApp {
             }
         }
 
-        Self {
+        let mut app = Self {
             state,
+            rain_view,
             ..Default::default()
+        };
+
+        if first_launch || app.state.rain.is_playing {
+            app.ensure_audio_engine();
         }
+
+        app
     }
 
     pub fn persist_state(&mut self) {
+        let session = PersistentSessionState {
+            flow_solver: self.rain_view.flow_solver,
+            active_preset_name: "Gentle Summer Rain".to_string(),
+            master_volume: self.state.rain.master_volume,
+            decode_mode: self.rain_view.decode_mode,
+            noise_masking_enabled: self.rain_view.noise_masking_enabled,
+            noise_masking_threshold_db: -40.0,
+            hrtf_profile: self.rain_view.hrtf_profile.clone(),
+            webgpu_fp16_enabled: self.rain_view.webgpu_fp16,
+            show_advanced_inspector: self.rain_view.show_advanced_inspector,
+        };
+        save_session_state(None, &session);
+        mark_first_launch_done(None);
+
         if let Ok(json_str) = serde_json::to_string(&self.state) {
             match save_state_multi_tier(DEDICATED_STORAGE_KEY, &json_str) {
                 Ok(backend) => {
@@ -229,15 +274,22 @@ impl TemplateApp {
 
     pub fn ensure_audio_engine(&mut self) {
         if self.audio_state.is_none() {
+            self.rain_view.audio_status_label = "Initializing Audio Engine...".to_string();
             #[cfg(not(target_arch = "wasm32"))]
             {
                 match DesktopAudioEngine::start(self.state.rain.clone(), self.rain_view.decode_mode) {
                     Ok(engine) => {
                         self.audio_state = Some(engine.state.clone());
                         self.desktop_audio = Some(engine);
+                        self.rain_view.audio_status_label = "Ready (48kHz Desktop Audio)".to_string();
                     }
                     Err(e) => {
                         error!("Failed to initialize DesktopAudioEngine: {e}");
+                        self.rain_view.audio_status_label = "Audio Fallback Active".to_string();
+                        self.rain_view.toast_notification = Some((
+                            format!("Audio engine init error: {e}. Running in visual/procedural fallback mode."),
+                            15.0,
+                        ));
                     }
                 }
             }
@@ -247,9 +299,15 @@ impl TemplateApp {
                     Ok(engine) => {
                         self.audio_state = Some(engine.state.clone());
                         self.web_audio = Some(engine);
+                        self.rain_view.audio_status_label = "Ready (48kHz WebAudio Spatial)".to_string();
                     }
                     Err(e) => {
                         error!("Failed to initialize WebAudioEngine: {e}");
+                        self.rain_view.audio_status_label = "WebAudio Fallback Active".to_string();
+                        self.rain_view.toast_notification = Some((
+                            format!("WebAudio init error: {e}. Running in visual fallback mode."),
+                            15.0,
+                        ));
                     }
                 }
             }
@@ -291,6 +349,20 @@ impl TemplateApp {
 
 impl eframe::App for TemplateApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        let session = PersistentSessionState {
+            flow_solver: self.rain_view.flow_solver,
+            active_preset_name: "Gentle Summer Rain".to_string(),
+            master_volume: self.state.rain.master_volume,
+            decode_mode: self.rain_view.decode_mode,
+            noise_masking_enabled: self.rain_view.noise_masking_enabled,
+            noise_masking_threshold_db: -40.0,
+            hrtf_profile: self.rain_view.hrtf_profile.clone(),
+            webgpu_fp16_enabled: self.rain_view.webgpu_fp16,
+            show_advanced_inspector: self.rain_view.show_advanced_inspector,
+        };
+        save_session_state(Some(storage), &session);
+        mark_first_launch_done(Some(storage));
+
         eframe::set_value(storage, eframe::APP_KEY, &self.state);
 
         if let Ok(json_str) = serde_json::to_string(&self.state) {

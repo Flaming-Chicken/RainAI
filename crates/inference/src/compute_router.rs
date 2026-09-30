@@ -106,8 +106,10 @@ impl ComputeBackend for WgslComputeBackend {
     }
 }
 
+use serde::{Deserialize, Serialize};
+
 /// Supported Continuous Flow ODE Solver Algorithms.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum FlowSolverAlgorithm {
     /// Fixed-step Runge-Kutta 4th Order.
     FixedRk4 { steps: usize },
@@ -123,6 +125,32 @@ pub enum FlowSolverAlgorithm {
     DpmSolverPP { steps: usize },
     /// Neural ODE adaptive step modulator with trajectory curvature damping.
     LearnedCurvature { tol: f32, initial_h: f32 },
+}
+
+impl FlowSolverAlgorithm {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::FixedRk4 { .. } => "Fixed RK4 (Classic 4th-Order)",
+            Self::AdaptiveRk45 { .. } => "Adaptive RK45 (Dormand-Prince)",
+            Self::AdaptiveRk23 { .. } => "Adaptive RK23 (Bogacki-Shampine)",
+            Self::AdaptiveTsit5 { .. } => "Adaptive Tsit5 (Tsitouras 5(4) FSAL)",
+            Self::AdaptiveHeun2 { .. } => "Adaptive Heun2 (EDM/Karras 2nd-Order)",
+            Self::DpmSolverPP { .. } => "DPM-Solver++ (Fast Multistep)",
+            Self::LearnedCurvature { .. } => "Learned Curvature (Neural ODE Damped)",
+        }
+    }
+
+    pub fn short_name(&self) -> &'static str {
+        match self {
+            Self::FixedRk4 { .. } => "Fixed RK4",
+            Self::AdaptiveRk45 { .. } => "RK45",
+            Self::AdaptiveRk23 { .. } => "RK23",
+            Self::AdaptiveTsit5 { .. } => "Tsit5",
+            Self::AdaptiveHeun2 { .. } => "Heun2",
+            Self::DpmSolverPP { .. } => "DPM++",
+            Self::LearnedCurvature { .. } => "Learned Curvature",
+        }
+    }
 }
 
 impl Default for FlowSolverAlgorithm {

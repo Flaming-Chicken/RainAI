@@ -63,9 +63,76 @@ impl WeatherPreset {
         Self::from_json(json_str).map_err(|e| e.to_string())
     }
 
+    /// Default curated soundscape for first-launch auto-start:
+    /// Gentle Summer Rain, moderate droplet density (0.45 intensity), volume 60%, auto-plays immediately.
+    pub fn gentle_summer_rain() -> Self {
+        Self::new(
+            "Gentle Summer Rain",
+            "Soothing summer rainfall with moderate droplet density on broad leaves and soft soil, warm and relaxing.",
+            RainState {
+                is_playing: true,
+                master_volume: 0.60,
+                quality_tier: QualityTier::AdaptiveMinimum,
+                noise_color: NoiseColor::Pink,
+                evolve_enabled: true,
+                evolve_speed: 0.20,
+                drift_time: 0.0,
+                weather: BaseWeather {
+                    intensity: 0.45,
+                    runoff: 0.35,
+                    temperature: 0.70,
+                    humidity: 0.80,
+                    pitch_angle: 0.08,
+                    distance: 0.35,
+                    enclosure: 0.0,
+                },
+                surfaces: SurfaceMixture {
+                    tin: 0.05,
+                    leaves_broad: 0.40,
+                    pine_needles: 0.25,
+                    pavement: 0.10,
+                    water_deep: 0.05,
+                    puddle_shallow: 0.15,
+                    canvas_tent: 0.0,
+                    glass_window: 0.0,
+                    wood_deck: 0.0,
+                },
+                wind: WindParameters {
+                    speed: 0.18,
+                    gustiness: 0.15,
+                    turbulence: 0.12,
+                    howl: 0.05,
+                },
+                side_sounds: SideSounds {
+                    insect_density: 0.20,
+                    insect_proximity: 0.75,
+                    insect_azimuth: -0.3,
+                    bird_activity: 0.15,
+                    bird_proximity: 0.80,
+                    bird_elevation: 0.35,
+                    fireplace_intensity: 0.0,
+                    fireplace_crackle_rate: 0.0,
+                    fireplace_azimuth: 0.0,
+                    fireplace_elevation: 0.0,
+                    thunder_proximity: 0.0,
+                    thunder_rumble_length: 0.0,
+                    thunder_azimuth: 0.0,
+                    thunder_elevation: 0.0,
+                    traffic_distance: 0.0,
+                    traffic_wetness: 0.0,
+                    traffic_azimuth_start: 0.0,
+                    traffic_azimuth_end: 0.0,
+                },
+                ..Default::default()
+            },
+        )
+        .with_tags(&["summer", "relaxing", "onboarding", "default", "sleep"])
+    }
+
     /// Default curated presets spanning diverse environments
     pub fn builtins() -> Vec<Self> {
         vec![
+            Self::gentle_summer_rain(),
             Self::new(
                 "Gentle Meadow Drizzle",
                 "Light soothing droplets falling on broad leaves and pine needles with gentle breeze and distant birds.",
