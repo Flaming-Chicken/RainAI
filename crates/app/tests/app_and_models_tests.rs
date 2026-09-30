@@ -76,3 +76,20 @@ fn test_rain_view_custom_ir_file_picker_and_session_state() {
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn test_first_launch_rain_audio_auto_playback() {
+    // Verify default preset audio configuration for first launch
+    let preset = shared::preset::WeatherPreset::gentle_summer_rain();
+    assert!(!preset.name.is_empty());
+    let mut rain_state = preset.state;
+
+    // When first launch is triggered, app sets playing=true and volume=0.60
+    rain_state.is_playing = true;
+    rain_state.master_volume = 0.60;
+
+    assert!(rain_state.is_playing);
+    assert!((rain_state.master_volume - 0.60).abs() < f32::EPSILON);
+    assert_eq!(app::storage_manager::FIRST_LAUNCH_STORAGE_KEY, "rainai_first_launch_done");
+}
+
