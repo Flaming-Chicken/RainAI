@@ -286,3 +286,26 @@ jobs:
 
       - name: Syntax Check deploy.sh
         run: bash -n deploy.sh
+
+  # 6. Mobile Cross-Compilation Verification
+  mobile-build-check:
+    name: Mobile Build Check (Android & iOS)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust with Mobile Targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,aarch64-apple-ios-sim
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check Android Mobile Target
+        run: cargo check -p app --target aarch64-linux-android
+
+      - name: Check iOS Simulator Target
+        run: cargo check -p app --target aarch64-apple-ios-sim
+
