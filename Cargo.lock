@@ -484,6 +484,7 @@ dependencies = [
  "serde_json",
  "shared",
  "spodeian-cache",
+ "spodeian-ml-utils",
  "thiserror 2.0.20",
  "tracing",
  "wasm-bindgen",

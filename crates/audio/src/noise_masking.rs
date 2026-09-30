@@ -43,12 +43,15 @@ pub struct MaskingRecommendation {
     pub low_cut_hz: f32,
 }
 
-/// Dynamic noise masking controller.
+use spodeian_ml_utils::OnlineRlsFilter64;
+
+/// Dynamic noise masking controller with RLS adaptive tracking.
 #[derive(Debug, Clone)]
 pub struct AmbientNoiseMasker {
     pub target_snr_db: f32,
     pub adaptation_rate: f32,
     pub current_recommendation: MaskingRecommendation,
+    pub rls_filter: OnlineRlsFilter64,
 }
 
 impl AmbientNoiseMasker {
@@ -62,8 +65,10 @@ impl AmbientNoiseMasker {
                 gain_boost_db: 0.0,
                 low_cut_hz: 80.0,
             },
+            rls_filter: OnlineRlsFilter64::new(4, 0.98, 100.0),
         }
     }
+
 
     /// Analyzes an incoming mono buffer of microphone / ambient room samples.
     pub fn analyze_buffer(samples: &[f32]) -> NoiseSpectrum {
@@ -109,10 +114,20 @@ impl AmbientNoiseMasker {
             80.0
         };
 
+        // Adaptive RLS tracking of ambient room acoustic conditions
+        let x = [
+            1.0,
+            spectrum.rms_db as f64 / 100.0,
+            spectrum.mid_energy as f64,
+            spectrum.high_energy as f64,
+        ];
+        let _ = self.rls_filter.update(&x, target_density as f64);
+        let adapted_density = (self.rls_filter.predict(&x) as f32).clamp(1.0, 2.5);
+
         // Smooth adaptation
         let alpha = self.adaptation_rate;
         self.current_recommendation.rain_density_scale +=
-            alpha * (target_density - self.current_recommendation.rain_density_scale);
+            alpha * (adapted_density - self.current_recommendation.rain_density_scale);
         self.current_recommendation.droplet_velocity_scale +=
             alpha * (target_velocity - self.current_recommendation.droplet_velocity_scale);
         self.current_recommendation.gain_boost_db +=
@@ -122,3 +137,4 @@ impl AmbientNoiseMasker {
         self.current_recommendation
     }
 }
+
