@@ -8,10 +8,10 @@
 //! - Seamless Open/Close Lifecycle: Atomic safetensors write (.tmp rename) and JSON state ensure zero lost progress or corruption.
 //! - Active Learning Audio Auditing: HITL preview queue for high-uncertainty surfaces with live loss re-weighting.
 //! - Streamlined 4-Tab Interface:
-//!     Tab 0: Mission Control & Flight Deck
-//!     Tab 1: Dataset & 9-Surface Health (with 15 GB Rolling Quota)
-//!     Tab 2: Neural Blueprint & Quantization Slices
-//!     Tab 3: Live Diagnostics & Streaming Logs (Zero scrollbars)
+//!   - Tab 0: Mission Control & Flight Deck
+//!   - Tab 1: Dataset & 9-Surface Health (with 15 GB Rolling Quota)
+//!   - Tab 2: Neural Blueprint & Quantization Slices
+//!   - Tab 3: Live Diagnostics & Streaming Logs (Zero scrollbars)
 
 use anyhow::Result;
 use crossterm::{
@@ -427,11 +427,13 @@ impl App {
             None => ("CUDA/DirectX GPU".to_string(), 8192),
         };
 
-        let mut tuning_state = GranularTuningState::default();
-        tuning_state.batch_size = hw_profile.recommended_batch_size;
-        tuning_state.accumulation_steps = hw_profile.recommended_accumulation_steps;
-        tuning_state.thinking_steps = hw_profile.recommended_thinking_steps;
-        tuning_state.tau_moe = 0.75;
+        let tuning_state = GranularTuningState {
+            batch_size: hw_profile.recommended_batch_size,
+            accumulation_steps: hw_profile.recommended_accumulation_steps,
+            thinking_steps: hw_profile.recommended_thinking_steps,
+            tau_moe: 0.75,
+            ..Default::default()
+        };
 
         let (gpu_tx, gpu_rx) = mpsc::channel();
         thread::spawn(move || {
@@ -526,7 +528,7 @@ impl App {
             gpu_name,
             gpu_usage: 0.0,
             gpu_mem_used_mb: 0,
-            gpu_mem_total_mb: gpu_mem_total_mb,
+            gpu_mem_total_mb,
             gpu_rx,
             log_rx,
             log_tx,
@@ -716,19 +718,21 @@ impl App {
         });
 
         // Build config from tuning parameters
-        let mut config = CandleTrainConfig::default();
-        config.learning_rate = self.tuning_state.learning_rate;
-        config.batch_size = self.tuning_state.batch_size;
-        config.accumulation_steps = self.tuning_state.accumulation_steps;
-        config.max_thinking_steps = self.tuning_state.thinking_steps;
-        config.tau_moe = self.tuning_state.tau_moe as f64;
-        config.lambda_soup_deficit = self.tuning_state.lambda_soup;
-        config.stft_weight = self.tuning_state.stft_weight;
-        config.cfg_dropout = self.tuning_state.cfg_dropout as f32;
-        config.vae_epochs = 5;
-        config.mamba_epochs = 10;
-        config.max_batches = 190; // Full epoch pass over 1,526 chunks (1526 / 8 = 190 batches)
-        config.continuous_refinement = true;
+        let mut config = CandleTrainConfig {
+            learning_rate: self.tuning_state.learning_rate,
+            batch_size: self.tuning_state.batch_size,
+            accumulation_steps: self.tuning_state.accumulation_steps,
+            max_thinking_steps: self.tuning_state.thinking_steps,
+            tau_moe: self.tuning_state.tau_moe as f64,
+            lambda_soup_deficit: self.tuning_state.lambda_soup,
+            stft_weight: self.tuning_state.stft_weight,
+            cfg_dropout: self.tuning_state.cfg_dropout as f32,
+            vae_epochs: 5,
+            mamba_epochs: 10,
+            max_batches: 190, // Full epoch pass over 1,526 chunks (1526 / 8 = 190 batches)
+            continuous_refinement: true,
+            ..Default::default()
+        };
 
         thread::spawn(move || {
             let _ = log_tx.send("[⚡] Autonomous In-Process Candle Training Engine Initiated (Continuous Stream).".to_string());
@@ -1219,19 +1223,21 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                                 }
                                 if let Some(ref cfg_mtx) = app.training_steering.dynamic_config {
                                     if let Ok(mut g) = cfg_mtx.lock() {
-                                        let mut c = CandleTrainConfig::default();
-                                        c.learning_rate = app.tuning_state.learning_rate;
-                                        c.batch_size = app.tuning_state.batch_size;
-                                        c.accumulation_steps = app.tuning_state.accumulation_steps;
-                                        c.max_thinking_steps = app.tuning_state.thinking_steps;
-                                        c.tau_moe = app.tuning_state.tau_moe as f64;
-                                        c.lambda_soup_deficit = app.tuning_state.lambda_soup;
-                                        c.stft_weight = app.tuning_state.stft_weight;
-                                        c.cfg_dropout = app.tuning_state.cfg_dropout as f32;
-                                        c.vae_epochs = 5;
-                                        c.mamba_epochs = 10;
-                                        c.max_batches = 190;
-                                        c.continuous_refinement = true;
+                                        let c = CandleTrainConfig {
+                                            learning_rate: app.tuning_state.learning_rate,
+                                            batch_size: app.tuning_state.batch_size,
+                                            accumulation_steps: app.tuning_state.accumulation_steps,
+                                            max_thinking_steps: app.tuning_state.thinking_steps,
+                                            tau_moe: app.tuning_state.tau_moe as f64,
+                                            lambda_soup_deficit: app.tuning_state.lambda_soup,
+                                            stft_weight: app.tuning_state.stft_weight,
+                                            cfg_dropout: app.tuning_state.cfg_dropout as f32,
+                                            vae_epochs: 5,
+                                            mamba_epochs: 10,
+                                            max_batches: 190,
+                                            continuous_refinement: true,
+                                            ..Default::default()
+                                        };
                                         *g = Some(c);
                                     }
                                 }

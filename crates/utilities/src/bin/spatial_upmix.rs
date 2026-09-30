@@ -30,8 +30,8 @@ fn decode_to_memory(input: &Path) -> Result<Vec<f32>> {
     }
     
     let mut samples = Vec::with_capacity(raw_bytes.len() / 4);
-    for chunk in raw_bytes.chunks_exact(4) {
-        samples.push(f32::from_le_bytes(chunk.try_into().unwrap()));
+    for chunk in raw_bytes.as_chunks::<4>().0.iter() {
+        samples.push(f32::from_le_bytes(*chunk));
     }
     
     Ok(samples)
@@ -75,7 +75,7 @@ fn process_audio_file(input_path: &Path, output_dir: &Path) -> Result<usize> {
         let n_frames = samples.len() / 2;
         let mut l = Vec::with_capacity(n_frames);
         let mut r = Vec::with_capacity(n_frames);
-        for chunk in samples.chunks_exact(2) {
+        for chunk in samples.as_chunks::<2>().0.iter() {
             l.push(chunk[0]);
             r.push(chunk[1]);
         }

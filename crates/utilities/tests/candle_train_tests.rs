@@ -977,7 +977,7 @@ fn test_route_smooth_softmax_zero_prob_stability() {
 
     for p in probs_vec {
         assert!(p.is_finite(), "Router probability must be finite: {}", p);
-        assert!(p >= 0.0 && p <= 1.0, "Router probability must be in [0, 1]: {}", p);
+        assert!((0.0..=1.0).contains(&p), "Router probability must be in [0, 1]: {}", p);
     }
     for m in mask_vec {
         assert!(m.is_finite(), "Router mask must be finite: {}", m);
@@ -1075,11 +1075,10 @@ fn test_clip_grad_norm_varmap_nan_sanitization() {
     let mut grads = dummy_loss.backward().unwrap();
 
     // Inject NaN into one of the gradient tensors
-    for var in varmap.all_vars() {
+    if let Some(var) = varmap.all_vars().into_iter().next() {
         let t = var.as_tensor();
         let nan_tensor = Tensor::new(&[[f32::NAN, 0.0, 0.0, 0.0]; 4], &device).unwrap();
         grads.insert(t, nan_tensor);
-        break;
     }
 
     let norm = utilities::candle_train::clip_grad_norm_varmap(&varmap, &mut grads, 1.0).unwrap();
