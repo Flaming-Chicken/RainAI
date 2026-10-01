@@ -1,6 +1,6 @@
 # 🌧️ RainAI: Real-Time Neural & Physical Spatial Rain Audio Engine
 
-[![CI](https://github.com/Spodeian/RainAI/actions/workflows/ci.yml/badge.svg)](https://github.com/Spodeian/RainAI/actions/workflows/ci.yml)
+[![CI](https://github.com/Flaming-Chicken/RainAI/actions/workflows/ci.yml/badge.svg)](https://github.com/Flaming-Chicken/RainAI/actions/workflows/ci.yml)
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC_BY--NC--SA_4.0-lightgrey.svg)](LICENSE)
 [![PyTorch 2.0+](https://img.shields.io/badge/PyTorch-2.0%2B-EE4C2C.svg?logo=pytorch)](https://pytorch.org)
 [![Rust 1.85+](https://img.shields.io/badge/Rust-1.85%2B-orange.svg?logo=rust)](https://www.rust-lang.org)

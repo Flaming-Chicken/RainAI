@@ -1778,3 +1778,4 @@ Platform: MockPlatform | File: mock_thunder_storm_001.mp3 | Category: heavy_rain
 Platform: MockPlatform | File: mock_thunder_storm_001.mp3 | Category: heavy_rain_thunder (Surface: pavement) | Tier: PublicDomain | License: CC0 | URL: https://example.com/thunder_sample.mp3
 Platform: MockPlatform | File: mock_thunder_storm_001.mp3 | Category: heavy_rain_thunder (Surface: pavement) | Tier: PublicDomain | License: CC0 | URL: https://example.com/thunder_sample.mp3
 Platform: MockPlatform | File: mock_thunder_storm_001.mp3 | Category: heavy_rain_thunder (Surface: pavement) | Tier: PublicDomain | License: CC0 | URL: https://example.com/thunder_sample.mp3
+Platform: MockPlatform | File: mock_thunder_storm_001.mp3 | Category: heavy_rain_thunder (Surface: pavement) | Tier: PublicDomain | License: CC0 | URL: https://example.com/thunder_sample.mp3
