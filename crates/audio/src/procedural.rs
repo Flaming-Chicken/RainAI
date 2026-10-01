@@ -267,6 +267,14 @@ impl ProceduralSynthesizer {
         }
     }
 
+    /// Resets procedural filters and ambient generator phases.
+    pub fn reset(&mut self) {
+        self.thunder_rumble = 0.0;
+        self.insect_phase = 0.0;
+        self.bird_chirp_counter = 0;
+        self.filterbank = SubtractiveFilterbank16::new(self.sample_rate);
+    }
+
     /// Synthesizes one 4-channel FOA frame based on current RainState
     pub fn process_frame(&mut self, state: &RainState) -> FoaFrame {
         if !state.is_playing {
