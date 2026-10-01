@@ -17,7 +17,7 @@ edition = "2024"
 license = "CC-BY-NC-SA-4.0"
 readme = "README.md"
 description = "RainAI · Real-time neural spatial soundscape synthesis studio in Rust, WebGPU, and WebAssembly"
-repository = "https://github.com/Spodeian/RainAI"
+repository = "https://github.com/Flaming-Chicken/RainAI"
 
 [workspace.dependencies]
 shared = { path = "crates/shared" }
