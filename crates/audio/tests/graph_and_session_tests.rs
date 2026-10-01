@@ -30,8 +30,10 @@ fn test_audio_graph_procedural_to_gain() {
     let mut graph = AudioGraph::new(128);
     let sample_rate = 44100;
     let proc_synth = ProceduralSynthesizer::new(sample_rate as f32);
-    let mut state = RainState::default();
-    state.is_playing = true;
+    let state = RainState {
+        is_playing: true,
+        ..Default::default()
+    };
 
     let proc_node = Box::new(ProceduralSynthesizerNode::new(proc_synth, state));
     let gain_node = Box::new(GainNode::new(0.5));
@@ -61,8 +63,10 @@ fn test_audio_graph_physical_to_ambisonic_decoder() {
     let mut graph = AudioGraph::new(64);
     let sample_rate = 44100;
     let phys_synth = PhysicalRainSynthesizer::new(sample_rate as f32);
-    let mut state = RainState::default();
-    state.is_playing = true;
+    let state = RainState {
+        is_playing: true,
+        ..Default::default()
+    };
 
     let phys_node = Box::new(PhysicalSynthesizerNode::new(phys_synth, state));
     let decoder_node = Box::new(AmbisonicDecoderNode::new(DecodeMode::BinauralHeadphones));
@@ -107,8 +111,10 @@ fn test_session_mediator_and_queues() {
     let mut graph = AudioGraph::new(64);
     let sample_rate = 44100;
     let proc_synth = ProceduralSynthesizer::new(sample_rate as f32);
-    let mut state = RainState::default();
-    state.is_playing = true;
+    let state = RainState {
+        is_playing: true,
+        ..Default::default()
+    };
 
     let proc_node = Box::new(ProceduralSynthesizerNode::new(proc_synth, state));
     let gain_node = Box::new(GainNode::new(1.0));
