@@ -66,6 +66,15 @@ impl PhysicalRainSynthesizer {
         }
     }
 
+    /// Resets the internal circular impulse buffers.
+    pub fn reset(&mut self) {
+        self.ring_w.fill(0.0);
+        self.ring_x.fill(0.0);
+        self.ring_y.fill(0.0);
+        self.ring_z.fill(0.0);
+        self.ring_pos = 0;
+    }
+
     /// Spawns a physical droplet impact into the internal circular FOA tail buffer.
     pub fn trigger_droplet(
         &mut self,

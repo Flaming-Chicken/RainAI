@@ -69,6 +69,17 @@ impl AmbientNoiseMasker {
         }
     }
 
+    /// Resets the internal RLS adaptive filter and masking parameters.
+    pub fn reset(&mut self) {
+        self.rls_filter = OnlineRlsFilter64::new(4, 0.98, 100.0);
+        self.current_recommendation = MaskingRecommendation {
+            rain_density_scale: 1.0,
+            droplet_velocity_scale: 1.0,
+            gain_boost_db: 0.0,
+            low_cut_hz: 80.0,
+        };
+    }
+
 
     /// Analyzes an incoming mono buffer of microphone / ambient room samples.
     pub fn analyze_buffer(samples: &[f32]) -> NoiseSpectrum {

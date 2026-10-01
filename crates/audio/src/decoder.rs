@@ -233,6 +233,17 @@ impl AmbisonicDecoder {
         }
     }
 
+    pub fn set_mode(&mut self, mode: DecodeMode) {
+        self.mode = mode;
+    }
+
+    pub fn reset(&mut self) {
+        self.binaural = BinauralConvolver::new();
+        self.yaw = 0.0;
+        self.pitch = 0.0;
+        self.roll = 0.0;
+    }
+
     pub fn set_orientation(&mut self, yaw: f32, pitch: f32, roll: f32) {
         self.yaw = yaw;
         self.pitch = pitch;

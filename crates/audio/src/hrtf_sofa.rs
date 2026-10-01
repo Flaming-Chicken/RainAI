@@ -297,3 +297,56 @@ pub struct CustomIrMetadata {
     pub tier: spodeian_cache::StorageTier,
 }
 
+/// Binaural Ambisonic decoding algorithms supported by the spatializer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum BinauralDecoderMode {
+    /// 32-tap time-domain FIR filterbank based on Google Resonance Audio.
+    ResonanceAudio32Tap = 0,
+    /// Custom measured SOFA or WAV HRIR direct convolution.
+    SofaCustomIr = 1,
+    /// Fast stereo speaker downmix without HRTF coloration.
+    StereoDownmix = 2,
+}
+
+impl BinauralDecoderMode {
+    pub fn from_u8(val: u8) -> Self {
+        match val {
+            0 => Self::ResonanceAudio32Tap,
+            1 => Self::SofaCustomIr,
+            2 => Self::StereoDownmix,
+            _ => Self::ResonanceAudio32Tap,
+        }
+    }
+
+    pub fn to_u8(self) -> u8 {
+        self as u8
+    }
+}
+
+/// Lock-free atomic holder for runtime binaural decoder mode switching.
+#[derive(Debug)]
+pub struct AtomicBinauralDecoderMode {
+    inner: std::sync::atomic::AtomicU8,
+}
+
+impl AtomicBinauralDecoderMode {
+    pub fn new(mode: BinauralDecoderMode) -> Self {
+        Self {
+            inner: std::sync::atomic::AtomicU8::new(mode.to_u8()),
+        }
+    }
+
+    pub fn load(&self, order: std::sync::atomic::Ordering) -> BinauralDecoderMode {
+        BinauralDecoderMode::from_u8(self.inner.load(order))
+    }
+
+    pub fn store(&self, mode: BinauralDecoderMode, order: std::sync::atomic::Ordering) {
+        self.inner.store(mode.to_u8(), order);
+    }
+
+    pub fn swap(&self, mode: BinauralDecoderMode, order: std::sync::atomic::Ordering) -> BinauralDecoderMode {
+        BinauralDecoderMode::from_u8(self.inner.swap(mode.to_u8(), order))
+    }
+}
+
