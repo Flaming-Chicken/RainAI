@@ -20,31 +20,37 @@
 //!   band-limiting, and thermal noise) for hardware robustness testing.
 //! - [`export`]: Chunk-streamed lossless 24-bit/32-bit WAV and raw Ambisonic B-format file rendering.
 
+pub mod adaptation;
 pub mod corruptions;
 pub mod decoder;
 pub mod engine;
 pub mod export;
 pub mod graph;
 pub mod history;
+pub mod hoa;
 pub mod hrtf_sofa;
 pub mod ios_audio;
 pub mod meta_governor;
 pub mod noise_masking;
 pub mod physical;
 pub mod procedural;
+pub mod ray_tracing;
 pub mod session;
 
+pub use adaptation::*;
 pub use corruptions::*;
 pub use decoder::*;
 pub use engine::*;
 pub use export::*;
 pub use graph::*;
 pub use history::*;
+pub use hoa::*;
 pub use hrtf_sofa::*;
 pub use ios_audio::*;
 pub use meta_governor::*;
 pub use noise_masking::*;
 pub use physical::*;
 pub use procedural::*;
+pub use ray_tracing::*;
 pub use session::*;
 

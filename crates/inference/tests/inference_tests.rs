@@ -161,8 +161,8 @@ fn test_multi_iteration_expert_diversity() {
     // Create router weights where expert 0 has a higher affinity initially
     let mut router_weights = vec![0.0f32; 8 * 64];
     for d in 0..64 {
-        router_weights[0 * 64 + d] = 0.20; // Expert 0 favored
-        router_weights[1 * 64 + d] = 0.15; // Expert 1 runner-up
+        router_weights[d] = 0.20; // Expert 0 favored
+        router_weights[64 + d] = 0.15; // Expert 1 runner-up
         router_weights[2 * 64 + d] = 0.10; // Expert 2
     }
 
@@ -182,9 +182,7 @@ fn test_multi_iteration_expert_diversity() {
 
     // In iteration 1, pass iteration 0 weights into deliberation history
     let mut delib_history = [0.0f32; 16];
-    for e in 0..8 {
-        delib_history[e] = weights_iter0[e];
-    }
+    delib_history[..8].copy_from_slice(&weights_iter0[..8]);
 
     let mut weights_iter1 = [0.0f32; 16];
     kernels::route_and_decay_with_history(
