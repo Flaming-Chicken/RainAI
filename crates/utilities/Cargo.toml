@@ -53,6 +53,11 @@ name = "rainai_train_candle"
 path = "src/bin/train_candle.rs"
 test = false
 
+[[bin]]
+name = "rainai_contribute"
+path = "src/bin/contribute.rs"
+test = false
+
 
 [dependencies]
 shared = { workspace = true }

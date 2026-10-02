@@ -70,3 +70,17 @@ Processed acoustic chunks and spectral features are hashed with SHA-256 and trac
   }
 }
 ```
+
+---
+
+## 4. Community Data Contributions & Ingestion Specification
+
+Guidelines, manifest schemas, and acoustic quality validation for adding new rain sources are specified in [`CONTRIBUTING_DATA.md`](CONTRIBUTING_DATA.md) and [`docs/data_contribution_guide.md`](docs/data_contribution_guide.md).
+
+Contributed sources are screened using the CLI tool:
+```bash
+cargo run -p utilities --bin rainai_contribute -- validate <manifest_or_audio_dir>
+cargo run -p utilities --bin rainai_contribute -- import-dir <audio_dir>
+```
+All approved assets are cryptographically logged with SHA-256 hashes in [`data/rain/manifest_provenance.json`](data/rain/manifest_provenance.json) and attributed in [`data/rain/ATTRIBUTIONS.txt`](data/rain/ATTRIBUTIONS.txt).
+
