@@ -28,6 +28,7 @@ pub mod audio_preview;
 pub mod autopilot;
 pub mod candle;
 pub mod candle_train;
+pub mod contribute;
 pub mod data_worker;
 pub mod features;
 pub mod golden_vectors;
@@ -37,4 +38,5 @@ pub mod spatial_upmix;
 pub mod stft_loss;
 pub mod synth_rain;
 
+pub use contribute::*;
 pub use pipeline::*;

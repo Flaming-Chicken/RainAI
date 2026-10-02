@@ -44,7 +44,7 @@ fn default_ingest_method() -> String {
     "direct_http".to_string()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LicenseTier {
     PublicDomain,
     AttributionOnly,
