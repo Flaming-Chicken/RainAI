@@ -1,0 +1,29 @@
+name = "rainai"
+main = "worker.js"
+compatibility_date = "2026-08-18"
+
+[build]
+command = "trunk build --release"
+
+# Unified R2 Bucket for accepting end-user data (Used by both staging and prod)
+[[r2_buckets]]
+binding = "DATA_BUCKET"
+bucket_name = "rainai-data-prod"
+
+# Unified D1 Database for metadata management (Used by both staging and prod)
+[[d1_databases]]
+binding = "DB"
+database_name = "rainai-prod-db"
+database_id = "prod-db-uuid-placeholder"
+
+[env.staging]
+name = "rainai-staging"
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+
+[env.production]
+name = "rainai-production"
+
+[env.production.vars]
+ENVIRONMENT = "production"
