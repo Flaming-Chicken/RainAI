@@ -112,13 +112,17 @@ export default {
     try {
       // 1. Health & Quota Diagnostics
       if (url.pathname === "/api/contribute/health" && request.method === "GET") {
+        const detectedEnv = env.ENVIRONMENT ||
+          (url.hostname.includes("pages.dev") || url.hostname.includes("staging") || url.hostname.includes("preview") || url.hostname.includes("localhost")
+            ? "staging"
+            : "production");
         return new Response(
           JSON.stringify({
             status: "healthy",
             engine: "RainAI Edge Worker",
             d1_bound: !!env.DB,
             r2_bound: !!env.DATA_BUCKET,
-            environment: env.ENVIRONMENT || "unknown",
+            environment: detectedEnv,
             timestamp: new Date().toISOString(),
           }),
           {

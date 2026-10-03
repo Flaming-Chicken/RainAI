@@ -13,12 +13,12 @@ binding = "ASSETS"
 # Unified R2 Bucket for accepting end-user data (Used by both staging and prod)
 [[r2_buckets]]
 binding = "DATA_BUCKET"
-bucket_name = "rainai-data-prod"
+bucket_name = "rainai-submissions"
 
 # Unified D1 Database for metadata management (Used by both staging and prod)
 [[d1_databases]]
 binding = "DB"
-database_name = "rainai-prod-db"
+database_name = "rainai-db"
 database_id = "prod-db-uuid-placeholder"
 
 [env.staging]
