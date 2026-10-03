@@ -62,6 +62,9 @@ pub struct WasmInferenceNode {
     state: RainState,
     neural_enabled: bool,
     use_physical: bool,
+    // Pinned pre-allocated scratch buffers for zero-allocation WebAudio transfers
+    planar_buffer: Vec<f32>,
+    stereo_buffer: Vec<f32>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -80,6 +83,10 @@ impl WasmInferenceNode {
         let physical_synth = PhysicalRainSynthesizer::new(sample_rate);
         let state = RainState::default();
 
+        // Pre-allocate up to 1024 frames of 4-channel FOA (4096 floats) and 2-channel Stereo (2048 floats)
+        let planar_buffer = vec![0.0f32; 4096];
+        let stereo_buffer = vec![0.0f32; 2048];
+
         Ok(Self {
             runner,
             synth,
@@ -87,6 +94,8 @@ impl WasmInferenceNode {
             state,
             neural_enabled: true,
             use_physical: false,
+            planar_buffer,
+            stereo_buffer,
         })
     }
 
@@ -106,18 +115,34 @@ impl WasmInferenceNode {
         Ok(vec![w, x, y, z])
     }
 
-    /// High-performance block-rate rendering returning planar First-Order Ambisonic (FOA) audio.
+    /// Returns raw pointer to the internal pinned planar 4-channel FOA scratch buffer.
+    pub fn planar_buffer_ptr(&self) -> *const f32 {
+        self.planar_buffer.as_ptr()
+    }
+
+    /// Returns raw pointer to the internal pinned stereo 2-channel scratch buffer.
+    pub fn stereo_buffer_ptr(&self) -> *const f32 {
+        self.stereo_buffer.as_ptr()
+    }
+
+    /// Zero-allocation block-rate rendering into internal pinned First-Order Ambisonic (FOA) buffer.
     ///
-    /// The neural model evaluates `step_parametric` ONCE per quantum/block, and the resulting
-    /// latent vector modulates the compiled procedural or physical DSP pipeline across `frames`.
+    /// The neural model evaluates `step_parametric` ONCE per quantum/block, and modulates the
+    /// compiled procedural or physical DSP pipeline across `frames`.
     ///
-    /// Output layout is planar Float32Array: `[W0..Wn, X0..Xn, Y0..Yn, Z0..Zn]`.
-    pub fn step_block_planar(&mut self, conditioning: &[f32], frames: usize) -> Result<Vec<f32>, JsValue> {
+    /// Rendered data is available in WASM linear memory at `planar_buffer_ptr()`.
+    /// Returns total samples rendered (`frames * 4`).
+    pub fn render_block_planar(&mut self, conditioning: &[f32], frames: usize) -> Result<usize, JsValue> {
         if conditioning.len() != CONDITION_DIM {
             return Err(JsValue::from_str(&format!(
                 "Conditioning vector must be exactly {} elements",
                 CONDITION_DIM
             )));
+        }
+
+        let total_samples = frames * 4;
+        if self.planar_buffer.len() < total_samples {
+            self.planar_buffer.resize(total_samples, 0.0f32);
         }
 
         let modulation = if self.neural_enabled {
@@ -128,9 +153,7 @@ impl WasmInferenceNode {
             None
         };
 
-        let total_samples = frames * 4;
-        let mut output = vec![0.0f32; total_samples];
-        let (w_slice, rest) = output.split_at_mut(frames);
+        let (w_slice, rest) = self.planar_buffer[..total_samples].split_at_mut(frames);
         let (x_slice, rest) = rest.split_at_mut(frames);
         let (y_slice, z_slice) = rest.split_at_mut(frames);
 
@@ -147,21 +170,27 @@ impl WasmInferenceNode {
             z_slice[i] = soft_limit(foa.z);
         }
 
-        Ok(output)
+        Ok(total_samples)
     }
 
-    /// High-performance block-rate rendering returning planar Stereo audio.
+    /// Zero-allocation block-rate rendering into internal pinned Stereo buffer.
     ///
     /// Decodes Ambisonic FOA to binaural/stereo:
     /// `L = W * 0.707 + Y * 0.5`, `R = W * 0.707 - Y * 0.5`.
     ///
-    /// Output layout is planar Float32Array: `[L0..Ln, R0..Rn]`.
-    pub fn step_block_stereo(&mut self, conditioning: &[f32], frames: usize) -> Result<Vec<f32>, JsValue> {
+    /// Rendered data is available in WASM linear memory at `stereo_buffer_ptr()`.
+    /// Returns total samples rendered (`frames * 2`).
+    pub fn render_block_stereo(&mut self, conditioning: &[f32], frames: usize) -> Result<usize, JsValue> {
         if conditioning.len() != CONDITION_DIM {
             return Err(JsValue::from_str(&format!(
                 "Conditioning vector must be exactly {} elements",
                 CONDITION_DIM
             )));
+        }
+
+        let total_samples = frames * 2;
+        if self.stereo_buffer.len() < total_samples {
+            self.stereo_buffer.resize(total_samples, 0.0f32);
         }
 
         let modulation = if self.neural_enabled {
@@ -172,9 +201,7 @@ impl WasmInferenceNode {
             None
         };
 
-        let total_samples = frames * 2;
-        let mut output = vec![0.0f32; total_samples];
-        let (left_slice, right_slice) = output.split_at_mut(frames);
+        let (left_slice, right_slice) = self.stereo_buffer[..total_samples].split_at_mut(frames);
 
         for i in 0..frames {
             let foa = if self.use_physical {
@@ -190,7 +217,19 @@ impl WasmInferenceNode {
             right_slice[i] = soft_limit(right * self.state.master_volume);
         }
 
-        Ok(output)
+        Ok(total_samples)
+    }
+
+    /// Backwards-compatible block rendering returning a copied Vec<f32>.
+    pub fn step_block_planar(&mut self, conditioning: &[f32], frames: usize) -> Result<Vec<f32>, JsValue> {
+        let total = self.render_block_planar(conditioning, frames)?;
+        Ok(self.planar_buffer[..total].to_vec())
+    }
+
+    /// Backwards-compatible block rendering returning a copied Vec<f32>.
+    pub fn step_block_stereo(&mut self, conditioning: &[f32], frames: usize) -> Result<Vec<f32>, JsValue> {
+        let total = self.render_block_stereo(conditioning, frames)?;
+        Ok(self.stereo_buffer[..total].to_vec())
     }
 
     /// Dynamically adjust the active MoE experts to throttle CPU usage.

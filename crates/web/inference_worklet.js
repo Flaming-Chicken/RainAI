@@ -13,7 +13,8 @@ class RainInferenceProcessor extends AudioWorkletProcessor {
             
             if (type === 'INIT_WASM') {
                 try {
-                    await init(payload.wasmModule);
+                    const wasmExports = await init(payload.wasmModule);
+                    this.wasmMemory = wasmExports?.memory || (typeof wasm_bindgen !== 'undefined' ? wasm_bindgen.memory : null);
                     this.inferenceNode = new WasmInferenceNode();
                     this.initialized = true;
                     this.port.postMessage({ type: 'READY' });
@@ -53,25 +54,53 @@ class RainInferenceProcessor extends AudioWorkletProcessor {
         }
 
         try {
-            if (output.length >= 4) {
-                // Ambisonic FOA 4-channel mode: W, X, Y, Z
-                const planar = this.inferenceNode.step_block_planar(this.conditioningBuffer, bufferSize);
-                output[0].set(planar.subarray(0, bufferSize));
-                output[1].set(planar.subarray(bufferSize, bufferSize * 2));
-                output[2].set(planar.subarray(bufferSize * 2, bufferSize * 3));
-                output[3].set(planar.subarray(bufferSize * 3, bufferSize * 4));
-            } else if (output.length >= 2) {
-                // Binaural / Stereo 2-channel mode: Left, Right
-                const stereo = this.inferenceNode.step_block_stereo(this.conditioningBuffer, bufferSize);
-                output[0].set(stereo.subarray(0, bufferSize));
-                output[1].set(stereo.subarray(bufferSize, bufferSize * 2));
-            } else if (output.length === 1) {
-                // Mono mode
-                const stereo = this.inferenceNode.step_block_stereo(this.conditioningBuffer, bufferSize);
-                const left = stereo.subarray(0, bufferSize);
-                const right = stereo.subarray(bufferSize, bufferSize * 2);
-                for (let i = 0; i < bufferSize; i++) {
-                    output[0][i] = (left[i] + right[i]) * 0.5;
+            if (this.wasmMemory && typeof this.inferenceNode.render_block_planar === 'function') {
+                if (output.length >= 4) {
+                    // Ambisonic FOA 4-channel mode: W, X, Y, Z
+                    this.inferenceNode.render_block_planar(this.conditioningBuffer, bufferSize);
+                    const ptr = this.inferenceNode.planar_buffer_ptr();
+                    const planar = new Float32Array(this.wasmMemory.buffer, ptr, bufferSize * 4);
+                    output[0].set(planar.subarray(0, bufferSize));
+                    output[1].set(planar.subarray(bufferSize, bufferSize * 2));
+                    output[2].set(planar.subarray(bufferSize * 2, bufferSize * 3));
+                    output[3].set(planar.subarray(bufferSize * 3, bufferSize * 4));
+                } else if (output.length >= 2) {
+                    // Binaural / Stereo 2-channel mode: Left, Right
+                    this.inferenceNode.render_block_stereo(this.conditioningBuffer, bufferSize);
+                    const ptr = this.inferenceNode.stereo_buffer_ptr();
+                    const stereo = new Float32Array(this.wasmMemory.buffer, ptr, bufferSize * 2);
+                    output[0].set(stereo.subarray(0, bufferSize));
+                    output[1].set(stereo.subarray(bufferSize, bufferSize * 2));
+                } else if (output.length === 1) {
+                    // Mono mode
+                    this.inferenceNode.render_block_stereo(this.conditioningBuffer, bufferSize);
+                    const ptr = this.inferenceNode.stereo_buffer_ptr();
+                    const stereo = new Float32Array(this.wasmMemory.buffer, ptr, bufferSize * 2);
+                    const left = stereo.subarray(0, bufferSize);
+                    const right = stereo.subarray(bufferSize, bufferSize * 2);
+                    for (let i = 0; i < bufferSize; i++) {
+                        output[0][i] = (left[i] + right[i]) * 0.5;
+                    }
+                }
+            } else {
+                // Fallback for environments where direct WASM memory export is disabled
+                if (output.length >= 4) {
+                    const planar = this.inferenceNode.step_block_planar(this.conditioningBuffer, bufferSize);
+                    output[0].set(planar.subarray(0, bufferSize));
+                    output[1].set(planar.subarray(bufferSize, bufferSize * 2));
+                    output[2].set(planar.subarray(bufferSize * 2, bufferSize * 3));
+                    output[3].set(planar.subarray(bufferSize * 3, bufferSize * 4));
+                } else if (output.length >= 2) {
+                    const stereo = this.inferenceNode.step_block_stereo(this.conditioningBuffer, bufferSize);
+                    output[0].set(stereo.subarray(0, bufferSize));
+                    output[1].set(stereo.subarray(bufferSize, bufferSize * 2));
+                } else if (output.length === 1) {
+                    const stereo = this.inferenceNode.step_block_stereo(this.conditioningBuffer, bufferSize);
+                    const left = stereo.subarray(0, bufferSize);
+                    const right = stereo.subarray(bufferSize, bufferSize * 2);
+                    for (let i = 0; i < bufferSize; i++) {
+                        output[0][i] = (left[i] + right[i]) * 0.5;
+                    }
                 }
             }
         } catch (e) {
