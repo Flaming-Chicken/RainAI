@@ -86,6 +86,7 @@ export default {
           JSON.stringify({
             status: "healthy",
             engine: "RainAI Edge Worker",
+            d1_bound: !!env.DB,
             r2_bound: !!env.DATA_BUCKET,
             environment: env.ENVIRONMENT || "unknown",
             timestamp: new Date().toISOString(),
@@ -96,7 +97,7 @@ export default {
         );
       }
 
-      // 2. Submit Contribution Metadata Record (JSON Sidecar)
+      // 2. Submit Contribution Metadata Record (D1 Transaction / R2 Sidecar)
       if (url.pathname === "/api/contribute/submit-record" && request.method === "POST") {
         const body = await request.json();
         const sha256 = body.sha256 || `url_${Date.now()}`;
@@ -105,7 +106,32 @@ export default {
         let existingRecord = null;
         let existingKey = null;
 
-        if (env.DATA_BUCKET && sha256) {
+        // Try reading existing from D1 first if bound
+        if (env.DB && sha256) {
+          const d1Row = await env.DB.prepare(
+            "SELECT * FROM records WHERE sha256 = ?"
+          ).bind(sha256).first();
+          if (d1Row) {
+            existingRecord = {
+              sha256: d1Row.sha256,
+              filename: d1Row.filename,
+              status: d1Row.status,
+              license: d1Row.license,
+              tags: JSON.parse(d1Row.tags_json || "[]"),
+              descriptions: JSON.parse(d1Row.descriptions_json || "[]"),
+              contributors: JSON.parse(d1Row.contributors_json || "[]"),
+              alternate_licenses: JSON.parse(d1Row.alternate_licenses_json || "[]"),
+              dsp_passed: d1Row.dsp_passed === 1,
+              license_approved: d1Row.license_approved === 1,
+              author: d1Row.author,
+              file_size_bytes: d1Row.file_size_bytes || 0,
+            };
+            existingKey = `ingest/${d1Row.status.toLowerCase()}/${sha256}.json`;
+          }
+        }
+
+        // Fallback to checking R2 if not found in D1
+        if (!existingRecord && env.DATA_BUCKET && sha256) {
           const checkKeys = [
             `ingest/quarantine/${sha256}.json`,
             `ingest/approved/${sha256}.json`,
@@ -165,15 +191,68 @@ export default {
         const dspPassed = (existingRecord?.dsp_passed !== false) && (body.dsp_passed !== false);
 
         let targetPrefix = `ingest/approved`;
+        let targetStatus = "APPROVED";
         if (!licenseApproved || !dspPassed) {
           targetPrefix = `ingest/quarantine`;
+          targetStatus = "QUARANTINE";
         } else if (isUrlOnly) {
           targetPrefix = `ingest/urls`;
+          targetStatus = "URL_ONLY";
         }
 
         const objectKey = `${targetPrefix}/${sha256}.json`;
-        const wasPromoted = existingKey && existingKey.startsWith(`ingest/quarantine/`) && targetPrefix === `ingest/approved`;
+        const wasPromoted = (existingRecord?.status === "QUARANTINE" || (existingKey && existingKey.startsWith(`ingest/quarantine/`))) && targetStatus === "APPROVED";
 
+        const quarantineReason = (!licenseApproved)
+          ? "UNAPPROVED_OR_MISSING_LICENSE"
+          : (!dspPassed ? "ACOUSTIC_DSP_SCREENING_FAILED" : null);
+
+        // 2a. Update D1 if bound (Atomic UPSERT with ACID guarantees)
+        if (env.DB) {
+          const insertSql = `
+            INSERT INTO records (
+              sha256, filename, status, license, license_tier, license_rank,
+              license_approved, dsp_passed, author, tags_json, descriptions_json,
+              contributors_json, alternate_licenses_json, file_size_bytes, quarantine_reason,
+              updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(sha256) DO UPDATE SET
+              filename = excluded.filename,
+              status = excluded.status,
+              license = excluded.license,
+              license_tier = excluded.license_tier,
+              license_rank = excluded.license_rank,
+              license_approved = excluded.license_approved,
+              dsp_passed = excluded.dsp_passed,
+              author = excluded.author,
+              tags_json = excluded.tags_json,
+              descriptions_json = excluded.descriptions_json,
+              contributors_json = excluded.contributors_json,
+              alternate_licenses_json = excluded.alternate_licenses_json,
+              file_size_bytes = CASE WHEN excluded.file_size_bytes > 0 THEN excluded.file_size_bytes ELSE records.file_size_bytes END,
+              quarantine_reason = excluded.quarantine_reason,
+              updated_at = datetime('now');
+          `;
+          await env.DB.prepare(insertSql).bind(
+            sha256,
+            body.filename || existingRecord?.filename || "unknown_audio",
+            targetStatus,
+            bestLic,
+            bestRankInfo.tier,
+            bestRankInfo.rank,
+            licenseApproved ? 1 : 0,
+            dspPassed ? 1 : 0,
+            body.author || existingRecord?.author || null,
+            JSON.stringify(mergedTags),
+            JSON.stringify(mergedDescriptions),
+            JSON.stringify(mergedContributors),
+            JSON.stringify(alternateLicenses),
+            body.file_size_bytes || existingRecord?.file_size_bytes || 0,
+            quarantineReason
+          ).run();
+        }
+
+        // 2b. Update R2 metadata sidecar and migrate blob if R2 is bound
         const metadataPayload = {
           ...existingRecord,
           ...body,
@@ -189,9 +268,7 @@ export default {
           target_prefix: targetPrefix,
           reconciled: !!existingRecord,
           promoted: wasPromoted,
-          quarantine_reason: (!licenseApproved) 
-            ? "UNAPPROVED_OR_MISSING_LICENSE" 
-            : (!dspPassed ? "ACOUSTIC_DSP_SCREENING_FAILED" : null),
+          quarantine_reason: quarantineReason,
         };
 
         if (env.DATA_BUCKET) {
@@ -206,7 +283,7 @@ export default {
           });
 
           // If promoted from quarantine to approved, cleanup old quarantine json and promote audio blob
-          if (wasPromoted && existingKey !== objectKey) {
+          if (wasPromoted && existingKey && existingKey !== objectKey) {
             await env.DATA_BUCKET.delete(existingKey);
 
             // Move any audio blob associated with this sha256
@@ -228,7 +305,7 @@ export default {
           JSON.stringify({
             success: true,
             object_key: objectKey,
-            status: targetPrefix.replace(`ingest/`, "").toUpperCase(),
+            status: targetStatus,
             reconciled: !!existingRecord,
             promoted: wasPromoted,
             predominant_license: bestLic,
@@ -254,6 +331,14 @@ export default {
           });
         }
 
+        // If D1 is bound, update file_size_bytes if known
+        const contentLength = parseInt(request.headers.get("Content-Length") || "0", 10);
+        if (env.DB && contentLength > 0 && sha256) {
+          await env.DB.prepare(
+            "UPDATE records SET file_size_bytes = ?, updated_at = datetime('now') WHERE sha256 = ?"
+          ).bind(contentLength, sha256).run();
+        }
+
         return new Response(
           JSON.stringify({ success: true, object_key: objectKey }),
           {
@@ -264,6 +349,34 @@ export default {
 
       // 4. Maintainer Triage: List Quarantined Records
       if (url.pathname === "/api/contribute/quarantine-list" && request.method === "GET") {
+        if (env.DB) {
+          const res = await env.DB.prepare(
+            "SELECT * FROM records WHERE status = 'QUARANTINE' ORDER BY updated_at DESC"
+          ).all();
+          const records = (res.results || []).map((r) => ({
+            sha256: r.sha256,
+            filename: r.filename,
+            status: r.status,
+            license: r.license,
+            license_tier: r.license_tier,
+            license_rank: r.license_rank,
+            license_approved: r.license_approved === 1,
+            dsp_passed: r.dsp_passed === 1,
+            author: r.author,
+            tags: JSON.parse(r.tags_json || "[]"),
+            descriptions: JSON.parse(r.descriptions_json || "[]"),
+            contributors: JSON.parse(r.contributors_json || "[]"),
+            alternate_licenses: JSON.parse(r.alternate_licenses_json || "[]"),
+            file_size_bytes: r.file_size_bytes,
+            quarantine_reason: r.quarantine_reason,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+          }));
+          return new Response(JSON.stringify({ records, total: records.length }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
         if (!env.DATA_BUCKET) {
           return new Response(JSON.stringify({ records: [] }), { headers: corsHeaders });
         }
@@ -287,6 +400,34 @@ export default {
 
       // 5. Maintainer Pull-Approved: List Approved Records
       if (url.pathname === "/api/contribute/approved-list" && request.method === "GET") {
+        if (env.DB) {
+          const res = await env.DB.prepare(
+            "SELECT * FROM records WHERE status = 'APPROVED' ORDER BY updated_at DESC"
+          ).all();
+          const records = (res.results || []).map((r) => ({
+            sha256: r.sha256,
+            filename: r.filename,
+            status: r.status,
+            license: r.license,
+            license_tier: r.license_tier,
+            license_rank: r.license_rank,
+            license_approved: r.license_approved === 1,
+            dsp_passed: r.dsp_passed === 1,
+            author: r.author,
+            tags: JSON.parse(r.tags_json || "[]"),
+            descriptions: JSON.parse(r.descriptions_json || "[]"),
+            contributors: JSON.parse(r.contributors_json || "[]"),
+            alternate_licenses: JSON.parse(r.alternate_licenses_json || "[]"),
+            file_size_bytes: r.file_size_bytes,
+            quarantine_reason: r.quarantine_reason,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+          }));
+          return new Response(JSON.stringify({ records, total: records.length }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
         if (!env.DATA_BUCKET) {
           return new Response(JSON.stringify({ records: [] }), { headers: corsHeaders });
         }
@@ -306,6 +447,42 @@ export default {
         return new Response(JSON.stringify({ records, total: records.length }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
+      }
+
+      // 6. Ephemeral Sync Purge: Acknowledge and Remove Records Committed to Git/LFS
+      if (url.pathname === "/api/contribute/ack-ingested" && request.method === "POST") {
+        const body = await request.json();
+        const shas = body.sha256_list || (body.sha256 ? [body.sha256] : []);
+        let purgedCount = 0;
+
+        for (const sha of shas) {
+          if (env.DB) {
+            await env.DB.prepare("DELETE FROM records WHERE sha256 = ?").bind(sha).run();
+          }
+          if (env.DATA_BUCKET) {
+            const cleanupKeys = [
+              `ingest/approved/${sha}.json`,
+              `ingest/quarantine/${sha}.json`,
+              `ingest/urls/${sha}.json`,
+            ];
+            for (const ext of ["flac", "wav", "m4a", "opus", "mp3"]) {
+              cleanupKeys.push(`ingest/approved/${sha}.${ext}`);
+              cleanupKeys.push(`ingest/quarantine/${sha}.${ext}`);
+              cleanupKeys.push(`ingest/blobs/${sha}.${ext}`);
+            }
+            for (const key of cleanupKeys) {
+              await env.DATA_BUCKET.delete(key);
+            }
+          }
+          purgedCount++;
+        }
+
+        return new Response(
+          JSON.stringify({ success: true, purged: purgedCount }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
       }
 
       return new Response("Not Found", { status: 404, headers: corsHeaders });

@@ -59,6 +59,86 @@ class MockR2Bucket {
   }
 }
 
+// In-memory mock for Cloudflare D1Database
+class MockD1Database {
+  constructor() {
+    this.rows = new Map();
+  }
+
+  prepare(query) {
+    const db = this;
+    return {
+      _params: [],
+      bind(...params) {
+        this._params = params;
+        return this;
+      },
+      async first() {
+        if (query.includes("SELECT * FROM records WHERE sha256 = ?")) {
+          const sha = this._params[0];
+          return db.rows.get(sha) || null;
+        }
+        return null;
+      },
+      async all() {
+        if (query.includes("WHERE status = 'QUARANTINE'")) {
+          const results = Array.from(db.rows.values()).filter((r) => r.status === "QUARANTINE");
+          return { results };
+        }
+        if (query.includes("WHERE status = 'APPROVED'")) {
+          const results = Array.from(db.rows.values()).filter((r) => r.status === "APPROVED");
+          return { results };
+        }
+        return { results: Array.from(db.rows.values()) };
+      },
+      async run() {
+        if (query.includes("INSERT INTO records")) {
+          const [
+            sha256, filename, status, license, license_tier, license_rank,
+            license_approved, dsp_passed, author, tags_json, descriptions_json,
+            contributors_json, alternate_licenses_json, file_size_bytes, quarantine_reason
+          ] = this._params;
+          db.rows.set(sha256, {
+            sha256,
+            filename,
+            status,
+            license,
+            license_tier,
+            license_rank,
+            license_approved,
+            dsp_passed,
+            author,
+            tags_json,
+            descriptions_json,
+            contributors_json,
+            alternate_licenses_json,
+            file_size_bytes,
+            quarantine_reason,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
+          return { success: true };
+        }
+        if (query.includes("UPDATE records SET file_size_bytes = ?")) {
+          const [size, sha] = this._params;
+          const rec = db.rows.get(sha);
+          if (rec) {
+            rec.file_size_bytes = size;
+            rec.updated_at = new Date().toISOString();
+          }
+          return { success: true };
+        }
+        if (query.includes("DELETE FROM records WHERE sha256 = ?")) {
+          const sha = this._params[0];
+          db.rows.delete(sha);
+          return { success: true };
+        }
+        return { success: true };
+      },
+    };
+  }
+}
+
 async function runE2ETests() {
   console.log("=== RainAI Edge Worker E2E Test Suite ===");
   const bucket = new MockR2Bucket();
@@ -203,6 +283,134 @@ async function runE2ETests() {
     const json = await res.json();
     assert(json.total === 1, "Approved queue contains 1 promoted item");
     assert(json.records[0].sha256 === testSha, "Approved record SHA matches");
+  }
+
+  // 8. Ephemeral Acknowledgment & Purge in R2
+  {
+    const req = new Request("https://staging.rainai.app/api/contribute/ack-ingested", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sha256_list: [testSha] }),
+    });
+    const res = await worker.fetch(req, env, {});
+    assert(res.status === 200, "Ack-ingested purge returns 200");
+    const json = await res.json();
+    assert(json.purged === 1, "Purged 1 record");
+    const purgedJson = await bucket.get(`ingest/approved/${testSha}.json`);
+    assert(purgedJson === null, "Approved JSON sidecar purged after ack");
+    const purgedBlob = await bucket.get(`ingest/approved/${testSha}.flac`);
+    assert(purgedBlob === null, "Approved audio blob purged after ack");
+  }
+
+  console.log("\n--- Testing D1 SQLite Transaction Coordinator Engine ---");
+  const d1Db = new MockD1Database();
+  const d1Bucket = new MockR2Bucket();
+  const d1Env = { DB: d1Db, DATA_BUCKET: d1Bucket };
+
+  // 9. D1 Health Check with DB bound
+  {
+    const req = new Request("https://staging.rainai.app/api/contribute/health", { method: "GET" });
+    const res = await worker.fetch(req, d1Env, {});
+    assert(res.status === 200, "D1 Health check returns 200 OK");
+    const json = await res.json();
+    assert(json.d1_bound === true, "D1 is confirmed bound");
+    assert(json.r2_bound === true, "R2 is confirmed bound");
+  }
+
+  // 10. D1 Submit record to Quarantine
+  const d1Sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+  {
+    const payload = {
+      sha256: d1Sha,
+      filename: "quarantine_sample.wav",
+      license: "Unknown",
+      license_approved: false,
+      dsp_passed: true,
+      tags: ["raw_rain"],
+      descriptions: ["Field recording in woods"],
+      author: "Charlie",
+    };
+    const req = new Request("https://staging.rainai.app/api/contribute/submit-record", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const res = await worker.fetch(req, d1Env, {});
+    assert(res.status === 200, "D1 Submit record returns 200");
+    const json = await res.json();
+    assert(json.status === "QUARANTINE", "D1 routes Unknown to QUARANTINE");
+
+    // Verify row in D1
+    const d1Row = await d1Db.prepare("SELECT * FROM records WHERE sha256 = ?").bind(d1Sha).first();
+    assert(d1Row !== null, "Record persisted in D1 database");
+    assert(d1Row.status === "QUARANTINE", "D1 record status is QUARANTINE");
+  }
+
+  // 11. D1 Quarantine listing
+  {
+    const req = new Request("https://staging.rainai.app/api/contribute/quarantine-list", { method: "GET" });
+    const res = await worker.fetch(req, d1Env, {});
+    assert(res.status === 200, "D1 Quarantine list returns 200");
+    const json = await res.json();
+    assert(json.total === 1, "D1 has 1 quarantined record");
+    assert(json.records[0].sha256 === d1Sha, "Quarantined record matches d1Sha");
+    assert(json.records[0].tags.includes("raw_rain"), "Tags parsed accurately from JSON");
+  }
+
+  // 12. D1 Reconcile & Auto-promote via UPSERT
+  {
+    const payload = {
+      sha256: d1Sha,
+      filename: "quarantine_sample.wav",
+      license: "CC-BY-4.0",
+      license_approved: true,
+      dsp_passed: true,
+      tags: ["raw_rain", "forest_canopy"],
+      descriptions: ["Gentle rain under dense forest canopy"],
+      author: "Charlie & Dave",
+    };
+    const req = new Request("https://staging.rainai.app/api/contribute/submit-record", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const res = await worker.fetch(req, d1Env, {});
+    assert(res.status === 200, "D1 Reconcile returns 200");
+    const json = await res.json();
+    assert(json.status === "APPROVED", "D1 record promoted to APPROVED");
+    assert(json.reconciled === true, "D1 record reconciled");
+    assert(json.promoted === true, "D1 record marked promoted");
+
+    // Check row in D1
+    const d1Row = await d1Db.prepare("SELECT * FROM records WHERE sha256 = ?").bind(d1Sha).first();
+    assert(d1Row.status === "APPROVED", "D1 row status updated to APPROVED");
+    assert(d1Row.license === "CC-BY-4.0", "D1 row license upgraded");
+  }
+
+  // 13. D1 Approved list
+  {
+    const req = new Request("https://staging.rainai.app/api/contribute/approved-list", { method: "GET" });
+    const res = await worker.fetch(req, d1Env, {});
+    assert(res.status === 200, "D1 Approved list returns 200");
+    const json = await res.json();
+    assert(json.total === 1, "D1 has 1 approved record");
+    assert(json.records[0].sha256 === d1Sha, "Approved record SHA matches");
+  }
+
+  // 14. D1 Ephemeral Sync Purge
+  {
+    const req = new Request("https://staging.rainai.app/api/contribute/ack-ingested", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sha256_list: [d1Sha] }),
+    });
+    const res = await worker.fetch(req, d1Env, {});
+    assert(res.status === 200, "D1 Ack-ingested returns 200");
+    const json = await res.json();
+    assert(json.purged === 1, "Purged 1 record from D1");
+
+    const d1Row = await d1Db.prepare("SELECT * FROM records WHERE sha256 = ?").bind(d1Sha).first();
+    assert(d1Row === null, "Record successfully purged from D1 middle database");
   }
 
   console.log(`\nResults: ${passed} passed, ${failed} failed.\n`);
