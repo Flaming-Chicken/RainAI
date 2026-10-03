@@ -75,6 +75,7 @@ futures-intrusive = "0.5"
 safetensors = "0.4"
 winit = { version = "0.30", default-features = false }
 android-activity = { version = "0.6", default-features = false, features = ["native-activity"] }
+symphonia = { version = "0.5.4", features = ["all"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

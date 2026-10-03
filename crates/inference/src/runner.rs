@@ -444,4 +444,77 @@ impl InferenceRunner {
         }
         Ok(())
     }
+
+    /// Evaluates a block-rate neural step (50-100 Hz) to produce continuous parametric control signals
+    /// that dynamically modulate compiled procedural and physical DSP engines.
+    pub fn step_parametric(&mut self, conditioning: &[f32; CONDITION_DIM]) -> NeuralParametricControl {
+        // Run recurrence and get the directional FOA vector
+        let (w, x, y, z) = self.step(conditioning);
+
+        let mut band_gains = [1.0f32; 16];
+        let mut band_freq_drifts = [0.0f32; 16];
+
+        // Map latent state dimensions 0..16 to filterbank gains with softplus/sigmoid shaping
+        for i in 0..16 {
+            let latent_val = self.latent_state[i];
+            band_gains[i] = (latent_val.tanh() * 0.5 + 1.0).max(0.05);
+        }
+
+        // Map latent state dimensions 16..32 to resonant frequency micro-drifts
+        for i in 0..16 {
+            let drift_val = self.latent_state[16 + i];
+            band_freq_drifts[i] = drift_val.tanh() * 0.08; // ±8% frequency variation
+        }
+
+        // Latent dimensions 32..36 map to droplet physical parameters and aeroacoustics
+        let droplet_rate_mod = (self.latent_state[32].tanh() * 0.75 + 1.0).clamp(0.2, 2.5);
+        let droplet_energy_mod = (self.latent_state[33].tanh() * 0.5 + 1.0).clamp(0.4, 2.0);
+        let wind_gust_mod = (self.latent_state[34].tanh() * 0.6 + 1.0).clamp(0.2, 2.2);
+        let wind_howl_mod = (self.latent_state[35].tanh() * 0.7 + 1.0).clamp(0.1, 2.5);
+
+        NeuralParametricControl {
+            band_gains,
+            band_freq_drifts,
+            droplet_rate_mod,
+            droplet_energy_mod,
+            wind_gust_mod,
+            wind_howl_mod,
+            spatial_vector: (w, x, y, z),
+        }
+    }
 }
+
+/// Continuous neural-parametric control signals produced by the Mamba2-MoE model at block rate (50-100 Hz).
+/// These signals drive compiled procedural and physical DSP synthesizers without requiring 48kHz neural forward passes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NeuralParametricControl {
+    /// 16-band subtractive filterbank gains (linear multipliers, nominal 1.0)
+    pub band_gains: [f32; 16],
+    /// 16-band resonant frequency drift offsets (semitone / fractional offset)
+    pub band_freq_drifts: [f32; 16],
+    /// Raindrop Poisson impact rate modulation (nominal 1.0)
+    pub droplet_rate_mod: f32,
+    /// Raindrop kinetic energy / diameter modulation (nominal 1.0)
+    pub droplet_energy_mod: f32,
+    /// Wind gustiness modulation (nominal 1.0)
+    pub wind_gust_mod: f32,
+    /// Wind howl resonance modulation (nominal 1.0)
+    pub wind_howl_mod: f32,
+    /// 3D directional Ambisonic vector (W, X, Y, Z)
+    pub spatial_vector: (f32, f32, f32, f32),
+}
+
+impl Default for NeuralParametricControl {
+    fn default() -> Self {
+        Self {
+            band_gains: [1.0; 16],
+            band_freq_drifts: [0.0; 16],
+            droplet_rate_mod: 1.0,
+            droplet_energy_mod: 1.0,
+            wind_gust_mod: 1.0,
+            wind_howl_mod: 1.0,
+            spatial_vector: (1.0, 0.0, 0.0, 0.0),
+        }
+    }
+}
+

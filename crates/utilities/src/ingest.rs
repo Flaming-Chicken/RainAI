@@ -44,12 +44,179 @@ fn default_ingest_method() -> String {
     "direct_http".to_string()
 }
 
+/// Canonical grant text for user contributions under the default proprietary license.
+pub const RAINAI_FC_PROPRIETARY_LICENSE_TEXT: &str = "\
+By submitting this data and metadata, I grant Spodeian, Flaming Chicken, and their respective affiliates, \
+successors, and assigns a worldwide, non-exclusive, royalty-free, perpetual, irrevocable, and sublicensable \
+right to use, reproduce, modify, adapt, publish, translate, create derivative works from, distribute, and \
+publicly display this data for any purpose, including commercial and non-commercial applications. This \
+explicitly includes, without limitation, the right to use the data to train, test, and validate machine \
+learning models for the RainAI project and any other current or future projects. I represent and warrant that \
+I own or have the necessary rights to grant this license.";
+
+/// Plain-language transparency copy displayed in the UI to build contributor trust regarding RainAI's XAI architecture.
+pub const RAINAI_FC_TRANSPARENCY_NOTE: &str = "\
+While this license allows us to use your data freely to build RainAI, our system is designed for transparency. \
+We track the metadata of all contributions, meaning you will always be credited when your specific data \
+directly influences our explainable AI's outputs.";
+
+/// Mandatory contributor rights warranty statement.
+pub const CONTRIBUTOR_WARRANTY_STATEMENT: &str = "\
+I represent and warrant that I own or have the necessary rights to grant this license.";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LicenseTier {
     PublicDomain,
     AttributionOnly,
     ShareAlike,
+    ProjectProprietary,
+    Unknown,
     Restricted,
+}
+
+impl LicenseTier {
+    /// Determines whether this license tier requires contributor attribution.
+    #[inline]
+    pub fn requires_attribution(&self) -> bool {
+        matches!(self, LicenseTier::AttributionOnly | LicenseTier::ShareAlike)
+    }
+
+    /// Whether this tier is approved for direct ingestion into the primary training corpus.
+    #[inline]
+    pub fn is_approved(&self) -> bool {
+        matches!(
+            self,
+            LicenseTier::PublicDomain
+                | LicenseTier::AttributionOnly
+                | LicenseTier::ShareAlike
+                | LicenseTier::ProjectProprietary
+        )
+    }
+
+    /// Whether this submission must be immediately placed in quarantine pending license discovery or scraping.
+    #[inline]
+    pub fn is_quarantined_pending_discovery(&self) -> bool {
+        matches!(self, LicenseTier::Unknown)
+    }
+
+    /// Returns a numeric preference rank for license reconciliation when multiple licenses are granted for the same asset.
+    /// Higher values indicate licenses that give the project greater flexibility
+    /// for commercial applications, model weight distribution, and ecosystem development.
+    ///
+    /// 1. ProjectProprietary (RainAI-FC-Proprietary-License) -> 6 (Highest flexibility)
+    /// 2. PublicDomain (CC0 / Unlicense / PDDL) -> 5
+    /// 3. AttributionOnly (CC-BY 4.0/3.0/2.0, MIT, Apache 2.0) -> 4
+    /// 4. ShareAlike (CC-BY-SA 4.0/3.0) -> 3
+    /// 5. Unknown (Pending automated license scraping) -> 2
+    /// 6. Restricted (Non-Commercial / No-Derivatives) -> 1
+    #[inline]
+    pub fn preference_rank(&self) -> u8 {
+        match self {
+            Self::ProjectProprietary => 6,
+            Self::PublicDomain => 5,
+            Self::AttributionOnly => 4,
+            Self::ShareAlike => 3,
+            Self::Unknown => 2,
+            Self::Restricted => 1,
+        }
+    }
+
+    /// Returns human-readable label for the policy tier.
+    pub fn policy_description(&self) -> &'static str {
+        match self {
+            Self::PublicDomain => "Public Domain (CC0 / Unlicense / PDDL / Government unconstrained)",
+            Self::AttributionOnly => "Permissive Attribution (CC-BY 4.0/3.0/2.0, MIT, Apache 2.0, BSD, ISC, ODC-By)",
+            Self::ShareAlike => "Share-Alike (CC-BY-SA 4.0/3.0)",
+            Self::ProjectProprietary => {
+                "RainAI / Spodeian / Flaming Chicken Proprietary (Commercial grant with XAI transparency)"
+            }
+            Self::Unknown => "Unknown / Pending License Scraping (Immediately Quarantined)",
+            Self::Restricted => "Restricted / Ineligible (-NC or -ND)",
+        }
+    }
+}
+
+/// Given a collection of candidate license strings granted for the same asset across contributions,
+/// returns the predominant license that is most favorable for the project,
+/// alongside its tier and verification diagnosis.
+pub fn select_predominant_license<'a, I>(licenses: I) -> (String, LicenseTier, &'static str)
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let mut best_lic = "Unknown".to_string();
+    let mut best_tier = LicenseTier::Unknown;
+    let mut best_reason = "No licenses provided";
+    let mut best_rank = 0u8;
+
+    for lic in licenses {
+        let (ok, tier, reason) = LicenseVerifier::verify(lic);
+        let rank = tier.preference_rank();
+        if rank > best_rank || (rank == best_rank && ok && !best_tier.is_approved()) {
+            best_rank = rank;
+            best_lic = lic.to_string();
+            best_tier = tier;
+            best_reason = reason;
+        }
+    }
+
+    (best_lic, best_tier, best_reason)
+}
+
+/// Status of attribution resolution for an XAI (Explainable AI) generated output.
+///
+/// In RainAI, all training data is permanently registered upon ingestion into `ATTRIBUTIONS.txt`
+/// and model provenance cards. Therefore, individual generated soundscape outputs are **never blocked**.
+/// Runtime XAI attribution is an **optional explainability feature** rather than a blocking mandate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AttributionPolicyOutcome {
+    /// Runtime XAI attribution resolved and dynamically linked to model output.
+    Attributed {
+        contributor: String,
+        license: String,
+        tier: LicenseTier,
+    },
+    /// Runtime XAI untraced, but global training attribution is permanently recorded in ATTRIBUTIONS.txt. Output is safely served.
+    GlobalTrainingAttributed {
+        note: String,
+        tier: LicenseTier,
+    },
+    /// Public domain or unconstrained asset; no individual attribution needed. Output is safely served.
+    Unconstrained {
+        note: String,
+        tier: LicenseTier,
+    },
+}
+
+/// Evaluates attribution resolution for an XAI model output.
+///
+/// Returns an `AttributionPolicyOutcome`. Because training data is permanently attributed
+/// in `ATTRIBUTIONS.txt` and `DATA_BIBLIOGRAPHY.md` at training time, model outputs are
+/// never blocked.
+pub fn evaluate_attribution_policy(
+    tier: LicenseTier,
+    contributor: Option<&str>,
+    license_id: &str,
+) -> AttributionPolicyOutcome {
+    if let Some(author) = contributor.filter(|a| !a.trim().is_empty()) {
+        AttributionPolicyOutcome::Attributed {
+            contributor: author.to_string(),
+            license: license_id.to_string(),
+            tier,
+        }
+    } else if tier == LicenseTier::PublicDomain {
+        AttributionPolicyOutcome::Unconstrained {
+            note: "Public domain asset; unconstrained generation with permanent bibliography record.".to_string(),
+            tier,
+        }
+    } else {
+        AttributionPolicyOutcome::GlobalTrainingAttributed {
+            note: format!(
+                "Permanent dataset-level attribution active for '{}' in ATTRIBUTIONS.txt; output served unconditionally.",
+                tier.policy_description()
+            ),
+            tier,
+        }
+    }
 }
 
 pub struct LicenseVerifier;
@@ -58,13 +225,45 @@ impl LicenseVerifier {
     pub fn verify(license: &str) -> (bool, LicenseTier, &'static str) {
         let clean = license.trim().to_lowercase();
 
-        if clean.contains("nc") || clean.contains("noncommercial") || clean.contains("nd") {
+        // 1. Unknown / Unspecified -> Immediately quarantined pending discovery / scraping
+        if clean.is_empty()
+            || clean == "unknown"
+            || clean == "unspecified"
+            || clean.contains("pending")
+            || clean == "none"
+            || clean == "to be scraped"
+        {
+            return (
+                false,
+                LicenseTier::Unknown,
+                "Quarantined: License unknown or unspecified; pending automated scraping or maintainer discovery during data processing",
+            );
+        }
+
+        // 2. Proprietary Default
+        if clean.contains("rainai-fc")
+            || clean.contains("rainai-proprietary")
+            || clean.contains("spodeian-permission")
+            || clean.contains("flaming chicken")
+            || clean.contains("spodeian")
+        {
+            return (
+                true,
+                LicenseTier::ProjectProprietary,
+                "Approved: RainAI-FC-Proprietary-License (Commercial ML grant for RainAI, Spodeian, & Flaming Chicken with XAI transparency)",
+            );
+        }
+
+        // 3. Ineligible: NonCommercial / NoDerivatives
+        if clean.contains("nc") || clean.contains("noncommercial") || clean.contains("nd") || clean.contains("noderivatives") {
             return (
                 false,
                 LicenseTier::Restricted,
                 "Rejected: NonCommercial or NoDerivatives clause detected",
             );
         }
+
+        // 4. Commercial ShareAlike
         if clean.contains("cc-by-sa") {
             return (
                 true,
@@ -72,27 +271,40 @@ impl LicenseVerifier {
                 "Approved: CC-BY-SA (Commercial compatible with share-alike)",
             );
         }
+
+        // 5. Permissive Attribution (CC-BY, MIT, Apache, BSD, ISC, ODC-By, Mixkit)
         if clean.contains("cc-by")
             || clean.contains("attribution")
+            || clean.contains("mit")
+            || clean.contains("apache")
+            || clean.contains("bsd")
+            || clean.contains("isc")
+            || clean.contains("odc-by")
             || clean.contains("mixkit free license")
         {
             return (
                 true,
                 LicenseTier::AttributionOnly,
-                "Approved: CC-BY / Commercial free with attribution",
+                "Approved: Permissive Attribution (Commercial compatible with permanent training attribution)",
             );
         }
+
+        // 6. Public Domain / CC0 / Unlicense / PDDL
         if clean.contains("cc0")
             || clean.contains("public domain")
+            || clean.contains("unlicense")
+            || clean.contains("wtfpl")
+            || clean.contains("pddl")
             || clean.contains("open access")
             || clean.contains("nps natural sound")
         {
             return (
                 true,
                 LicenseTier::PublicDomain,
-                "Approved: Public domain / CC0 / Government unconstrained",
+                "Approved: Public domain / CC0 / Unlicense / Government unconstrained",
             );
         }
+
         (
             false,
             LicenseTier::Restricted,
@@ -101,67 +313,28 @@ impl LicenseVerifier {
     }
 }
 
-pub use shared::surface::CanonicalSurface;
-
-/// Tracks stratified distribution and diversity quotas across the 9 canonical surfaces.
+/// Tracks distribution of tags in the dataset.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SurfaceBalanceQuota {
-    pub counts: HashMap<CanonicalSurface, usize>,
-    pub target_per_surface: usize,
+pub struct TagBalanceQuota {
+    pub counts: HashMap<String, usize>,
 }
 
-impl SurfaceBalanceQuota {
-    pub fn new(target_per_surface: usize) -> Self {
-        let mut counts = HashMap::new();
-        for s in CanonicalSurface::ALL {
-            counts.insert(s, 0);
-        }
+impl TagBalanceQuota {
+    pub fn new() -> Self {
         Self {
-            counts,
-            target_per_surface,
+            counts: HashMap::new(),
         }
     }
 
-    pub fn record(&mut self, surface: CanonicalSurface) {
-        *self.counts.entry(surface).or_insert(0) += 1;
+    pub fn record(&mut self, tags: &[String]) {
+        for tag in tags {
+            *self.counts.entry(tag.clone()).or_insert(0) += 1;
+        }
     }
 
     pub fn total_samples(&self) -> usize {
         self.counts.values().sum()
     }
-
-    /// Computes Shannon entropy: H = -sum(p_i * ln(p_i)).
-    /// Maximum entropy across 9 categories is ln(9) ≈ 2.1972.
-    pub fn shannon_entropy(&self) -> f32 {
-        let total = self.total_samples() as f32;
-        if total == 0.0 {
-            return 0.0;
-        }
-        let mut h = 0.0f32;
-        for &count in self.counts.values() {
-            if count > 0 {
-                let p = count as f32 / total;
-                h -= p * p.ln();
-            }
-        }
-        h
-    }
-
-    /// Returns normalized diversity index in range [0.0, 1.0].
-    pub fn normalized_diversity(&self) -> f32 {
-        let max_h = (9.0f32).ln();
-        (self.shannon_entropy() / max_h).clamp(0.0, 1.0)
-    }
-
-    /// Returns surfaces currently below the targeted quota.
-    pub fn underrepresented_surfaces(&self) -> Vec<(CanonicalSurface, usize)> {
-        self.counts
-            .iter()
-            .filter(|&(_, &c)| c < self.target_per_surface)
-            .map(|(&s, &c)| (s, c))
-            .collect()
-    }
-
 }
 
 /// Acoustic quality metrics for validation and filtering of downloaded precipitation audio.
@@ -377,13 +550,77 @@ pub struct ProvenanceRecord {
     pub filename: String,
     pub source_url: String,
     pub source_platform: String,
-    pub category: String,
-    pub canonical_surface: CanonicalSurface,
-    pub license: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    pub license: Option<String>,
     pub license_tier: LicenseTier,
     pub sha256: String,
     pub file_size_bytes: u64,
     pub quality: Option<AcousticQualityMetrics>,
+    #[serde(default)]
+    pub descriptions: Vec<String>,
+    #[serde(default)]
+    pub alternate_licenses: Vec<String>,
+    #[serde(default)]
+    pub contributors: Vec<String>,
+}
+
+impl ProvenanceRecord {
+    /// Reconciles an existing provenance record with newly contributed metadata
+    /// for the identical underlying audio SHA-256 hash.
+    pub fn reconcile_with(&mut self, other: ProvenanceRecord) {
+        // 1. Merge tags uniquely
+        for tag in other.tags {
+            if !self.tags.contains(&tag) {
+                self.tags.push(tag);
+            }
+        }
+
+        // 2. Merge parallel descriptions without duplicates
+        for desc in other.descriptions {
+            let trimmed = desc.trim();
+            if !trimmed.is_empty() && !self.descriptions.iter().any(|d| d.trim() == trimmed) {
+                self.descriptions.push(trimmed.to_string());
+            }
+        }
+
+        // 3. Merge contributors without duplicates
+        for contrib in other.contributors {
+            let trimmed = contrib.trim();
+            if !trimmed.is_empty() && !self.contributors.iter().any(|c| c.trim() == trimmed) {
+                self.contributors.push(trimmed.to_string());
+            }
+        }
+
+        // 4. Collect all candidate licenses and pick predominant
+        let mut all_licenses = Vec::new();
+        if let Some(ref l) = self.license {
+            all_licenses.push(l.clone());
+        }
+        all_licenses.extend(self.alternate_licenses.clone());
+        if let Some(ref l) = other.license {
+            all_licenses.push(l.clone());
+        }
+        all_licenses.extend(other.alternate_licenses);
+
+        all_licenses.sort();
+        all_licenses.dedup();
+
+        let lic_refs: Vec<&str> = all_licenses.iter().map(|s| s.as_str()).collect();
+        let (best_lic, best_tier, _) = select_predominant_license(lic_refs);
+
+        self.license = Some(best_lic.clone());
+        self.license_tier = best_tier;
+        self.alternate_licenses = all_licenses
+            .into_iter()
+            .filter(|l| l != &best_lic)
+            .collect();
+
+        // 5. Prefer populated acoustic quality metrics if not present
+        if self.quality.is_none() && other.quality.is_some() {
+            self.quality = other.quality;
+        }
+    }
 }
 
 /// Complete dataset provenance audit manifest.
@@ -391,9 +628,7 @@ pub struct ProvenanceRecord {
 pub struct ProvenanceManifest {
     pub generated_at_utc: String,
     pub total_sources: usize,
-    pub normalized_surface_diversity: f32,
-    pub category_distribution: HashMap<String, usize>,
-    pub surface_distribution: HashMap<String, usize>,
+    pub tags_distribution: HashMap<String, usize>,
     pub records: Vec<ProvenanceRecord>,
 }
 
@@ -446,7 +681,7 @@ pub async fn download_file_with_retry(
     }
 }
 
-fn chrono_lite_timestamp() -> String {
+pub fn chrono_lite_timestamp() -> String {
     let duration = std::time::SystemTime::now()
         .duration_since(std::time::SystemTime::UNIX_EPOCH)
         .unwrap_or_default();
@@ -506,21 +741,19 @@ pub async fn run_ingestion_pipeline_async(
         .pool_idle_timeout(Duration::from_secs(15))
         .build()?;
 
-    let mut quota = SurfaceBalanceQuota::new(5);
+    let mut quota = TagBalanceQuota::new();
     for item in &curated_sources {
-        quota.record(CanonicalSurface::from_category_tag(&item.category));
+        quota.record(&[item.category.clone()]);
     }
 
     emit_log(format!(
-        "[*] Catalog: {} candidate sources across 9 canonical surfaces (Normalized Diversity: {:.1}%)",
+        "[*] Catalog: {} candidate sources across diverse surfaces",
         curated_sources.len(),
-        quota.normalized_diversity() * 100.0
     ));
 
     let mut downloaded_count = 0usize;
     let mut provenance_records = Vec::new();
-    let mut category_distribution: HashMap<String, usize> = HashMap::new();
-    let mut surface_distribution: HashMap<String, usize> = HashMap::new();
+    let mut tags_distribution: HashMap<String, usize> = HashMap::new();
 
     for item in curated_sources {
         if stop_signal.load(Ordering::Relaxed) {
@@ -528,7 +761,6 @@ pub async fn run_ingestion_pipeline_async(
             break;
         }
 
-        let canonical = CanonicalSurface::from_category_tag(&item.category);
         let (allowed, tier, reason) = LicenseVerifier::verify(&item.license);
         if !allowed {
             emit_log(format!("  [i] Skipping non-approved source '{}': {}", item.filename, reason));
@@ -550,7 +782,7 @@ pub async fn run_ingestion_pipeline_async(
         let already_existed = dest.exists();
 
         if !already_existed {
-            emit_log(format!("  -> Downloading '{}' ({}, {:?})", item.filename, canonical.as_str(), tier));
+            emit_log(format!("  -> Downloading '{}' ({:?})", item.filename, tier));
             match download_file_with_retry(&client, &item.url, &dest).await {
                 Ok(()) => {
                     downloaded_count += 1;
@@ -576,8 +808,8 @@ pub async fn run_ingestion_pipeline_async(
         };
 
         let log_line = format!(
-            "Platform: {} | File: {} | Category: {} (Surface: {}) | Tier: {:?} | License: {} | SHA256: {} | URL: {}\n",
-            item.source_platform, item.filename, item.category, canonical.as_str(), tier, item.license, sha256, item.url
+            "Platform: {} | File: {} | Tags: {} | Tier: {:?} | License: {} | SHA256: {} | URL: {}\n",
+            item.source_platform, item.filename, item.category, tier, item.license, sha256, item.url
         );
 
         // Append to ATTRIBUTIONS.txt if newly acquired
@@ -587,20 +819,21 @@ pub async fn run_ingestion_pipeline_async(
             }
         }
 
-        *category_distribution.entry(item.category.clone()).or_insert(0) += 1;
-        *surface_distribution.entry(canonical.as_str().to_string()).or_insert(0) += 1;
+        *tags_distribution.entry(item.category.clone()).or_insert(0) += 1;
 
         provenance_records.push(ProvenanceRecord {
             filename: item.filename,
             source_url: item.url,
             source_platform: item.source_platform,
-            category: item.category,
-            canonical_surface: canonical,
-            license: item.license,
+            tags: vec![item.category],
+            license: Some(item.license),
             license_tier: tier,
             sha256,
             file_size_bytes,
             quality,
+            descriptions: Vec::new(),
+            alternate_licenses: Vec::new(),
+            contributors: Vec::new(),
         });
     }
 
@@ -608,9 +841,7 @@ pub async fn run_ingestion_pipeline_async(
     let manifest = ProvenanceManifest {
         generated_at_utc: chrono_lite_timestamp(),
         total_sources: provenance_records.len(),
-        normalized_surface_diversity: quota.normalized_diversity(),
-        category_distribution,
-        surface_distribution,
+        tags_distribution,
         records: provenance_records,
     };
     if let Ok(json_str) = serde_json::to_string_pretty(&manifest) {

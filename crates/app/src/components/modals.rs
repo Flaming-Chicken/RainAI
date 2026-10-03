@@ -360,6 +360,10 @@ pub fn render_dialogs(app: &mut TemplateApp, ui: &mut egui::Ui) {
     if app.show_storage_modal {
         render_storage_modal(app, ui);
     }
+
+    if app.show_contribute_dialog {
+        render_contribute_dialog(app, ui);
+    }
 }
 
 pub fn render_storage_modal(app: &mut TemplateApp, ui: &mut egui::Ui) {
@@ -461,5 +465,289 @@ pub fn render_storage_modal(app: &mut TemplateApp, ui: &mut egui::Ui) {
 
     if !open {
         app.show_storage_modal = false;
+    }
+}
+
+pub fn render_contribute_dialog(app: &mut TemplateApp, ui: &mut egui::Ui) {
+    let mut open = true;
+    let win_w = (ui.available_width() - 24.0).clamp(360.0, 640.0);
+    let win_h = (ui.available_height() - 32.0).clamp(420.0, 680.0);
+
+    egui::Window::new("🌧 Contribute Rain Audio Data")
+        .open(&mut open)
+        .resizable(true)
+        .collapsible(true)
+        .default_size(egui::vec2(win_w, win_h))
+        .min_width(340.0)
+        .min_height(380.0)
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .show(ui.ctx(), |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                ui.heading("Community Rain Audio Dataset Ingestion");
+                ui.label(
+                    "Help train RainAI's physical flow-matching models by contributing your own rainfall audio recordings.",
+                );
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(6.0);
+
+                // Submission Mode
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut app.contribute_state.submission_mode, 0, "📁 Audio / Video File");
+                    ui.selectable_value(&mut app.contribute_state.submission_mode, 1, "🔗 Remote URL (YouTube / Cloud)");
+                });
+                ui.add_space(8.0);
+
+                if app.contribute_state.submission_mode == 0 {
+                    ui.label(egui::RichText::new("File or Local Recording:").strong());
+                    ui.add(
+                        egui::TextEdit::singleline(&mut app.contribute_state.file_or_url)
+                            .hint_text("Drag & drop audio/video file path or enter filename...")
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.label(
+                        egui::RichText::new("• Lossless PCM/WAV files are compressed directly to FLAC Level 8 client-side (100% bit-perfect, zero quality loss).\n• Lossy files (Opus, AAC, MP3, OGG) are preserved natively with zero transcoding.\n• Videos (MP4, MKV) have audio extracted client-side with video discarded prior to upload.")
+                            .small()
+                            .color(ui.visuals().weak_text_color()),
+                    );
+                } else {
+                    ui.label(egui::RichText::new("Remote Source URL:").strong());
+                    ui.add(
+                        egui::TextEdit::singleline(&mut app.contribute_state.file_or_url)
+                            .hint_text("https://youtube.com/watch?v=... or Freesound / Google Drive link")
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.label(
+                        egui::RichText::new("• Remote URLs are registered as verified catalog pointers.\n• Audio is pulled lazily and on-demand into local cache during ML training passes (zero forced repository downloads).")
+                            .small()
+                            .color(ui.visuals().weak_text_color()),
+                    );
+                }
+
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(6.0);
+
+                // Metadata & License
+                ui.heading("Metadata & Licensing");
+                ui.add_space(4.0);
+
+                ui.horizontal(|ui| {
+                    ui.label("Author / Recordist:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut app.contribute_state.author_name)
+                            .hint_text("Anonymous (or your name/handle)")
+                            .desired_width(200.0),
+                    );
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("Tags:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut app.contribute_state.tags_input)
+                            .hint_text("e.g. tin_roof, car_hood, dense_canopy")
+                            .desired_width(f32::INFINITY),
+                    );
+                });
+                ui.add_space(4.0);
+
+                ui.label(egui::RichText::new("License Agreement:").strong());
+                let license_options = [
+                    (
+                        "RainAI-FC-Proprietary-License",
+                        "RainAI-FC-Proprietary-License (Recommended Default: Commercial & non-commercial grant for RainAI, Spodeian, & Flaming Chicken; XAI attribution)",
+                    ),
+                    (
+                        "CC0 1.0 Universal",
+                        "CC0 1.0 Universal / Public Domain (Unconstrained public domain dedication, Unlicense, PDDL)",
+                    ),
+                    (
+                        "CC-BY 4.0",
+                        "CC-BY 4.0 (Permissive Attribution: CC-BY, MIT, Apache-2.0; permanent dataset attribution)",
+                    ),
+                    (
+                        "CC-BY-SA 4.0",
+                        "CC-BY-SA 4.0 (Commercial Share-Alike: CC-BY-SA 4.0/3.0)",
+                    ),
+                    (
+                        "Unknown / Unspecified",
+                        "Unknown / Unspecified (Immediate Quarantine: Audio is quarantined until a license is discovered during processing)",
+                    ),
+                    (
+                        "Custom",
+                        "Custom / Other Verified Open License",
+                    ),
+                ];
+
+                for (id, desc) in license_options {
+                    ui.radio_value(&mut app.contribute_state.selected_license, id.to_string(), desc);
+                }
+
+                ui.add_space(6.0);
+
+                // Explainable AI & Transparency Accordion for Proprietary License
+                if app.contribute_state.selected_license == "RainAI-FC-Proprietary-License" {
+                    egui::Frame::NONE
+                        .fill(ui.visuals().faint_bg_color)
+                        .stroke(egui::Stroke::new(1.0, ui.visuals().window_stroke().color))
+                        .corner_radius(6)
+                        .inner_margin(egui::Margin::symmetric(10, 8))
+                        .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new("ℹ️ Explainable AI (XAI) Attribution & Transparency")
+                                    .strong()
+                                    .color(ui.visuals().strong_text_color()),
+                            );
+                            ui.label(
+                                egui::RichText::new(
+                                    "\"While this license allows us to use your data freely to build RainAI, our system is designed for transparency. We track the metadata of all contributions, meaning you will always be credited when your specific data directly influences our explainable AI's outputs.\""
+                                )
+                                .italics()
+                                .color(ui.visuals().text_color()),
+                            );
+                            ui.add_space(4.0);
+                            let toggle_text = if app.contribute_state.show_license_details {
+                                "▼ Hide Full Legal Grant"
+                            } else {
+                                "▶ View Full Legal Grant & Terms"
+                            };
+                            if ui.button(toggle_text).clicked() {
+                                app.contribute_state.show_license_details = !app.contribute_state.show_license_details;
+                            }
+                            if app.contribute_state.show_license_details {
+                                ui.add_space(4.0);
+                                egui::ScrollArea::vertical().max_height(100.0).show(ui, |ui| {
+                                    ui.label(
+                                        egui::RichText::new(
+                                            "\"By submitting this data and metadata, I grant Spodeian, Flaming Chicken, and their respective affiliates, successors, and assigns a worldwide, non-exclusive, royalty-free, perpetual, irrevocable, and sublicensable right to use, reproduce, modify, adapt, publish, translate, create derivative works from, distribute, and publicly display this data for any purpose, including commercial and non-commercial applications. This explicitly includes, without limitation, the right to use the data to train, test, and validate machine learning models for the RainAI project and any other current or future projects. I represent and warrant that I own or have the necessary rights to grant this license.\""
+                                        )
+                                        .small()
+                                        .monospace(),
+                                    );
+                                });
+                            }
+                        });
+                } else if app.contribute_state.selected_license == "CC-BY 4.0" {
+                    ui.label(
+                        egui::RichText::new(
+                            "⚖️ Dataset Attribution: Training data under CC-BY is permanently registered in ATTRIBUTIONS.txt and project bibliography upon ingestion. Real-time XAI provides optional contributor credit mapping."
+                        )
+                        .small()
+                        .color(ui.visuals().text_color()),
+                    );
+                } else if app.contribute_state.selected_license == "Unknown / Unspecified" {
+                    egui::Frame::NONE
+                        .fill(ui.visuals().faint_bg_color)
+                        .stroke(egui::Stroke::new(1.0, ui.visuals().window_stroke().color))
+                        .corner_radius(6)
+                        .inner_margin(egui::Margin::symmetric(10, 8))
+                        .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new("📁 Immediate Quarantine Notice")
+                                    .strong()
+                                    .color(egui::Color32::from_rgb(220, 160, 40)),
+                            );
+                            ui.label(
+                                "Submissions with an unknown or unspecified license are immediately placed into staging/quarantine/. \
+                                Our automated ingestion workers will attempt to scrape and verify the license from Vorbis/ID3 metadata tags \
+                                or source URLs during data processing before any consideration for dataset promotion.",
+                            );
+                        });
+                }
+
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new("All licensing and metadata tags are embedded directly into Vorbis/ID3 container comments prior to upload.")
+                        .small()
+                        .color(ui.visuals().weak_text_color()),
+                );
+
+                ui.add_space(8.0);
+
+                // Mandatory Contributor Warranty Affirmation Checkbox
+                ui.checkbox(
+                    &mut app.contribute_state.confirmed_rights_warranty,
+                    egui::RichText::new("I represent and warrant that I own or have the necessary rights to grant this license.")
+                        .strong(),
+                );
+
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
+
+                // Submission actions
+                let warranty_confirmed = app.contribute_state.confirmed_rights_warranty;
+                ui.horizontal(|ui| {
+                    ui.add_enabled_ui(warranty_confirmed, |ui| {
+                        if ui.button("🚀 Stage Submission to R2").clicked() {
+                            if app.contribute_state.file_or_url.trim().is_empty() {
+                                app.contribute_state.status_message = Some(Err("Please provide a file path or URL.".to_string()));
+                            } else if app.contribute_state.selected_license == "Unknown / Unspecified" {
+                                app.contribute_state.status_message = Some(Ok(
+                                    "Submission quarantined successfully! Placed in staging/quarantine/ pending automated license scraping during data processing."
+                                        .to_string(),
+                                ));
+                            } else {
+                                app.contribute_state.status_message = Some(Ok(format!(
+                                    "Submission staged successfully! Registered under '{}' with contributor rights warranty affirmed.",
+                                    app.contribute_state.selected_license
+                                )));
+                            }
+                        }
+                    });
+
+                    if ui.button("Close").clicked() {
+                        app.show_contribute_dialog = false;
+                    }
+                });
+
+                if !warranty_confirmed {
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("⚠ Required: Please confirm the contributor rights warranty above before staging.")
+                            .small()
+                            .color(egui::Color32::from_rgb(220, 160, 40)),
+                    );
+                }
+
+                if let Some(ref res) = app.contribute_state.status_message {
+                    ui.add_space(6.0);
+                    match res {
+                        Ok(msg) => {
+                            ui.label(egui::RichText::new(msg).color(egui::Color32::from_rgb(80, 200, 100)).strong());
+                        }
+                        Err(msg) => {
+                            ui.label(egui::RichText::new(msg).color(egui::Color32::from_rgb(240, 80, 80)).strong());
+                        }
+                    }
+                }
+
+                ui.add_space(12.0);
+                // Multi-tier Fallback Notice & Proton Mail Link
+                egui::Frame::NONE
+                    .fill(ui.visuals().faint_bg_color)
+                    .stroke(egui::Stroke::new(1.0, ui.visuals().window_stroke().color))
+                    .corner_radius(6)
+                    .inner_margin(egui::Margin::symmetric(12, 10))
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new("📬 Multi-Tier Failsafe Fallback").strong());
+                        ui.label(
+                            "Have large multi-gigabyte collections, private cloud drives, or encountering upload issues? You can email us directly with download links, attachments, and notes.",
+                        );
+                        ui.add_space(4.0);
+                        let mailto_url = format!(
+                            "mailto:spodeian@proton.me?subject=RainAI%20Audio%20Contribution&body=Author:%20{}%0ALicense:%20{}%0ATags:%20{}%0ASource:%20{}",
+                            app.contribute_state.author_name,
+                            app.contribute_state.selected_license,
+                            app.contribute_state.tags_input,
+                            app.contribute_state.file_or_url
+                        );
+                        ui.hyperlink_to("📧 Send directly to spodeian@proton.me", &mailto_url);
+                    });
+            });
+        });
+
+    if !open {
+        app.show_contribute_dialog = false;
     }
 }

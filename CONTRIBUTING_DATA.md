@@ -4,156 +4,100 @@ Welcome to the **RainAI Acoustic Dataset Contribution Guide**! RainAI synthesize
 
 To capture the vast diversity of global rain textures—from tropical monsoon deluges on tin roofs to high-altitude pine needle mists—we welcome audio contributions from field recordists, acoustic researchers, sound designers, and audio enthusiasts.
 
-This guide explains how to format, validate, and submit your raw rain recordings.
+---
+
+## 1. Zero-Friction Web Contribution
+
+The easiest way to contribute is directly through the RainAI Web Application:
+1. Open the RainAI Studio interface.
+2. Click the **🌧 Contribute Data** button in the top navigation bar.
+3. Select your local audio/video file or paste a remote URL (YouTube, Freesound, Google Drive).
+4. The browser will automatically:
+   - Run Web Audio API DSP checks (RMS & clipping) directly on your device.
+   - Compress uncompressed PCM/WAV to **FLAC Level 8** (100% bit-for-bit lossless, zero quality drop).
+   - Preserve existing lossy files (Opus, AAC, MP3, OGG) without generational transcode artifacts.
+   - Demux audio from video files (MP4, MKV) and discard video tracks locally to save upload bandwidth.
+   - Embed your chosen license and tags directly into the container's Vorbis/ID3 comments.
+5. Click **Stage Submission to R2**.
 
 ---
 
-## 1. Quick Start
-
-### 1.1 Step 1: Check Underrepresented Surfaces
-Before recording or contributing, check which physical impact surfaces are currently needed most:
-```bash
-cargo run -p utilities --bin rainai_contribute -- quota
-```
-This prints the dataset's current balance across the 9 canonical surfaces and highlights any surface deficits.
-
-### 1.2 Step 2: Generate a Manifest Template
-Generate an annotated JSON template:
-```bash
-cargo run -p utilities --bin rainai_contribute -- template --out my_rain_contribution.json
-```
-
-### 1.3 Step 3: Validate Your Recordings
-Verify that your audio files pass objective acoustic quality screening and ethical license checks:
-```bash
-# Validate your manifest:
-cargo run -p utilities --bin rainai_contribute -- validate my_rain_contribution.json
-
-# Or validate a folder of WAV files directly:
-cargo run -p utilities --bin rainai_contribute -- validate ./my_recordings/
-```
-
-### 1.4 Step 4: Import into the Local Dataset
-Import your recordings directly into the training pipeline:
-```bash
-cargo run -p utilities --bin rainai_contribute -- import-dir ./my_recordings/ \
-  --surface tin_roof \
-  --rate heavy_rain \
-  --author "Your Name <your.email@example.org>" \
-  --license "CC0 1.0 Universal"
-```
-
----
-
-## 2. Audio Technical Requirements
-
-To ensure high training fidelity, all submitted audio must meet these standards:
+## 2. Audio Technical Standards
 
 | Parameter | Requirement | Rationale |
 |---|---|---|
-| **Format** | Standard uncompressed WAV (`.wav`) | Lossless PCM preservation |
-| **Sample Rate** | 44.1 kHz, 48.0 kHz, or 96.0 kHz (48 kHz preferred) | Pipeline standardizes to 48 kHz |
-| **Bit Depth** | 16-bit or 24-bit PCM, or 32-bit float | High dynamic range |
-| **Channels** | Mono (1ch), Stereo (2ch), Binaural (2ch), or FOA/HOA (4ch/16ch) | Spatial upmixing projects to FOA/HOA |
-| **Minimum Duration**| $\ge 2.0$ seconds (5.0s – 30.0s recommended) | Pipeline slices 5.0s training chunks |
-| **RMS Energy** | $\ge 0.003$ | Eliminates silence and digital dropouts |
-| **Clipping** | $< 1.5\%$ clipped samples | Rejects distorted, overdriven recordings |
-| **Noise Floor** | No intrusive speech, sirens, dog barks, or heavy engine hum | Pure environmental rain texture |
+| **Format** | FLAC Level 8, WAV, AIFF, Opus, AAC, MP3, or OGG | Zero quality loss (lossless compressed with FLAC Level 8; native preservation for lossy) |
+| **Sample Rate** | $\ge 44.1\text{ kHz}$ (48 kHz preferred) | Pipeline standardizes to 48 kHz |
+| **Channels** | Mono (1ch), Stereo (2ch), Binaural (2ch), or FOA/HOA (4ch/16ch) | Spatial upmixing projects to FOA B-Format |
+| **Duration** | Any length (short droplets to multi-hour ambient field captures) | Pipeline segments dynamically |
+| **RMS Energy** | $\ge 0.001$ | Rejects digital silence while admitting subtle, distant rainfall |
+| **Clipping** | $\le 5.0\%$ clipped samples | Rejects severely distorted recordings |
+| **Spectral Flatness** | $\ge 0.02$ | Eliminates pure tones and 50/60Hz ground loop hum |
 
 ---
 
-## 3. The 9 Canonical Surface Categories
+## 3. Licensing Options & Contributor Warranty
 
-Raindrop cavitation sound depends heavily on the resonant impedance and damping of the physical impact surface. Every contributed recording must be categorized into one of our 9 canonical surfaces:
+RainAI features an **Explainable AI (XAI)** architecture that natively tracks data provenance, mapping model outputs back to input attribution metadata. In RainAI, all training data is **permanently attributed upon ingestion** into [`data/rain/ATTRIBUTIONS.txt`](data/rain/ATTRIBUTIONS.txt) and project documentation, ensuring that model generation is **never blocked at runtime**. Real-time XAI explainability operates as an optional feature.
 
-1. **`asphalt`**: Wet highways, tarmac, roadways, parking lots, coarse porous bitumen.
-2. **`pavement`**: Concrete sidewalks, cobblestones, granite pavers, courtyards, brick plazas.
-3. **`tin_roof`**: Corrugated iron roofs, metal awnings, zinc sheds, gutters, downspouts.
-4. **`canvas_tent`**: Nylon tents, rainflies, fabric umbrellas, tarps, awnings, gazebos.
-5. **`foliage`**: Tree canopies, deciduous leaves, pine needle understories, bamboo, forest underbrush.
-6. **`wood_deck`**: Cedar decking, boardwalks, wooden benches, lumber pallets, timber shingles.
-7. **`glass`**: Window panes, skylights, car windshields, conservatory glass, greenhouse panels.
-8. **`puddle_shallow`**: Thin standing water puddles ($< 3\text{ cm}$), gravel splashes, storm drains.
-9. **`water_deep`**: Lakes, ponds, rivers, oceans, swimming pools, submerged hydrophone cavitation.
+### 3.1 `RainAI-FC-Proprietary-License` (Default / Recommended)
+This is the default option when submitting audio data:
+> *"By submitting this data and metadata, I grant Spodeian, Flaming Chicken, and their respective affiliates, successors, and assigns a worldwide, non-exclusive, royalty-free, perpetual, irrevocable, and sublicensable right to use, reproduce, modify, adapt, publish, translate, create derivative works from, distribute, and publicly display this data for any purpose, including commercial and non-commercial applications. This explicitly includes, without limitation, the right to use the data to train, test, and validate machine learning models for the RainAI project and any other current or future projects. I represent and warrant that I own or have the necessary rights to grant this license."*
+
+**Our Transparency Commitment:**
+> *"While this license allows us to use your data freely to build RainAI, our system is designed for transparency. We track the metadata of all contributions, meaning you will always be credited when your specific data directly influences our explainable AI's outputs."*
+
+### 3.2 Compatible Open Licenses
+Contributors may choose from a wide range of compatible open licenses:
+- **`CC0 1.0 Universal` / Public Domain:** Unconstrained dedication (includes `Unlicense`, `WTFPL`, `ODC-PDDL`).
+- **`CC-BY 4.0` (Permissive Attribution):** Commercial attribution (also covers `CC-BY 3.0/2.0`, `MIT`, `Apache-2.0`, `BSD`, `ISC`, `ODC-By`). Permanently attributed upon ingestion.
+- **`CC-BY-SA 4.0` (Commercial Share-Alike):** Copyleft commercial compatibility with derivative attribution.
+- **`Custom`:** Other verified open content licenses.
+
+### 3.3 `Unknown / Unspecified` (Immediate Quarantine)
+If you do not know the exact license of a recording or stream:
+- Select **`Unknown / Unspecified`**.
+- Your submission will be placed **immediately into `staging/quarantine/`**.
+- Automated processing workers will scan the audio file and source URL to discover and scrape any embedded license metadata (Vorbis comments, ID3 tags, web metadata) before maintainers review for promotion.
+
+### 3.4 Contributor Warranty
+Before staging any audio or URL, you must confirm:
+> *"I represent and warrant that I own or have the necessary rights to grant this license."*
+
+*Note: Submissions containing Non-Commercial (`-NC`) or No-Derivatives (`-ND`) clauses are ineligible for commercial neural training and are automatically quarantined or rejected.*
 
 ---
 
-## 4. Permitted Open Licenses
+## 4. Multi-Tier Failsafe Fallback
 
-All training data in RainAI must be commercially viable and publicly shareable. We enforce strict licensing verification via `LicenseVerifier`:
-
-- **Approved**:
-  - `CC0 1.0 Universal` (Public Domain Dedication)
-  - `Public Domain` / US Government Unconstrained
-  - `CC-BY 4.0` (Creative Commons Attribution 4.0 International)
-  - `CC-BY 3.0` / `CC-BY 2.0`
-  - `CC-BY-SA 4.0` (Creative Commons Attribution-ShareAlike)
-- **Strictly Rejected**:
-  - Any license with **NonCommercial** (`-NC`) clauses (e.g. `CC-BY-NC`).
-  - Any license with **NoDerivatives** (`-ND`) clauses (e.g. `CC-BY-ND`).
-  - Proprietary / All Rights Reserved material without a formal licensing grant.
+If you have a large multi-gigabyte recording library, private cloud folder, or experience any upload connectivity issues, you can email us directly:
+- **Email:** `spodeian@proton.me`
+- **Subject:** `RainAI Audio Contribution`
+- **Include:** Recordist name, license grant, tags (e.g. `tin_roof, car_hood, heavy_downpour`), and download link or attachments.
 
 ---
 
-## 5. Contribution Manifest Schema
+## 5. Developer CLI Workflows
 
-A contribution manifest is a simple JSON file specifying your recordings:
+For terminal users and pipeline maintainers:
 
-```json
-{
-  "manifest_version": "1.0",
-  "dataset_name": "Pacific Northwest Rainforest Spring Deluge",
-  "contributor_name": "Alex Smith <alex@example.org>",
-  "contributor_contact": "https://github.com/alexsmith",
-  "default_license": "CC0 1.0 Universal",
-  "default_surface": null,
-  "sources": [
-    {
-      "id": "pnw_shed_tin_roof_01",
-      "file_path": "recordings/tin_roof_heavy_rain.wav",
-      "url": null,
-      "surface": "tin_roof",
-      "precipitation_rate": "heavy_rain",
-      "environment": "Backyard shed surrounded by cedar trees",
-      "microphone_setup": "stereo_ortf",
-      "sample_rate": 48000,
-      "license": "CC0 1.0 Universal",
-      "author": "Alex Smith",
-      "notes": "Recorded with Zoom H5 and pair of matched cardioid capsules",
-      "sha256": null
-    },
-    {
-      "id": "pnw_cedar_canopy_drizzle_02",
-      "file_path": "recordings/cedar_canopy_drizzle.wav",
-      "url": null,
-      "surface": "foliage",
-      "precipitation_rate": "drizzle",
-      "environment": "Temperate rainforest understory",
-      "microphone_setup": "binaural_in_ear",
-      "sample_rate": 48000,
-      "license": "CC-BY 4.0",
-      "author": "Alex Smith",
-      "notes": "In-ear binaural mics mounted on windshield baffle",
-      "sha256": null
-    }
-  ]
-}
+```bash
+# Check current tag distribution
+cargo run -p utilities --bin rainai_contribute -- quota
+
+# Acoustically validate a manifest or local directory
+cargo run -p utilities --bin rainai_contribute -- validate ./my_recordings/
+
+# Ingest a directory on the dev branch
+cargo run -p utilities --bin rainai_contribute -- import-dir ./my_recordings/ \
+  --surface tin_roof \
+  --rate heavy_rain \
+  --author "Recordist Name" \
+  --license "RainAI-FC-Proprietary-License"
+
+# Inspect quarantined records
+cargo run -p utilities --bin rainai_contribute -- triage
+
+# Promote approved staging records to Data/raw/ on the dev branch
+cargo run -p utilities --bin rainai_contribute -- pull-approved
 ```
-
-### Valid Values for Fields:
-- **`surface`**: `"asphalt"`, `"pavement"`, `"tin_roof"`, `"canvas_tent"`, `"foliage"`, `"wood_deck"`, `"glass"`, `"puddle_shallow"`, `"water_deep"`.
-- **`precipitation_rate`**: `"drizzle"`, `"light_rain"`, `"moderate_rain"`, `"heavy_rain"`, `"violent_storm"`.
-- **`microphone_setup`**: `"mono"`, `"stereo_spaced"`, `"stereo_ortf"`, `"binaural_in_ear"`, `"ambisonic_foa"`, `"ambisonic_hoa"`, `"hydrophone"`, `"contact_mic"`.
-
----
-
-## 6. How Your Contributed Data is Used
-
-Once imported:
-1. **Provenance Tracking**: Your name, license, and file SHA-256 hash are recorded in `data/rain/ATTRIBUTIONS.txt` and `manifest_provenance.json`.
-2. **Ambisonic Spatial Upmixing**: Files are upmixed to 4-channel First-Order Ambisonics ($W, Y, Z, X$) in 5.0-second training chunks via `rainai_upmix`.
-3. **Sub-Band Feature Extraction**: Spectral features, RMS energy, and 16-band log mel energies are computed via `rainai_features`.
-4. **Candle Neural Training**: The neural network learns the physical droplet cavitation dynamics from your audio via `rainai_train_candle`.
-5. **Real-Time Synthesis**: End users in the browser and desktop app experience your rain textures in spatial 3D audio.
-
-Thank you for helping make RainAI the most realistic physical acoustic rainfall synthesis engine!

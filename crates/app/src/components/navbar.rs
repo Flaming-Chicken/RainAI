@@ -38,6 +38,19 @@ pub fn render_navbar(app: &mut TemplateApp, ui: &mut egui::Ui, constraints: &Scr
                     app.persist_state();
                 }
 
+                let contribute_text = if constraints.is_mobile {
+                    "Contribute"
+                } else {
+                    "🌧 Contribute Data"
+                };
+                if ui
+                    .button(contribute_text)
+                    .on_hover_text("Contribute your own precipitation audio recordings to train RainAI")
+                    .clicked()
+                {
+                    app.show_contribute_dialog = true;
+                }
+
                 let help_text = if constraints.is_mobile {
                     "Help"
                 } else {

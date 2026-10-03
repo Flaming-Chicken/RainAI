@@ -243,7 +243,7 @@ fn test_trickle_in_and_categorize() {
     assert!(desc.is_some(), "Trickle in should succeed for uningested candidate");
     let desc_str = desc.unwrap();
     assert!(desc_str.contains("mock_thunder_storm_001"));
-    assert!(desc_str.contains("pavement"), "heavy_rain_thunder should map to canonical pavement");
+    assert!(desc_str.contains("heavy_rain_thunder"), "tag should preserve original category");
 
     // Manifest should now contain the new chunk
     assert!(manifest_path.exists());

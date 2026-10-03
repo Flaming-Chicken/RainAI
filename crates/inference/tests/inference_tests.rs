@@ -354,4 +354,36 @@ fn test_hardware_compute_router_candle_and_wgsl() {
     assert_eq!(traj_wgsl.len(), dim);
 }
 
+#[test]
+fn test_step_parametric_control() {
+    let weight_cache = WeightCache::default();
+    let mut runner = InferenceRunner::new(QualityTier::AdaptiveMinimum, weight_cache);
+    let cond = [0.4f32; CONDITION_DIM];
+
+    let ctrl = runner.step_parametric(&cond);
+
+    assert_eq!(ctrl.band_gains.len(), 16);
+    assert_eq!(ctrl.band_freq_drifts.len(), 16);
+
+    for &gain in &ctrl.band_gains {
+        assert!(gain.is_finite() && gain > 0.0, "Band gain must be finite and positive");
+    }
+
+    for &drift in &ctrl.band_freq_drifts {
+        assert!(drift.is_finite() && drift.abs() <= 0.15, "Frequency drift must be within expected bounds");
+    }
+
+    assert!(ctrl.droplet_rate_mod >= 0.2 && ctrl.droplet_rate_mod <= 2.5);
+    assert!(ctrl.droplet_energy_mod >= 0.4 && ctrl.droplet_energy_mod <= 2.0);
+    assert!(ctrl.wind_gust_mod >= 0.2 && ctrl.wind_gust_mod <= 2.2);
+    assert!(ctrl.wind_howl_mod >= 0.1 && ctrl.wind_howl_mod <= 2.5);
+
+    let (w, x, y, z) = ctrl.spatial_vector;
+    assert!(w.is_finite());
+    assert!(x.is_finite());
+    assert!(y.is_finite());
+    assert!(z.is_finite());
+}
+
+
 

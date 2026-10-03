@@ -63,3 +63,55 @@ fn test_procedural_parallel_buffer_generation() {
         "Parallel procedural synthesis should generate non-zero audio across chunks: got {active_frames}/512"
     );
 }
+
+#[test]
+fn test_neural_parametric_modulation_procedural() {
+    use inference::NeuralParametricControl;
+
+    let mut synth = ProceduralSynthesizer::new(48000.0);
+    let state = RainState {
+        is_playing: true,
+        master_volume: 1.0,
+        ..Default::default()
+    };
+
+    let mut ctrl = NeuralParametricControl::default();
+    ctrl.band_gains[0] = 3.0; // Boost tin band
+    ctrl.droplet_rate_mod = 2.0;
+    ctrl.spatial_vector = (1.5, 0.5, -0.5, 0.8);
+
+    let mut modulated_frames = 0;
+    for _ in 0..128 {
+        let frame = synth.process_frame_modulated(&state, Some(&ctrl));
+        if frame.w.abs() > 1e-4 {
+            modulated_frames += 1;
+        }
+    }
+    assert!(modulated_frames > 115, "Modulated procedural synthesis should generate audio frames");
+}
+
+#[test]
+fn test_neural_parametric_modulation_physical() {
+    use audio::PhysicalRainSynthesizer;
+    use inference::NeuralParametricControl;
+
+    let mut physical = PhysicalRainSynthesizer::new(48000.0);
+    let state = RainState {
+        is_playing: true,
+        master_volume: 1.0,
+        ..Default::default()
+    };
+
+    let mut ctrl = NeuralParametricControl::default();
+    ctrl.droplet_rate_mod = 1.5;
+    ctrl.droplet_energy_mod = 1.2;
+    ctrl.spatial_vector = (1.2, 0.4, 0.2, -0.3);
+
+    let mut energy_sum = 0.0f32;
+    for _ in 0..512 {
+        let frame = physical.process_frame_modulated(&state, Some(&ctrl));
+        energy_sum += frame.w.abs();
+    }
+    assert!(energy_sum > 0.01, "Modulated physical synthesizer should generate active droplet acoustics");
+}
+

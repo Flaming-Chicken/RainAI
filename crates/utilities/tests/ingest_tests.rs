@@ -1,6 +1,9 @@
 use utilities::ingest::{
-    analyze_pcm_samples, compute_file_sha256, CanonicalSurface, DownloadItem, LicenseTier, LicenseVerifier,
-    ProvenanceManifest, ProvenanceRecord, SurfaceBalanceQuota,
+    analyze_pcm_samples, compute_file_sha256, evaluate_attribution_policy,
+    AttributionPolicyOutcome, DownloadItem, LicenseTier, LicenseVerifier,
+    ProvenanceManifest, ProvenanceRecord, TagBalanceQuota,
+    CONTRIBUTOR_WARRANTY_STATEMENT, RAINAI_FC_PROPRIETARY_LICENSE_TEXT,
+    RAINAI_FC_TRANSPARENCY_NOTE,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -8,6 +11,10 @@ use std::path::PathBuf;
 #[test]
 fn test_license_verifier_logic() {
     // Approved tiers
+    let (ok, tier, _) = LicenseVerifier::verify("RainAI-FC-Proprietary-License");
+    assert!(ok);
+    assert_eq!(tier, LicenseTier::ProjectProprietary);
+
     let (ok, tier, _) = LicenseVerifier::verify("CC0 1.0 Universal");
     assert!(ok);
     assert_eq!(tier, LicenseTier::PublicDomain);
@@ -23,6 +30,33 @@ fn test_license_verifier_logic() {
     let (ok, tier, _) = LicenseVerifier::verify("CC-BY-SA 4.0");
     assert!(ok);
     assert_eq!(tier, LicenseTier::ShareAlike);
+
+    // Permissive compatible open licenses
+    let (ok, tier, _) = LicenseVerifier::verify("MIT");
+    assert!(ok);
+    assert_eq!(tier, LicenseTier::AttributionOnly);
+
+    let (ok, tier, _) = LicenseVerifier::verify("Apache 2.0");
+    assert!(ok);
+    assert_eq!(tier, LicenseTier::AttributionOnly);
+
+    let (ok, tier, _) = LicenseVerifier::verify("Unlicense");
+    assert!(ok);
+    assert_eq!(tier, LicenseTier::PublicDomain);
+
+    let (ok, tier, _) = LicenseVerifier::verify("ODC-By");
+    assert!(ok);
+    assert_eq!(tier, LicenseTier::AttributionOnly);
+
+    // Unknown tier -> Immediately quarantined pending discovery / scraping
+    let (ok, tier, reason) = LicenseVerifier::verify("Unknown");
+    assert!(!ok);
+    assert_eq!(tier, LicenseTier::Unknown);
+    assert!(reason.contains("Quarantined"));
+
+    let (ok, tier, _) = LicenseVerifier::verify("unspecified");
+    assert!(!ok);
+    assert_eq!(tier, LicenseTier::Unknown);
 
     // Rejected tiers (NonCommercial / NoDerivs)
     let (ok, tier, reason) = LicenseVerifier::verify("CC-BY-NC 4.0");
@@ -40,46 +74,19 @@ fn test_license_verifier_logic() {
 }
 
 #[test]
-fn test_canonical_surface_mapping() {
-    assert_eq!(CanonicalSurface::from_category_tag("wet_asphalt_traffic"), CanonicalSurface::Asphalt);
-    assert_eq!(CanonicalSurface::from_category_tag("surface_pavement"), CanonicalSurface::Pavement);
-    assert_eq!(CanonicalSurface::from_category_tag("tin_roof"), CanonicalSurface::TinRoof);
-    assert_eq!(CanonicalSurface::from_category_tag("canvas_tent"), CanonicalSurface::CanvasTent);
-    assert_eq!(CanonicalSurface::from_category_tag("pine_needles"), CanonicalSurface::Foliage);
-    assert_eq!(CanonicalSurface::from_category_tag("forest_canopy"), CanonicalSurface::Foliage);
-    assert_eq!(CanonicalSurface::from_category_tag("wood_deck"), CanonicalSurface::WoodDeck);
-    assert_eq!(CanonicalSurface::from_category_tag("glass_window"), CanonicalSurface::Glass);
-    assert_eq!(CanonicalSurface::from_category_tag("puddle_shallow"), CanonicalSurface::PuddleShallow);
-    assert_eq!(CanonicalSurface::from_category_tag("water_deep"), CanonicalSurface::WaterDeep);
-}
-
-#[test]
-fn test_surface_balance_quota_entropy() {
-    let mut quota = SurfaceBalanceQuota::new(2);
+fn test_tag_balance_quota_tracking() {
+    let mut quota = TagBalanceQuota::new();
     assert_eq!(quota.total_samples(), 0);
-    assert_eq!(quota.shannon_entropy(), 0.0);
 
-    // Record evenly across all 9 surfaces
-    for s in [
-        CanonicalSurface::Asphalt,
-        CanonicalSurface::Pavement,
-        CanonicalSurface::TinRoof,
-        CanonicalSurface::CanvasTent,
-        CanonicalSurface::Foliage,
-        CanonicalSurface::WoodDeck,
-        CanonicalSurface::Glass,
-        CanonicalSurface::PuddleShallow,
-        CanonicalSurface::WaterDeep,
-    ] {
-        quota.record(s);
-        quota.record(s);
+    for tag in ["asphalt", "pavement", "tin_roof", "glass", "foliage"] {
+        let tag_vec = vec![tag.to_string()];
+        quota.record(&tag_vec);
+        quota.record(&tag_vec);
     }
 
-    assert_eq!(quota.total_samples(), 18);
-    // When perfectly balanced across 9 classes, normalized diversity is ~1.0
-    let norm_div = quota.normalized_diversity();
-    assert!((norm_div - 1.0).abs() < 1e-3, "Expected normalized diversity ~1.0, got {}", norm_div);
-    assert!(quota.underrepresented_surfaces().is_empty());
+    assert_eq!(quota.total_samples(), 10);
+    assert_eq!(quota.counts.get("tin_roof"), Some(&2));
+    assert_eq!(quota.counts.get("glass"), Some(&2));
 }
 
 #[test]
@@ -112,31 +119,27 @@ fn test_acoustic_quality_metrics_rain_vs_silence() {
 
 #[test]
 fn test_provenance_manifest_serialization() {
-    let mut cat_dist = HashMap::new();
-    cat_dist.insert("canvas_tent".to_string(), 5);
-    cat_dist.insert("tin_roof".to_string(), 6);
-
-    let mut surf_dist = HashMap::new();
-    surf_dist.insert("canvas_tent".to_string(), 5);
-    surf_dist.insert("tin_roof".to_string(), 6);
+    let mut tags_dist = HashMap::new();
+    tags_dist.insert("canvas_tent".to_string(), 5);
+    tags_dist.insert("tin_roof".to_string(), 6);
 
     let manifest = ProvenanceManifest {
         generated_at_utc: "2026-09-17T12:00:00Z".to_string(),
         total_sources: 11,
-        normalized_surface_diversity: 0.85,
-        category_distribution: cat_dist,
-        surface_distribution: surf_dist,
+        tags_distribution: tags_dist,
         records: vec![ProvenanceRecord {
             filename: "test_rain.wav".to_string(),
             source_url: "https://example.com/test.wav".to_string(),
             source_platform: "TestPlatform".to_string(),
-            category: "tin_roof".to_string(),
-            canonical_surface: CanonicalSurface::TinRoof,
-            license: "CC0".to_string(),
+            tags: vec!["tin_roof".to_string()],
+            license: Some("CC0".to_string()),
             license_tier: LicenseTier::PublicDomain,
             sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string(),
             file_size_bytes: 48000,
             quality: None,
+            descriptions: vec!["Test soundscape".to_string()],
+            alternate_licenses: Vec::new(),
+            contributors: vec!["Tester".to_string()],
         }],
     };
 
@@ -144,7 +147,7 @@ fn test_provenance_manifest_serialization() {
     let deserialized: ProvenanceManifest = serde_json::from_str(&serialized).expect("Deserialization failed");
     assert_eq!(deserialized.total_sources, 11);
     assert_eq!(deserialized.records.len(), 1);
-    assert_eq!(deserialized.records[0].canonical_surface, CanonicalSurface::TinRoof);
+    assert_eq!(deserialized.records[0].tags, vec!["tin_roof".to_string()]);
 }
 
 #[test]
@@ -173,7 +176,7 @@ fn test_sources_json_catalog_integrity() {
 
     let mut urls = HashSet::new();
     let mut filenames = HashSet::new();
-    let mut surface_counts = HashMap::new();
+    let mut category_counts = HashMap::new();
 
     for item in &items {
         // 1. Uniqueness
@@ -189,15 +192,151 @@ fn test_sources_json_catalog_integrity() {
         );
         assert_ne!(tier, LicenseTier::Restricted);
 
-        // 3. Surface Mapping
-        let surf = CanonicalSurface::from_category_tag(&item.category);
-        *surface_counts.entry(surf).or_insert(0) += 1;
+        *category_counts.entry(item.category.clone()).or_insert(0) += 1;
     }
 
-    // 4. Verify all 9 canonical surfaces are represented
-    assert_eq!(surface_counts.len(), 9, "Expected all 9 canonical surfaces to be represented");
-    for (surf, count) in &surface_counts {
-        assert!(*count >= 5, "Surface {:?} has only {} sources, expected >= 5", surf, count);
+    assert!(!category_counts.is_empty());
+}
+
+#[test]
+fn test_license_policy_and_warranty_constants() {
+    // 1. Full proprietary legal grant text checks
+    assert!(RAINAI_FC_PROPRIETARY_LICENSE_TEXT.contains("Spodeian"));
+    assert!(RAINAI_FC_PROPRIETARY_LICENSE_TEXT.contains("Flaming Chicken"));
+    assert!(RAINAI_FC_PROPRIETARY_LICENSE_TEXT.contains("commercial and non-commercial"));
+    assert!(RAINAI_FC_PROPRIETARY_LICENSE_TEXT.contains("train, test, and validate machine learning models"));
+    assert!(RAINAI_FC_PROPRIETARY_LICENSE_TEXT.contains("perpetual, irrevocable"));
+    assert!(RAINAI_FC_PROPRIETARY_LICENSE_TEXT.contains("represent and warrant"));
+
+    // 2. Transparency note checks
+    assert!(RAINAI_FC_TRANSPARENCY_NOTE.contains("transparency"));
+    assert!(RAINAI_FC_TRANSPARENCY_NOTE.contains("explainable AI"));
+    assert!(RAINAI_FC_TRANSPARENCY_NOTE.contains("credited"));
+
+    // 3. Contributor warranty check
+    assert_eq!(
+        CONTRIBUTOR_WARRANTY_STATEMENT,
+        "I represent and warrant that I own or have the necessary rights to grant this license."
+    );
+}
+
+#[test]
+fn test_attribution_policy_and_tiers() {
+    // Requires attribution
+    assert!(LicenseTier::AttributionOnly.requires_attribution());
+    assert!(LicenseTier::ShareAlike.requires_attribution());
+    assert!(!LicenseTier::PublicDomain.requires_attribution());
+    assert!(!LicenseTier::ProjectProprietary.requires_attribution());
+
+    // Approved for raw training corpus
+    assert!(LicenseTier::PublicDomain.is_approved());
+    assert!(LicenseTier::AttributionOnly.is_approved());
+    assert!(LicenseTier::ShareAlike.is_approved());
+    assert!(LicenseTier::ProjectProprietary.is_approved());
+    assert!(!LicenseTier::Unknown.is_approved());
+    assert!(!LicenseTier::Restricted.is_approved());
+
+    // Immediate quarantine check
+    assert!(LicenseTier::Unknown.is_quarantined_pending_discovery());
+    assert!(!LicenseTier::PublicDomain.is_quarantined_pending_discovery());
+}
+
+#[test]
+fn test_evaluate_attribution_policy_routing() {
+    // 1. Valid attribution metadata present -> Attributed (runtime XAI link)
+    let res_cc = evaluate_attribution_policy(LicenseTier::AttributionOnly, Some("Alice Recordist"), "CC-BY 4.0");
+    assert_eq!(
+        res_cc,
+        AttributionPolicyOutcome::Attributed {
+            contributor: "Alice Recordist".to_string(),
+            license: "CC-BY 4.0".to_string(),
+            tier: LicenseTier::AttributionOnly,
+        }
+    );
+
+    let res_prop = evaluate_attribution_policy(LicenseTier::ProjectProprietary, Some("Bob Recordist"), "RainAI-FC-Proprietary-License");
+    assert_eq!(
+        res_prop,
+        AttributionPolicyOutcome::Attributed {
+            contributor: "Bob Recordist".to_string(),
+            license: "RainAI-FC-Proprietary-License".to_string(),
+            tier: LicenseTier::ProjectProprietary,
+        }
+    );
+
+    // 2. Missing runtime attribution on CC-BY 4.0 -> NEVER BLOCKS output!
+    // Falls back to permanent dataset-level attribution in ATTRIBUTIONS.txt
+    let res_cc_missing = evaluate_attribution_policy(LicenseTier::AttributionOnly, None, "CC-BY 4.0");
+    match res_cc_missing {
+        AttributionPolicyOutcome::GlobalTrainingAttributed { ref note, tier } => {
+            assert_eq!(tier, LicenseTier::AttributionOnly);
+            assert!(note.contains("Permanent dataset-level attribution active"));
+            assert!(note.contains("output served unconditionally"));
+        }
+        _ => panic!("Expected GlobalTrainingAttributed for missing runtime CC-BY attribution"),
     }
+
+    // 3. Missing runtime attribution on Proprietary -> GlobalTrainingAttributed (safely served)
+    let res_prop_missing = evaluate_attribution_policy(LicenseTier::ProjectProprietary, None, "RainAI-FC-Proprietary-License");
+    match res_prop_missing {
+        AttributionPolicyOutcome::GlobalTrainingAttributed { ref note, tier } => {
+            assert_eq!(tier, LicenseTier::ProjectProprietary);
+            assert!(note.contains("Permanent dataset-level attribution active"));
+            assert!(note.contains("output served unconditionally"));
+        }
+        _ => panic!("Expected GlobalTrainingAttributed for proprietary license"),
+    }
+
+    // 4. Missing attribution on CC0 Public Domain -> Unconstrained (safely served)
+    let res_cc0_missing = evaluate_attribution_policy(LicenseTier::PublicDomain, None, "CC0 1.0");
+    match res_cc0_missing {
+        AttributionPolicyOutcome::Unconstrained { ref note, tier } => {
+            assert_eq!(tier, LicenseTier::PublicDomain);
+            assert!(note.contains("unconstrained generation"));
+        }
+        _ => panic!("Expected Unconstrained for CC0"),
+    }
+}
+
+#[test]
+fn test_provenance_record_reconciliation_multi_license() {
+    let mut rec1 = ProvenanceRecord {
+        filename: "storm_001.flac".to_string(),
+        source_url: "https://example.org/storm.flac".to_string(),
+        source_platform: "Archive".to_string(),
+        tags: vec!["heavy_rain".to_string()],
+        license: Some("Unknown".to_string()),
+        license_tier: LicenseTier::Unknown,
+        sha256: "aabbcc112233".to_string(),
+        file_size_bytes: 120000,
+        quality: None,
+        descriptions: vec!["Distant thunder with steady rain".to_string()],
+        alternate_licenses: Vec::new(),
+        contributors: vec!["Anonymous".to_string()],
+    };
+
+    let rec2 = ProvenanceRecord {
+        filename: "storm_001.flac".to_string(),
+        source_url: "local://recontributed.flac".to_string(),
+        source_platform: "Community Contribution".to_string(),
+        tags: vec!["heavy_rain".to_string(), "thunder".to_string()],
+        license: Some("RainAI-FC-Proprietary-License".to_string()),
+        license_tier: LicenseTier::ProjectProprietary,
+        sha256: "aabbcc112233".to_string(),
+        file_size_bytes: 120000,
+        quality: None,
+        descriptions: vec!["Acoustic rumble and low-frequency resonance".to_string()],
+        alternate_licenses: Vec::new(),
+        contributors: vec!["Recordist_Jane".to_string()],
+    };
+
+    rec1.reconcile_with(rec2);
+
+    assert_eq!(rec1.tags, vec!["heavy_rain", "thunder"]);
+    assert_eq!(rec1.descriptions, vec!["Distant thunder with steady rain", "Acoustic rumble and low-frequency resonance"]);
+    assert_eq!(rec1.contributors, vec!["Anonymous", "Recordist_Jane"]);
+    // License promoted from Unknown to ProjectProprietary!
+    assert_eq!(rec1.license.as_deref(), Some("RainAI-FC-Proprietary-License"));
+    assert_eq!(rec1.license_tier, LicenseTier::ProjectProprietary);
 }
 

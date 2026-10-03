@@ -1,6 +1,7 @@
 //! Unified multi-tiered storage engine, persistence manager, PWA install bridge, and diagnostics for template app.
 
 use serde::{Deserialize, Serialize};
+#[allow(unused_imports)]
 use spodeian_cache::{ContentAddressedStorage, PreferentialRouter};
 #[allow(unused_imports)]
 use spodeian_cache::StorageTier;
