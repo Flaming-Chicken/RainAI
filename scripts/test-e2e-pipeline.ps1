@@ -73,6 +73,14 @@ try {
     New-Item -ItemType Directory -Path $testDataset -Force | Out-Null
     cargo run -q -p utilities --bin rainai_contribute -- reconcile $testDataset
 
+    # 4f. Binary Attribution Dictionary Export
+    Write-Host "  -> Testing 'export-attributions' subcommand..."
+    $testBin = Join-Path $tempDir "attributions.bin"
+    cargo run -q -p utilities --bin rainai_contribute -- export-attributions --manifest Data/rain/manifest_provenance.json --out $testBin
+    if (-not (Test-Path $testBin)) {
+        throw "Failed to export binary attributions to $testBin"
+    }
+
     Write-Host "`n========================================================" -ForegroundColor Green
     Write-Host "   ALL END-TO-END PIPELINE & STAGING TESTS PASSED!     " -ForegroundColor Green
     Write-Host "========================================================`n" -ForegroundColor Green
