@@ -228,7 +228,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "app"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "android-activity",
  "audio",
@@ -473,7 +473,7 @@ dependencies = [
 
 [[package]]
 name = "audio"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "cpal",
  "hound",
@@ -1411,7 +1411,7 @@ dependencies = [
 
 [[package]]
 name = "desktop"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "app",
  "audio",
@@ -2868,7 +2868,7 @@ dependencies = [
 
 [[package]]
 name = "inference"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "bytemuck",
  "candle-core",
@@ -5253,7 +5253,7 @@ dependencies = [
 
 [[package]]
 name = "shared"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "base64 0.22.1",
  "bson",
@@ -6498,7 +6498,7 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 
 [[package]]
 name = "utilities"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "audio",
@@ -6820,7 +6820,7 @@ dependencies = [
 
 [[package]]
 name = "web"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "app",
  "audio",

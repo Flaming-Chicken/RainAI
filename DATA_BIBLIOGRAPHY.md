@@ -58,7 +58,7 @@ Processed acoustic chunks and spectral features are hashed with SHA-256 and trac
 
 ```json
 {
-  "dataset_version": "v0.2.0-spatial-foliage",
+  "dataset_version": "v1.0.0-spatial-foliage",
   "sampling_rate": 48000,
   "channels": 4,
   "total_duration_hours": 128.4,
