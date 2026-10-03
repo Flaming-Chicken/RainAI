@@ -4,6 +4,7 @@
 //! entirely in pure Rust with zero external allocations in the audio thread.
 
 use crate::decoder::FoaFrame;
+use inference::NeuralParametricControl;
 use shared::rain::{NoiseColor, RainState};
 
 /// Fast, lightweight, deterministic pseudo-random number generator (Xorshift32)
@@ -277,6 +278,16 @@ impl ProceduralSynthesizer {
 
     /// Synthesizes one 4-channel FOA frame based on current RainState
     pub fn process_frame(&mut self, state: &RainState) -> FoaFrame {
+        self.process_frame_modulated(state, None)
+    }
+
+    /// Synthesizes one 4-channel FOA frame based on current RainState dynamically modulated
+    /// by optional neural-parametric control signals from the local Mamba2-MoE model.
+    pub fn process_frame_modulated(
+        &mut self,
+        state: &RainState,
+        modulation: Option<&NeuralParametricControl>,
+    ) -> FoaFrame {
         if !state.is_playing {
             return FoaFrame::default();
         }
@@ -295,50 +306,60 @@ impl ProceduralSynthesizer {
         // 2. Continuous 16-band subtractive parametric resonance response
         let rain_drive = base_noise * state.weather.intensity;
 
-        // 12 Tied Physics Bands
-        let tin_sound = self.filterbank.filters[0].process(rain_drive) * state.surfaces.tin * 2.2;
-        let leaf_sound = self.filterbank.filters[1].process(rain_drive) * state.surfaces.leaves_broad * 1.5;
-        let pine_sound = self.filterbank.filters[2].process(rain_drive) * state.surfaces.pine_needles * 1.7;
-        let pavement_sound = self.filterbank.filters[3].process(rain_drive) * state.surfaces.pavement * 1.1;
-        let water_sound = self.filterbank.filters[4].process(rain_drive) * state.surfaces.water_deep * 1.6;
-        let puddle_sound = self.filterbank.filters[5].process(rain_drive) * state.surfaces.puddle_shallow * 1.8;
-        let canvas_sound = self.filterbank.filters[6].process(rain_drive) * state.surfaces.canvas_tent * 1.9;
-        let glass_sound = self.filterbank.filters[7].process(rain_drive) * state.surfaces.glass_window * 1.8;
-        let wood_sound = self.filterbank.filters[8].process(rain_drive) * state.surfaces.wood_deck * 1.6;
+        let mod_gains = if let Some(ctrl) = modulation {
+            ctrl.band_gains
+        } else {
+            [1.0; 16]
+        };
+        let droplet_rate_scale = modulation.map(|c| c.droplet_rate_mod).unwrap_or(1.0);
+        let droplet_energy_scale = modulation.map(|c| c.droplet_energy_mod).unwrap_or(1.0);
+        let wind_howl_scale = modulation.map(|c| c.wind_howl_mod).unwrap_or(1.0);
+        let wind_gust_scale = modulation.map(|c| c.wind_gust_mod).unwrap_or(1.0);
+
+        // 12 Tied Physics Bands with Neural Gain Modulation
+        let tin_sound = self.filterbank.filters[0].process(rain_drive) * state.surfaces.tin * 2.2 * mod_gains[0];
+        let leaf_sound = self.filterbank.filters[1].process(rain_drive) * state.surfaces.leaves_broad * 1.5 * mod_gains[1];
+        let pine_sound = self.filterbank.filters[2].process(rain_drive) * state.surfaces.pine_needles * 1.7 * mod_gains[2];
+        let pavement_sound = self.filterbank.filters[3].process(rain_drive) * state.surfaces.pavement * 1.1 * mod_gains[3];
+        let water_sound = self.filterbank.filters[4].process(rain_drive) * state.surfaces.water_deep * 1.6 * mod_gains[4];
+        let puddle_sound = self.filterbank.filters[5].process(rain_drive) * state.surfaces.puddle_shallow * 1.8 * mod_gains[5];
+        let canvas_sound = self.filterbank.filters[6].process(rain_drive) * state.surfaces.canvas_tent * 1.9 * mod_gains[6];
+        let glass_sound = self.filterbank.filters[7].process(rain_drive) * state.surfaces.glass_window * 1.8 * mod_gains[7];
+        let wood_sound = self.filterbank.filters[8].process(rain_drive) * state.surfaces.wood_deck * 1.6 * mod_gains[8];
 
         // Acoustic runoff & bubble chirps
         let runoff_drive = rain_drive * (state.surfaces.tin * 0.6 + state.surfaces.puddle_shallow * 0.4);
-        let downpipe_sound = self.filterbank.filters[9].process(runoff_drive) * 1.3;
+        let downpipe_sound = self.filterbank.filters[9].process(runoff_drive) * 1.3 * mod_gains[9];
 
         // Discrete rain droplet Poisson impacts
-        let droplet_prob = (state.weather.intensity * 0.04).clamp(0.001, 0.2);
+        let droplet_prob = (state.weather.intensity * 0.04 * droplet_rate_scale).clamp(0.001, 0.4);
         let droplet_burst = if self.rng.next_unit_f32() < droplet_prob {
             let droplet_pitch = 0.5 + self.rng.next_unit_f32() * 0.5;
-            self.rng.next_f32() * droplet_pitch * 0.35
+            self.rng.next_f32() * droplet_pitch * 0.35 * droplet_energy_scale
         } else {
             0.0
         };
 
         let bubble_sound = self.filterbank.filters[10].process(droplet_burst)
             * (state.surfaces.puddle_shallow + state.surfaces.water_deep)
-            * 1.5;
+            * 1.5 * mod_gains[10];
 
         // Wind drive & howl band
         let wind_drive = self.brown_filter.process(white) * state.wind.speed;
-        let wind_howl = self.filterbank.filters[11].process(wind_drive) * state.wind.howl * 2.0;
+        let wind_howl = self.filterbank.filters[11].process(wind_drive) * state.wind.howl * 2.0 * wind_howl_scale * mod_gains[11];
 
         // 4 Untied Residual Texture Bands
         let mist_drive = white * (state.weather.intensity * 0.2 + state.wind.speed * 0.1);
-        let mist_sound = self.filterbank.filters[12].process(mist_drive) * 0.8;
+        let mist_sound = self.filterbank.filters[12].process(mist_drive) * 0.8 * mod_gains[12];
 
         let turb_drive = wind_drive * (1.0 + state.wind.gustiness * 0.8) * 0.5;
-        let turb_sound = self.filterbank.filters[13].process(turb_drive) * 0.9;
+        let turb_sound = self.filterbank.filters[13].process(turb_drive) * 0.9 * wind_gust_scale * mod_gains[13];
 
         let rattle_drive = rain_drive * (state.surfaces.leaves_broad + state.surfaces.pine_needles) * (state.wind.speed * 0.5 + 0.3);
-        let rattle_sound = self.filterbank.filters[14].process(rattle_drive) * 0.7;
+        let rattle_sound = self.filterbank.filters[14].process(rattle_drive) * 0.7 * mod_gains[14];
 
         let transducer_drive = white * (state.weather.intensity * 0.05);
-        let transducer_sound = self.filterbank.filters[15].process(transducer_drive) * 0.6;
+        let transducer_sound = self.filterbank.filters[15].process(transducer_drive) * 0.6 * mod_gains[15];
 
         let total_rain = tin_sound
             + leaf_sound
@@ -472,10 +493,20 @@ impl ProceduralSynthesizer {
         let rain_master = (total_rain + droplet_burst) * state.master_volume;
         let wind_master = total_wind * state.master_volume;
 
-        let w = rain_master * 0.7071 + wind_master * 0.5 + side_w;
-        let x = wind_master * 0.4 + side_x + (self.rng.next_f32() * 0.02 * rain_master);
-        let y = (self.rng.next_f32() * 0.05 * rain_master) + side_y;
-        let z = (rain_master * 0.45 * state.weather.pitch_angle.cos()) + side_z;
+        let mut w = rain_master * 0.7071 + wind_master * 0.5 + side_w;
+        let mut x = wind_master * 0.4 + side_x + (self.rng.next_f32() * 0.02 * rain_master);
+        let mut y = (self.rng.next_f32() * 0.05 * rain_master) + side_y;
+        let mut z = (rain_master * 0.45 * state.weather.pitch_angle.cos()) + side_z;
+
+        // Neural Ambisonic directivity injection when modulation is active
+        if let Some(ctrl) = modulation {
+            let (sw, sx, sy, sz) = ctrl.spatial_vector;
+            let spatial_blend = 0.35f32;
+            w = w * (1.0 - spatial_blend) + (w * sw.abs().clamp(0.2, 2.0)) * spatial_blend;
+            x += sx * 0.20 * rain_master;
+            y += sy * 0.20 * rain_master;
+            z += sz * 0.20 * rain_master;
+        }
 
         FoaFrame::new(w, x, y, z)
     }

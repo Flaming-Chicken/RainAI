@@ -9,6 +9,7 @@
 
 use crate::decoder::FoaFrame;
 use crate::procedural::{BrownNoiseFilter, FastRng};
+use inference::NeuralParametricControl;
 use shared::rain::RainState;
 use std::f32::consts::PI;
 
@@ -268,19 +269,33 @@ impl PhysicalRainSynthesizer {
 
     /// Process one frame of physical rain soundscape in 4-channel FOA format.
     pub fn process_frame(&mut self, state: &RainState) -> FoaFrame {
+        self.process_frame_modulated(state, None)
+    }
+
+    /// Process one frame of physical rain soundscape in 4-channel FOA format with optional
+    /// neural-parametric modulation from the local Mamba2-MoE model.
+    pub fn process_frame_modulated(
+        &mut self,
+        state: &RainState,
+        modulation: Option<&NeuralParametricControl>,
+    ) -> FoaFrame {
         if !state.is_playing {
             return FoaFrame::default();
         }
 
+        let droplet_rate_scale = modulation.map(|c| c.droplet_rate_mod).unwrap_or(1.0);
+        let droplet_energy_scale = modulation.map(|c| c.droplet_energy_mod).unwrap_or(1.0);
+        let wind_gust_scale = modulation.map(|c| c.wind_gust_mod).unwrap_or(1.0);
+
         // 1. Poisson droplet arrival rate derived from rain intensity and Ulbrich DSD
         let intensity = state.weather.intensity.clamp(0.01, 1.0);
         // Probability of a new droplet event spawning on this sample
-        let spawn_prob = (intensity * 0.06).clamp(0.002, 0.35);
+        let spawn_prob = (intensity * 0.06 * droplet_rate_scale).clamp(0.002, 0.45);
 
         if self.rng.next_unit_f32() < spawn_prob {
             // Sample droplet diameter (Marshall-Palmer / Ulbrich Gamma distribution proxy)
             let u = self.rng.next_unit_f32().max(1e-4);
-            let diameter_mm = (-u.ln() * (0.8 + intensity * 1.5)).clamp(0.4, 6.0);
+            let diameter_mm = (-u.ln() * (0.8 + intensity * 1.5) * droplet_energy_scale).clamp(0.4, 7.0);
 
             // Select dominant active surface
             let surfaces = [
@@ -326,7 +341,7 @@ impl PhysicalRainSynthesizer {
         // 2. Continuous wind bed and turbulence
         let white = self.rng.next_f32();
         let wind_drive = self.brown_filter.process(white) * state.wind.speed;
-        let wind_master = wind_drive * (1.0 + state.wind.gustiness * 0.5) * state.master_volume * 0.4;
+        let wind_master = wind_drive * (1.0 + state.wind.gustiness * 0.5 * wind_gust_scale) * state.master_volume * 0.4;
 
         // 3. Pop droplet tail frame
         let pw = self.ring_w[self.ring_pos];
@@ -341,10 +356,19 @@ impl PhysicalRainSynthesizer {
         self.ring_pos = (self.ring_pos + 1) % self.capacity;
 
         // 4. Combine droplet acoustic impacts with spatial wind vector
-        let w = (pw * 0.85 + wind_master * 0.7071) * state.master_volume;
-        let x = (px * 0.85 + wind_master * 0.4) * state.master_volume;
-        let y = py * 0.85 * state.master_volume;
-        let z = pz * 0.85 * state.master_volume;
+        let mut w = (pw * 0.85 + wind_master * 0.7071) * state.master_volume;
+        let mut x = (px * 0.85 + wind_master * 0.4) * state.master_volume;
+        let mut y = py * 0.85 * state.master_volume;
+        let mut z = pz * 0.85 * state.master_volume;
+
+        if let Some(ctrl) = modulation {
+            let (sw, sx, sy, sz) = ctrl.spatial_vector;
+            let spatial_blend = 0.35f32;
+            w = w * (1.0 - spatial_blend) + (w * sw.abs().clamp(0.2, 2.0)) * spatial_blend;
+            x += sx * 0.15 * state.master_volume;
+            y += sy * 0.15 * state.master_volume;
+            z += sz * 0.15 * state.master_volume;
+        }
 
         FoaFrame::new(w, x, y, z)
     }

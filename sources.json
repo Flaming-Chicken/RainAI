@@ -56,6 +56,13 @@
     "source_platform": "Videvo"
   },
   {
+    "url": "https://www.videvo.net/sound-effect/rain-falling-on-glass/",
+    "filename": "GlassFallsLightVer FS027302.flac",
+    "category": "surface_window",
+    "license": "CC-BY 3.0",
+    "source_platform": "Videvo"
+  },
+  {
     "url": "https://archive.org/download/RainSoundEffect/Rain.mp3",
     "filename": "archive_org_rain_ambient.mp3",
     "category": "steady_rain",

@@ -51,6 +51,35 @@ impl ExportFormat {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct ContributeModalState {
+    pub submission_mode: usize, // 0: Local File, 1: Remote URL
+    pub file_or_url: String,
+    pub author_name: String,
+    pub selected_license: String,
+    pub tags_input: String,
+    pub confirmed_rights_warranty: bool,
+    pub show_license_details: bool,
+    pub acoustic_feedback: Option<String>,
+    pub status_message: Option<Result<String, String>>,
+}
+
+impl Default for ContributeModalState {
+    fn default() -> Self {
+        Self {
+            submission_mode: 0,
+            file_or_url: String::new(),
+            author_name: String::new(),
+            selected_license: "RainAI-FC-Proprietary-License".to_string(),
+            tags_input: "tin_roof, rain_texture".to_string(),
+            confirmed_rights_warranty: false,
+            show_license_details: false,
+            acoustic_feedback: None,
+            status_message: None,
+        }
+    }
+}
+
 pub struct TemplateApp {
     pub state: AppState,
     pub rain_view: RainView,
@@ -63,6 +92,8 @@ pub struct TemplateApp {
     pub current_theme: Option<ThemeMode>,
     pub show_reset_dialog: bool,
     pub show_help_dialog: bool,
+    pub show_contribute_dialog: bool,
+    pub contribute_state: ContributeModalState,
     pub show_import_dialog: bool,
     pub import_text_buffer: String,
     pub import_result_message: Option<Result<String, String>>,
@@ -93,6 +124,8 @@ impl Default for TemplateApp {
             current_theme: None,
             show_reset_dialog: false,
             show_help_dialog: false,
+            show_contribute_dialog: false,
+            contribute_state: ContributeModalState::default(),
             show_import_dialog: false,
             import_text_buffer: String::new(),
             import_result_message: None,
@@ -116,8 +149,8 @@ impl TemplateApp {
         info!("Initializing RainAI Studio...");
 
         let first_launch = is_first_launch(cc.storage);
-        #[allow(unused_variables)]
-        let (state, loaded_from_storage) = if first_launch {
+        #[allow(unused_variables, unused_mut)]
+        let (mut state, loaded_from_storage) = if first_launch {
             info!("First launch detected! Auto-starting Gentle Summer Rain default soundscape at 60% volume.");
             let mut rain_state = shared::preset::WeatherPreset::gentle_summer_rain().state;
             rain_state.is_playing = true;
@@ -152,6 +185,7 @@ impl TemplateApp {
             ));
         }
 
+        #[allow(unused_variables)]
         if let Some(ir_hash) = &session.custom_ir_hash {
             #[cfg(not(target_arch = "wasm32"))]
             {
@@ -276,6 +310,8 @@ impl TemplateApp {
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             if self.show_help_dialog {
                 self.show_help_dialog = false;
+            } else if self.show_contribute_dialog {
+                self.show_contribute_dialog = false;
             } else if self.show_reset_dialog {
                 self.show_reset_dialog = false;
             } else if self.show_storage_modal {

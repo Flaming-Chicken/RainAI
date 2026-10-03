@@ -25,6 +25,7 @@ spodeian-telemetry = { workspace = true }
 app = { workspace = true }
 shared = { workspace = true }
 inference = { workspace = true }
+audio = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [features]

@@ -9,9 +9,15 @@ use app::TemplateApp;
 use wasm_bindgen::{JsCast, prelude::*};
 
 #[cfg(target_arch = "wasm32")]
+use audio::{
+    engine::soft_limit,
+    physical::PhysicalRainSynthesizer,
+    procedural::ProceduralSynthesizer,
+};
+#[cfg(target_arch = "wasm32")]
 use inference::{runner::InferenceRunner, weight_loader::WeightLoader};
 #[cfg(target_arch = "wasm32")]
-use shared::rain::{QualityTier, CONDITION_DIM};
+use shared::rain::{QualityTier, RainState, CONDITION_DIM};
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(start)]
@@ -42,24 +48,46 @@ pub fn main() {
     });
 }
 
-/// WASM binding for the AudioWorklet to stream conditioning vectors into the SIMD pipeline.
+/// WASM binding for the AudioWorklet to drive neural-parametric synthesis.
+///
+/// Dispatches the AI model at block rate (~50-100 Hz) to produce parametric control
+/// vectors that modulate compiled, high-performance WebAudio DSP synthesizers
+/// (Procedural DDSP Filterbank and Physical Rain Cavitation Synthesizer).
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub struct WasmInferenceNode {
     runner: InferenceRunner,
+    synth: ProceduralSynthesizer,
+    physical_synth: PhysicalRainSynthesizer,
+    state: RainState,
+    neural_enabled: bool,
+    use_physical: bool,
 }
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 impl WasmInferenceNode {
-    /// Initializes the inference engine and loads the embedded ternary weights.
+    /// Initializes the inference engine, loads the embedded ternary weights,
+    /// and instantiates the compiled procedural and physical DSP synthesizers.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Result<WasmInferenceNode, JsValue> {
         let cache = WeightLoader::load_embedded_ternary()
             .map_err(|e| JsValue::from_str(&format!("Failed to load embedded weights: {}", e)))?;
             
         let runner = InferenceRunner::new(QualityTier::Ternary158, cache);
-        Ok(Self { runner })
+        let sample_rate = 48000.0;
+        let synth = ProceduralSynthesizer::new(sample_rate);
+        let physical_synth = PhysicalRainSynthesizer::new(sample_rate);
+        let state = RainState::default();
+
+        Ok(Self {
+            runner,
+            synth,
+            physical_synth,
+            state,
+            neural_enabled: true,
+            use_physical: false,
+        })
     }
 
     /// Processes a single frame of conditioning data and returns 4-channel FOA (W, X, Y, Z).
@@ -75,13 +103,123 @@ impl WasmInferenceNode {
         cond_array.copy_from_slice(conditioning);
         
         let (w, x, y, z) = self.runner.step(&cond_array);
-        
-        // Return as a Vec<f32>, which wasm_bindgen translates to a Float32Array
         Ok(vec![w, x, y, z])
     }
-    
+
+    /// High-performance block-rate rendering returning planar First-Order Ambisonic (FOA) audio.
+    ///
+    /// The neural model evaluates `step_parametric` ONCE per quantum/block, and the resulting
+    /// latent vector modulates the compiled procedural or physical DSP pipeline across `frames`.
+    ///
+    /// Output layout is planar Float32Array: `[W0..Wn, X0..Xn, Y0..Yn, Z0..Zn]`.
+    pub fn step_block_planar(&mut self, conditioning: &[f32], frames: usize) -> Result<Vec<f32>, JsValue> {
+        if conditioning.len() != CONDITION_DIM {
+            return Err(JsValue::from_str(&format!(
+                "Conditioning vector must be exactly {} elements",
+                CONDITION_DIM
+            )));
+        }
+
+        let modulation = if self.neural_enabled {
+            let mut cond_array = [0.0f32; CONDITION_DIM];
+            cond_array.copy_from_slice(conditioning);
+            Some(self.runner.step_parametric(&cond_array))
+        } else {
+            None
+        };
+
+        let total_samples = frames * 4;
+        let mut output = vec![0.0f32; total_samples];
+        let (w_slice, rest) = output.split_at_mut(frames);
+        let (x_slice, rest) = rest.split_at_mut(frames);
+        let (y_slice, z_slice) = rest.split_at_mut(frames);
+
+        for i in 0..frames {
+            let foa = if self.use_physical {
+                self.physical_synth.process_frame_modulated(&self.state, modulation.as_ref())
+            } else {
+                self.synth.process_frame_modulated(&self.state, modulation.as_ref())
+            };
+
+            w_slice[i] = soft_limit(foa.w);
+            x_slice[i] = soft_limit(foa.x);
+            y_slice[i] = soft_limit(foa.y);
+            z_slice[i] = soft_limit(foa.z);
+        }
+
+        Ok(output)
+    }
+
+    /// High-performance block-rate rendering returning planar Stereo audio.
+    ///
+    /// Decodes Ambisonic FOA to binaural/stereo:
+    /// `L = W * 0.707 + Y * 0.5`, `R = W * 0.707 - Y * 0.5`.
+    ///
+    /// Output layout is planar Float32Array: `[L0..Ln, R0..Rn]`.
+    pub fn step_block_stereo(&mut self, conditioning: &[f32], frames: usize) -> Result<Vec<f32>, JsValue> {
+        if conditioning.len() != CONDITION_DIM {
+            return Err(JsValue::from_str(&format!(
+                "Conditioning vector must be exactly {} elements",
+                CONDITION_DIM
+            )));
+        }
+
+        let modulation = if self.neural_enabled {
+            let mut cond_array = [0.0f32; CONDITION_DIM];
+            cond_array.copy_from_slice(conditioning);
+            Some(self.runner.step_parametric(&cond_array))
+        } else {
+            None
+        };
+
+        let total_samples = frames * 2;
+        let mut output = vec![0.0f32; total_samples];
+        let (left_slice, right_slice) = output.split_at_mut(frames);
+
+        for i in 0..frames {
+            let foa = if self.use_physical {
+                self.physical_synth.process_frame_modulated(&self.state, modulation.as_ref())
+            } else {
+                self.synth.process_frame_modulated(&self.state, modulation.as_ref())
+            };
+
+            let left = foa.w * 0.707 + foa.y * 0.5;
+            let right = foa.w * 0.707 - foa.y * 0.5;
+
+            left_slice[i] = soft_limit(left * self.state.master_volume);
+            right_slice[i] = soft_limit(right * self.state.master_volume);
+        }
+
+        Ok(output)
+    }
+
     /// Dynamically adjust the active MoE experts to throttle CPU usage.
     pub fn set_active_experts(&mut self, experts: usize) {
         self.runner.set_active_experts(experts);
+    }
+
+    /// Toggle neural AI modulation on or off (falls back to pure procedural DSP).
+    pub fn set_neural_enabled(&mut self, enabled: bool) {
+        self.neural_enabled = enabled;
+    }
+
+    /// Switch between procedural filterbank synthesis and physical rain synthesis.
+    pub fn set_use_physical(&mut self, use_physical: bool) {
+        self.use_physical = use_physical;
+    }
+
+    /// Adjust rain intensity [0.0, 1.0].
+    pub fn set_rain_intensity(&mut self, intensity: f32) {
+        self.state.weather.intensity = intensity.clamp(0.0, 1.0);
+    }
+
+    /// Adjust wind speed in m/s [0.0, 40.0].
+    pub fn set_wind_speed(&mut self, speed: f32) {
+        self.state.wind.speed = speed.clamp(0.0, 40.0);
+    }
+
+    /// Adjust master volume [0.0, 1.0].
+    pub fn set_master_volume(&mut self, volume: f32) {
+        self.state.master_volume = volume.clamp(0.0, 1.0);
     }
 }

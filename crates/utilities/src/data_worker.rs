@@ -362,8 +362,8 @@ impl DatabaseHealthWorker {
             if !already_ingested {
                 let (approved, _, _) = crate::ingest::LicenseVerifier::verify(&item.license);
                 if approved {
-                    let canonical = crate::ingest::CanonicalSurface::from_category_tag(&item.category);
-                    if deficit_surfaces.iter().any(|d| d == canonical.as_str()) {
+                    let tag = &item.category;
+                    if deficit_surfaces.iter().any(|d| d == tag) {
                         candidate = Some(item);
                         break;
                     }
@@ -397,7 +397,7 @@ impl DatabaseHealthWorker {
             None => return Ok(None),
         };
 
-        let canonical = crate::ingest::CanonicalSurface::from_category_tag(&item.category);
+        let tag = &item.category;
         fs::create_dir_all(processed_dir)?;
 
         let base_id = item
@@ -412,7 +412,7 @@ impl DatabaseHealthWorker {
         // Synthesize physical rain audio block grounded in fluid dynamics (Ulbrich DSD + Gunn-Kinzer)
         let sample_rate = 48000u32;
         let duration_sec = 5.0f32;
-        let texture = crate::synth_rain::generate_rain_texture(duration_sec, 30.0, canonical.as_str(), sample_rate);
+        let texture = crate::synth_rain::generate_rain_texture(duration_sec, 30.0, tag, sample_rate);
 
         // Write 48kHz stereo WAV
         let spec = hound::WavSpec {
@@ -446,7 +446,7 @@ impl DatabaseHealthWorker {
             spectral_centroid: 3200.0,
             spectral_rolloff: 6500.0,
             spectral_flatness: q_metrics.spectral_flatness,
-            surface_tag: canonical.as_str().to_string(),
+            surface_tag: tag.clone(),
         };
 
         manifest.insert(chunk_id.clone(), meta);
@@ -463,8 +463,8 @@ impl DatabaseHealthWorker {
         // Log provenance to ATTRIBUTIONS.txt
         let (_, tier, _) = crate::ingest::LicenseVerifier::verify(&item.license);
         let log_line = format!(
-            "Platform: {} | File: {} | Category: {} (Surface: {}) | Tier: {:?} | License: {} | URL: {}\n",
-            item.source_platform, item.filename, item.category, canonical.as_str(), tier, item.license, item.url
+            "Platform: {} | File: {} | Tags: {} | Tier: {:?} | License: {} | URL: {}\n",
+            item.source_platform, item.filename, tag, tier, item.license, item.url
         );
         let target_candidates = [
             "data/rain/ATTRIBUTIONS.txt",
@@ -489,7 +489,7 @@ impl DatabaseHealthWorker {
         Ok(Some(format!(
             "Trickled in and categorized: {} -> {}",
             item.filename,
-            canonical.as_str()
+            tag
         )))
     }
 

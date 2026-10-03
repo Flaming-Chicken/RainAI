@@ -332,7 +332,7 @@ impl DesktopAudioEngine {
 
         let err_fn = |err| tracing::error!("An error occurred on the audio stream: {err}");
 
-        let (foa_tx, foa_rx) = std::sync::mpsc::sync_channel::<crate::decoder::FoaFrame>(4096);
+        let (param_tx, param_rx) = std::sync::mpsc::sync_channel::<inference::NeuralParametricControl>(128);
         let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let worker_state = state.clone();
         let worker_shutdown = shutdown.clone();
@@ -357,19 +357,15 @@ impl DesktopAudioEngine {
                     }
 
                     let cond = rain.to_conditioning_array();
-                    let (nw, nx, ny, nz) = if rain.use_consistency_jump && runner.has_consistency_jump_head() {
-                        runner.fast_consistency_step(&cond)
-                    } else {
-                        runner.step(&cond)
-                    };
+                    let ctrl = runner.step_parametric(&cond);
 
-                    let frame = crate::decoder::FoaFrame::new(nw, nx, ny, nz);
-                    if foa_tx.try_send(frame).is_err() {
-                        std::thread::sleep(std::time::Duration::from_micros(500));
-                    }
+                    let _ = param_tx.try_send(ctrl);
+                    std::thread::sleep(std::time::Duration::from_millis(10));
                 }
             })
             .ok();
+
+        let mut latest_neural_ctrl: Option<inference::NeuralParametricControl> = None;
 
         let stream = match supported_config.sample_format() {
             cpal::SampleFormat::F32 => device
@@ -378,6 +374,10 @@ impl DesktopAudioEngine {
                     move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                         let dt = (data.len() / channels.max(1)) as f32 / sample_rate.max(1.0);
                         let frames_needed = data.len() / channels.max(1);
+
+                        while let Ok(ctrl) = param_rx.try_recv() {
+                            latest_neural_ctrl = Some(ctrl);
+                        }
 
                         // Wait-free synchronization: try_read avoids blocking the real-time audio thread
                         if let Ok(guard) = audio_state.rain.try_read() {
@@ -474,39 +474,22 @@ impl DesktopAudioEngine {
                             let cond = synth_state.to_conditioning_array();
 
                             for _ in 0..frames_to_generate {
-                                let foa_proc = synth.process_frame(&synth_state);
+                                let foa_neural_mod = synth.process_frame_modulated(&synth_state, latest_neural_ctrl.as_ref());
+                                let foa_pure_proc = synth.process_frame(&synth_state);
 
                                 let foa = match rain.synthesis_mode {
-                                    SynthesisMode::PhysicalSynth => physical_synth.process_frame(&synth_state),
-                                    SynthesisMode::ProceduralFilterbank => foa_proc,
-                                    SynthesisMode::NeuralAi => {
-                                        foa_rx.try_recv().unwrap_or_else(|_| {
-                                            let (nw, nx, ny, nz) = if runner.use_consistency_jump && runner.has_consistency_jump_head() {
-                                                runner.fast_consistency_step(&cond)
-                                            } else {
-                                                runner.step(&cond)
-                                            };
-                                            crate::decoder::FoaFrame::new(nw, nx, ny, nz)
-                                        })
-                                    }
+                                    SynthesisMode::PhysicalSynth => physical_synth.process_frame_modulated(&synth_state, latest_neural_ctrl.as_ref()),
+                                    SynthesisMode::ProceduralFilterbank => foa_pure_proc,
+                                    SynthesisMode::NeuralAi => foa_neural_mod,
                                     SynthesisMode::HybridAdaptive => {
                                         if blend >= 0.999 {
-                                            foa_proc
+                                            foa_pure_proc
                                         } else {
-                                            let foa_neural = foa_rx.try_recv().unwrap_or_else(|_| {
-                                                let (nw, nx, ny, nz) = if runner.use_consistency_jump && runner.has_consistency_jump_head() {
-                                                    runner.fast_consistency_step(&cond)
-                                                } else {
-                                                    runner.step(&cond)
-                                                };
-                                                crate::decoder::FoaFrame::new(nw, nx, ny, nz)
-                                            });
-
                                             crate::decoder::FoaFrame::new(
-                                                foa_proc.w * blend + foa_neural.w * (1.0 - blend),
-                                                foa_proc.x * blend + foa_neural.x * (1.0 - blend),
-                                                foa_proc.y * blend + foa_neural.y * (1.0 - blend),
-                                                foa_proc.z * blend + foa_neural.z * (1.0 - blend),
+                                                foa_pure_proc.w * blend + foa_neural_mod.w * (1.0 - blend),
+                                                foa_pure_proc.x * blend + foa_neural_mod.x * (1.0 - blend),
+                                                foa_pure_proc.y * blend + foa_neural_mod.y * (1.0 - blend),
+                                                foa_pure_proc.z * blend + foa_neural_mod.z * (1.0 - blend),
                                             )
                                         }
                                     }
@@ -767,36 +750,26 @@ impl WebAudioEngine {
                 let blend = action.synthesis_blend;
                 let cond = synth_state.to_conditioning_array();
 
+                // Evaluate neural-parametric control at block rate (~50-100Hz)
+                let neural_ctrl = runner.step_parametric(&cond);
+
                 for _ in 0..frames_to_generate {
-                    let foa_proc = synth.process_frame(&synth_state);
+                    let foa_neural_mod = synth.process_frame_modulated(&synth_state, Some(&neural_ctrl));
+                    let foa_pure_proc = synth.process_frame(&synth_state);
 
                     let foa = match rain.synthesis_mode {
-                        SynthesisMode::PhysicalSynth => physical_synth.process_frame(&synth_state),
-                        SynthesisMode::ProceduralFilterbank => foa_proc,
-                        SynthesisMode::NeuralAi => {
-                            let (nw, nx, ny, nz) = if runner.use_consistency_jump && runner.has_consistency_jump_head() {
-                                runner.fast_consistency_step(&cond)
-                            } else {
-                                runner.step(&cond)
-                            };
-                            crate::decoder::FoaFrame::new(nw, nx, ny, nz)
-                        }
+                        SynthesisMode::PhysicalSynth => physical_synth.process_frame_modulated(&synth_state, Some(&neural_ctrl)),
+                        SynthesisMode::ProceduralFilterbank => foa_pure_proc,
+                        SynthesisMode::NeuralAi => foa_neural_mod,
                         SynthesisMode::HybridAdaptive => {
                             if blend >= 0.999 {
-                                foa_proc
+                                foa_pure_proc
                             } else {
-                                let (nw, nx, ny, nz) = if runner.use_consistency_jump && runner.has_consistency_jump_head() {
-                                    runner.fast_consistency_step(&cond)
-                                } else {
-                                    runner.step(&cond)
-                                };
-                                let foa_neural = crate::decoder::FoaFrame::new(nw, nx, ny, nz);
-
                                 crate::decoder::FoaFrame::new(
-                                    foa_proc.w * blend + foa_neural.w * (1.0 - blend),
-                                    foa_proc.x * blend + foa_neural.x * (1.0 - blend),
-                                    foa_proc.y * blend + foa_neural.y * (1.0 - blend),
-                                    foa_proc.z * blend + foa_neural.z * (1.0 - blend),
+                                    foa_pure_proc.w * blend + foa_neural_mod.w * (1.0 - blend),
+                                    foa_pure_proc.x * blend + foa_neural_mod.x * (1.0 - blend),
+                                    foa_pure_proc.y * blend + foa_neural_mod.y * (1.0 - blend),
+                                    foa_pure_proc.z * blend + foa_neural_mod.z * (1.0 - blend),
                                 )
                             }
                         }

@@ -22,11 +22,14 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use utilities::contribute::{
-    generate_manifest_template, import_local_directory, validate_audio_file, validate_manifest,
-    AudioQualityThresholds, CanonicalSurface, LocalImportOptions, MicrophoneSetup,
+    assert_not_main_branch, generate_manifest_template, import_local_directory, validate_audio_file,
+    validate_manifest, AudioQualityThresholds, LocalImportOptions, MicrophoneSetup,
     PrecipitationRate, RainContributionManifest,
 };
-use utilities::ingest::{DownloadItem, SurfaceBalanceQuota};
+use utilities::ingest::{
+    chrono_lite_timestamp, DownloadItem, LicenseVerifier, ProvenanceManifest, ProvenanceRecord,
+    TagBalanceQuota,
+};
 
 fn print_usage() {
     println!(
@@ -55,12 +58,18 @@ SUBCOMMANDS:
         --target <DIR>           Target destination directory (default: Data/rain)
 
     quota                        Display current dataset surface diversity and quotas
+    triage [DIR]                 Inspect quarantined contributions and failure diagnostics (default: Data/staging/quarantine)
+    pull-approved [DIR]          Promote approved staging records to dev branch Data/raw/ and sources.json
+    reconcile [TARGET_DIR]       Promote approved quarantine items and reconcile duplicate metadata in manifest_provenance.json
 
 EXAMPLES:
     rainai_contribute template --out contribution.json
     rainai_contribute validate ./my_recordings/
     rainai_contribute import-dir ./my_recordings/ --surface tin_roof --author "Liam" --license "CC0"
     rainai_contribute quota
+    rainai_contribute triage
+    rainai_contribute reconcile
+    rainai_contribute pull-approved
 "#
     );
 }
@@ -185,23 +194,23 @@ fn main() -> Result<()> {
             while i < args.len() {
                 match args[i].as_str() {
                     "--surface" if i + 1 < args.len() => {
-                        options.default_surface = Some(CanonicalSurface::from_tag(&args[i + 1]));
+                        options.default_tags = vec![args[i + 1].clone()];
                         i += 1;
                     }
                     "--rate" if i + 1 < args.len() => {
-                        options.default_rate = PrecipitationRate::from_tag(&args[i + 1]);
+                        options.default_rate = Some(PrecipitationRate::from_tag(&args[i + 1]));
                         i += 1;
                     }
                     "--mic" if i + 1 < args.len() => {
-                        options.default_mic = MicrophoneSetup::from_tag(&args[i + 1]);
+                        options.default_mic = Some(MicrophoneSetup::from_tag(&args[i + 1]));
                         i += 1;
                     }
                     "--license" if i + 1 < args.len() => {
-                        options.default_license = args[i + 1].clone();
+                        options.default_license = Some(args[i + 1].clone());
                         i += 1;
                     }
                     "--author" if i + 1 < args.len() => {
-                        options.author = args[i + 1].clone();
+                        options.author = Some(args[i + 1].clone());
                         i += 1;
                     }
                     "--target" if i + 1 < args.len() => {
@@ -250,10 +259,12 @@ fn main() -> Result<()> {
                 };
 
                 if src_path.exists() {
+                    let first_tag = entry.source.tags.first().cloned().unwrap_or_else(|| "audio".to_string());
+                    let author_str = entry.source.author.as_deref().unwrap_or("Anonymous").replace(' ', "_");
                     let dest_name = format!(
                         "contrib_{}_{}_{}",
-                        entry.source.surface.as_str(),
-                        entry.source.author.replace(' ', "_"),
+                        first_tag,
+                        author_str,
                         src_path.file_name().unwrap_or_default().to_string_lossy()
                     );
                     let dest = options.target_dir.join(&dest_name);
@@ -277,32 +288,221 @@ fn main() -> Result<()> {
             let content = fs::read_to_string(&sources_path)?;
             let sources: Vec<DownloadItem> = serde_json::from_str(&content)?;
 
-            let mut quota = SurfaceBalanceQuota::new(10);
+            let mut quota = TagBalanceQuota::new();
             for s in &sources {
-                quota.record(CanonicalSurface::from_tag(&s.category));
+                quota.record(&[s.category.clone()]);
             }
 
-            println!("\n=== Surface Balance Quota Register ===");
+            println!("\n=== Tags Balance Quota Register ===");
             println!("Total Audio Sources:   {}", quota.total_samples());
-            println!("Shannon Diversity:     {:.3} nats", quota.shannon_entropy());
-            println!("Normalized Diversity:  {:.1}%", quota.normalized_diversity() * 100.0);
-            println!("\nSurface Distribution:");
-            for surface in CanonicalSurface::ALL {
-                let count = quota.counts.get(&surface).copied().unwrap_or(0);
+            println!("\nTags Distribution:");
+            let mut counts: Vec<_> = quota.counts.iter().collect();
+            counts.sort_by_key(|a| std::cmp::Reverse(*a.1));
+            for (tag, count) in counts {
                 let bar_len = (count / 2).min(30);
                 let bar = "=".repeat(bar_len);
-                println!("  {:<15} [{:>3}] |{}", surface.as_str(), count, bar);
+                println!("  {:<15} [{:>3}] |{}", tag, count, bar);
+            }
+        }
+        "triage" => {
+            let quarantine_dir = if args.len() >= 3 {
+                PathBuf::from(&args[2])
+            } else {
+                PathBuf::from("Data/staging/quarantine")
+            };
+
+            println!("\n=== RainAI Staging Quarantine Triage ===");
+            println!("Inspecting quarantine directory: {:?}", quarantine_dir);
+
+            if !quarantine_dir.exists() {
+                println!("[+] Quarantine queue is empty! Zero rejected submissions.");
+                return Ok(());
             }
 
-            let underrepresented = quota.underrepresented_surfaces();
-            if !underrepresented.is_empty() {
-                println!("\n[!] Underrepresented Surfaces (Contributions needed):");
-                for (s, count) in underrepresented {
-                    println!("  - {:<15} (current count: {}, target: {})", s.as_str(), count, quota.target_per_surface);
+            let mut count = 0;
+            for entry in fs::read_dir(&quarantine_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("json") {
+                    count += 1;
+                    let content = fs::read_to_string(&path)?;
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                        println!("\n[!] Quarantined Item #{}: {}", count, path.file_stem().unwrap_or_default().to_string_lossy());
+                        println!("    Reason:  {}", val.get("quarantine_reason").and_then(|v| v.as_str()).unwrap_or("Unknown reason"));
+                        println!("    License: {}", val.get("license").and_then(|v| v.as_str()).unwrap_or("Missing"));
+                        println!("    Author:  {}", val.get("author").and_then(|v| v.as_str()).unwrap_or("Anonymous"));
+                        println!("    Tags:    {}", val.get("tags").map(|v| v.to_string()).unwrap_or_default());
+                        if let Some(url) = val.get("url").and_then(|v| v.as_str()) {
+                            println!("    Source:  {}", url);
+                        }
+                    }
                 }
-            } else {
-                println!("\n[+] All 9 canonical surfaces satisfy target quotas!");
             }
+
+            if count == 0 {
+                println!("[+] No quarantined records found in {:?}", quarantine_dir);
+            } else {
+                println!("\nTotal Quarantined Items: {}", count);
+            }
+        }
+        "pull-approved" => {
+            assert_not_main_branch()?;
+
+            let approved_dir = if args.len() >= 3 {
+                PathBuf::from(&args[2])
+            } else {
+                PathBuf::from("Data/staging/approved")
+            };
+
+            let target_raw_dir = PathBuf::from("Data/raw");
+            println!("\n=== Promoting Approved Staging Audio to Git LFS ===");
+            println!("Reading approved staging from: {:?}", approved_dir);
+            println!("Target Git LFS destination:    {:?}", target_raw_dir);
+
+            if !approved_dir.exists() {
+                println!("[!] Approved staging directory does not exist: {:?}", approved_dir);
+                return Ok(());
+            }
+
+            fs::create_dir_all(&target_raw_dir)?;
+            let mut promoted = 0;
+
+            for entry in fs::read_dir(&approved_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+
+                // Copy approved audio blobs directly
+                if ext == "flac" || ext == "opus" || ext == "ogg" || ext == "mp3" || ext == "wav" {
+                    let dest = target_raw_dir.join(path.file_name().unwrap());
+                    fs::copy(&path, &dest)?;
+                    promoted += 1;
+                    println!("  [+] Promoted {:?} -> {:?}", path.file_name().unwrap(), dest);
+                }
+            }
+
+            println!("\nSuccessfully promoted {} approved files into Git LFS (Data/raw/).", promoted);
+        }
+        "reconcile" => {
+            assert_not_main_branch()?;
+
+            let target_dir = if args.len() >= 3 {
+                PathBuf::from(&args[2])
+            } else {
+                shared::paths::WorkspacePaths::resolve_attributions()
+                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                    .unwrap_or_else(|| PathBuf::from("Data/rain"))
+            };
+
+            println!("\n=== Reconciling Dataset Provenance & Staging ===");
+            println!("Target dataset directory: {:?}", target_dir);
+
+            // 1. Reconcile Quarantine -> Approved if any quarantined asset now qualifies
+            let quarantine_dir = PathBuf::from("Data/staging/quarantine");
+            let approved_dir = PathBuf::from("Data/staging/approved");
+            let mut promoted_from_quarantine = 0;
+
+            if quarantine_dir.exists() {
+                fs::create_dir_all(&approved_dir)?;
+                for entry in fs::read_dir(&quarantine_dir)? {
+                    let entry = entry?;
+                    let path = entry.path();
+                    if path.extension().and_then(|s| s.to_str()) == Some("json") {
+                        if let Ok(content) = fs::read_to_string(&path) {
+                            if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&content) {
+                                let lic_str = val.get("license").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string();
+                                let (ok, tier, _reason) = LicenseVerifier::verify(&lic_str);
+                                let dsp_passed = val.get("dsp_passed").and_then(|v| v.as_bool()).unwrap_or(true);
+
+                                if ok && tier.is_approved() && dsp_passed {
+                                    // Move JSON sidecar to approved
+                                    let filename = path.file_name().unwrap();
+                                    let dest_json = approved_dir.join(filename);
+                                    if let Some(obj) = val.as_object_mut() {
+                                        obj.insert("target_prefix".to_string(), serde_json::Value::String("staging/approved".to_string()));
+                                        obj.insert("quarantine_reason".to_string(), serde_json::Value::Null);
+                                        obj.insert("promoted_at".to_string(), serde_json::Value::String(chrono_lite_timestamp()));
+                                    }
+                                    fs::write(&dest_json, serde_json::to_string_pretty(&val)?)?;
+                                    fs::remove_file(&path)?;
+
+                                    // Move corresponding audio blob if present
+                                    let stem = path.file_stem().unwrap().to_string_lossy();
+                                    for ext in ["flac", "wav", "m4a", "opus", "mp3"] {
+                                        let old_blob = quarantine_dir.join(format!("{}.{}", stem, ext));
+                                        if old_blob.exists() {
+                                            let new_blob = approved_dir.join(format!("{}.{}", stem, ext));
+                                            fs::copy(&old_blob, &new_blob)?;
+                                            fs::remove_file(&old_blob)?;
+                                        }
+                                    }
+
+                                    promoted_from_quarantine += 1;
+                                    println!("  [+] Promoted {:?} from quarantine to approved (License: {})", filename, lic_str);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. Reconcile manifest_provenance.json deduplicating identical SHA-256 hashes
+            let prov_manifest_path = target_dir.join("manifest_provenance.json");
+            let mut merged_duplicates = 0;
+
+            if prov_manifest_path.exists() {
+                let content = fs::read_to_string(&prov_manifest_path)?;
+                let manifest: ProvenanceManifest = serde_json::from_str(&content)?;
+                let original_count = manifest.records.len();
+
+                // Group by SHA-256
+                let mut hash_map: std::collections::HashMap<String, Vec<ProvenanceRecord>> = std::collections::HashMap::new();
+                for r in manifest.records {
+                    hash_map.entry(r.sha256.clone()).or_default().push(r);
+                }
+
+                let mut reconciled_records: Vec<ProvenanceRecord> = Vec::new();
+                let mut tags_distribution: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
+                for (_sha, records) in hash_map {
+                    if records.len() > 1 {
+                        merged_duplicates += records.len() - 1;
+                        let mut base = records[0].clone();
+                        for extra in records.into_iter().skip(1) {
+                            base.reconcile_with(extra);
+                        }
+                        for t in &base.tags {
+                            *tags_distribution.entry(t.clone()).or_insert(0) += 1;
+                        }
+                        reconciled_records.push(base);
+                    } else if let Some(single) = records.into_iter().next() {
+                        for t in &single.tags {
+                            *tags_distribution.entry(t.clone()).or_insert(0) += 1;
+                        }
+                        reconciled_records.push(single);
+                    }
+                }
+
+                reconciled_records.sort_by(|a, b| a.filename.cmp(&b.filename));
+
+                let reconciled_manifest = ProvenanceManifest {
+                    generated_at_utc: chrono_lite_timestamp(),
+                    total_sources: reconciled_records.len(),
+                    tags_distribution,
+                    records: reconciled_records,
+                };
+
+                let json = serde_json::to_string_pretty(&reconciled_manifest)?;
+                fs::write(&prov_manifest_path, json)?;
+                println!(
+                    "[+] Harmonized manifest_provenance.json: merged {} duplicate records ({} -> {} unique sources).",
+                    merged_duplicates, original_count, reconciled_manifest.total_sources
+                );
+            }
+
+            println!("\nReconciliation Complete:");
+            println!("  Quarantined items promoted: {}", promoted_from_quarantine);
+            println!("  Duplicate provenance records merged: {}", merged_duplicates);
         }
         _ => {
             print_usage();

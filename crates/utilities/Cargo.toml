@@ -81,4 +81,5 @@ crossterm = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 futures = { workspace = true }
 sha2 = "0.10"
+symphonia = { workspace = true }
 
