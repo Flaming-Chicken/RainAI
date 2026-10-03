@@ -18,8 +18,10 @@ CREATE TABLE IF NOT EXISTS records (
     alternate_licenses_json TEXT NOT NULL DEFAULT '[]',
     file_size_bytes INTEGER NOT NULL DEFAULT 0,
     quarantine_reason TEXT,
+    environment TEXT NOT NULL DEFAULT 'production',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_records_status ON records(status);
+CREATE INDEX IF NOT EXISTS idx_records_environment ON records(environment);
