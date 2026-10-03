@@ -29,6 +29,7 @@ from src.models.physics_losses import (
     compute_slice_aware_hwil_penalty,
     MoELoadBalancingLoss
 )
+from src.dsp.bfgs import create_optimizer, HybridBFGSOptimizer, BFGSCurvatureTracker
 
 torch._dynamo.config.recompile_limit = 32
 torch._dynamo.config.suppress_errors = True
@@ -159,18 +160,36 @@ def train_mamba_epoch(
             else:
                 consecutive_nans = 0
             
-        scaler.scale(loss).backward()
+        is_bfgs = isinstance(optimizer, torch.optim.LBFGS) or (isinstance(optimizer, HybridBFGSOptimizer) and optimizer.is_bfgs_active)
+        if is_bfgs:
+            def closure():
+                optimizer.zero_grad()
+                with torch.amp.autocast(device_type, enabled=False):
+                    m_dec = meta_controller(init_logits, telemetry, user_behavior_weights, dummy_qual, active_slice_level=slice_level)
+                    m_mu, _, _, _, m_log_var = mamba_moe(z_input, u_eff, expert_mask=m_dec["expert_mask"], tau_moe=m_dec["tau_moe"], active_level=slice_level)
+                    t_loss = traj_loss_fn(m_mu, m_log_var, z_target)["total_traj_loss"]
+                    fl_loss = mamba_moe.compute_flow_matching_loss(z_target, u_eff, m_dec["expert_mask"], m_dec["tau_moe"])["flow_matching_loss"]
+                    l = (t_loss + 0.3 * fl_loss) / accumulation_steps
+                l.backward()
+                torch.nn.utils.clip_grad_norm_(mamba_moe.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(meta_controller.parameters(), max_norm=1.0)
+                return l
+
+            optimizer.step(closure)
+            optimizer.zero_grad()
+        else:
+            scaler.scale(loss).backward()
         
         is_last = (batch_idx == len(dataloader)) or (max_batches is not None and batch_idx == max_batches)
-        if batch_idx % accumulation_steps == 0 or is_last:
+        if not is_bfgs and (batch_idx % accumulation_steps == 0 or is_last):
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(mamba_moe.parameters(), max_norm=1.0)
             torch.nn.utils.clip_grad_norm_(meta_controller.parameters(), max_norm=1.0)
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad()
-            if ema:
-                ema.update(mamba_moe)
+        if ema:
+            ema.update(mamba_moe)
                 
         num_active = torch.sum(expert_mask, dim=-1, keepdim=True)
         total_loss += loss.item() * accumulation_steps
@@ -258,6 +277,8 @@ def main():
     parser.add_argument("--save-dir", type=str, default=None)
     parser.add_argument("--vae-checkpoint", type=str, default=None)
     parser.add_argument("--freeze-encoder", action="store_true", default=True, help="Keep VAE encoder in memory or bypass during training loops")
+    parser.add_argument("--optimizer", type=str, default="adamw", choices=["adamw", "lbfgs", "bfgs", "hybrid_bfgs"], help="Optimizer selection: AdamW vs Quasi-Newton second-order L-BFGS")
+    parser.add_argument("--bfgs-history-size", type=int, default=10, help="L-BFGS history memory buffer size")
     parser.add_argument("--resume", action="store_true", default=True)
     parser.add_argument("--no-resume", dest="resume", action="store_false")
     args = parser.parse_args()
@@ -314,9 +335,25 @@ def main():
     traj_loss_fn = PhysicsTrajectoryLoss().to(device)
     moe_balancer = MoELoadBalancingLoss(num_experts=8).to(device)
 
-    optimizer = torch.optim.AdamW(list(mamba_moe.parameters()) + list(meta_controller.parameters()), lr=args.lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
-    scaler = torch.amp.GradScaler("cuda" if is_cuda else "cpu", enabled=args.use_amp)
+    optimizer = create_optimizer(
+        list(mamba_moe.parameters()) + list(meta_controller.parameters()),
+        optimizer_type=args.optimizer,
+        lr=args.lr,
+        weight_decay=1e-4,
+        history_size=args.bfgs_history_size,
+    )
+    is_bfgs = isinstance(optimizer, (torch.optim.LBFGS, HybridBFGSOptimizer))
+    effective_amp = args.use_amp and not isinstance(optimizer, torch.optim.LBFGS)
+    scheduler = (
+        torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer.adamw if isinstance(optimizer, HybridBFGSOptimizer) else optimizer,
+            T_max=args.epochs,
+            eta_min=1e-6,
+        )
+        if not isinstance(optimizer, torch.optim.LBFGS)
+        else None
+    )
+    scaler = torch.amp.GradScaler("cuda" if is_cuda else "cpu", enabled=effective_amp)
     ema = ModelEMA(mamba_moe, decay=0.995)
 
     best_val_loss = float("inf")
@@ -357,10 +394,15 @@ def main():
         )
         
         epoch_loss = train_metrics.get("loss", 0.0)
-        if math.isfinite(epoch_loss) and epoch_loss > 0.0:
+        if scheduler is not None and math.isfinite(epoch_loss) and epoch_loss > 0.0:
             scheduler.step()
+        elif scheduler is None:
+            pass
         else:
             print(f"[!] Notice: Skipping scheduler step (Loss: {epoch_loss})", flush=True)
+
+        if isinstance(optimizer, HybridBFGSOptimizer):
+            optimizer.set_epoch(epoch + 1)
         
         val_metrics = validate_mamba_epoch(
             encoder=encoder,

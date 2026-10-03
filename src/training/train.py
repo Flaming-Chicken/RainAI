@@ -36,7 +36,9 @@ def run_pipeline(
     use_amp: bool = False,
     use_disc: bool = False,
     accumulation_steps: int = 1,
-    chunk_curriculum: bool = False
+    chunk_curriculum: bool = False,
+    optimizer: str = "adamw",
+    bfgs_history_size: int = 10,
 ):
     print("=" * 80)
     print("RainAI Master Self-Integrated Training & Export Pipeline")
@@ -78,7 +80,9 @@ def run_pipeline(
             "--epochs", str(vae_epochs),
             "--batch-size", str(batch_size),
             "--device", device,
-            "--accumulation-steps", str(accumulation_steps)
+            "--accumulation-steps", str(accumulation_steps),
+            "--optimizer", optimizer,
+            "--bfgs-history-size", str(bfgs_history_size)
         ]
         if max_batches and max_batches > 0:
             cmd.extend(["--max-batches", str(max_batches)])
@@ -104,7 +108,9 @@ def run_pipeline(
             "--batch-size", str(batch_size),
             "--device", device,
             "--vae-checkpoint", str(vae_ckpt),
-            "--accumulation-steps", str(accumulation_steps)
+            "--accumulation-steps", str(accumulation_steps),
+            "--optimizer", optimizer,
+            "--bfgs-history-size", str(bfgs_history_size)
         ]
         if max_batches and max_batches > 0:
             cmd.extend(["--max-batches", str(max_batches)])
@@ -147,6 +153,8 @@ if __name__ == "__main__":
     parser.add_argument("--use-disc", action="store_true", help="Enable Multi-Scale STFT Discriminator")
     parser.add_argument("--accumulation-steps", type=int, default=1, help="Gradient accumulation steps")
     parser.add_argument("--chunk-curriculum", action="store_true", help="Enable dynamic length bucketing and curriculum duration scheduling")
+    parser.add_argument("--optimizer", type=str, default="adamw", choices=["adamw", "lbfgs", "bfgs", "hybrid_bfgs"], help="Optimizer selection: AdamW vs Quasi-Newton second-order L-BFGS")
+    parser.add_argument("--bfgs-history-size", type=int, default=10, help="L-BFGS history memory buffer size")
     args = parser.parse_args()
 
     selected_phases = ["vae", "mamba", "export"] if "all" in args.phases else args.phases
@@ -160,5 +168,7 @@ if __name__ == "__main__":
         use_amp=args.use_amp,
         use_disc=args.use_disc,
         accumulation_steps=args.accumulation_steps,
-        chunk_curriculum=args.chunk_curriculum
+        chunk_curriculum=args.chunk_curriculum,
+        optimizer=args.optimizer,
+        bfgs_history_size=args.bfgs_history_size,
     )

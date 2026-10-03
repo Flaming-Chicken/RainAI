@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - dev
   pull_request:
 
 jobs:
@@ -34,11 +35,20 @@ jobs:
         run: trunk build --release
         working-directory: crates/web
 
-      - name: Deploy to Cloudflare Staging (Preview)
+      - name: Deploy to Cloudflare Dev (Preview)
+        if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_PAGES_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: crates/web
+          command: pages deploy dist --project-name=rainai --branch=dev
+
+      - name: Deploy to Cloudflare PR Preview
         if: github.event_name == 'pull_request'
         uses: cloudflare/wrangler-action@v3
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          apiToken: ${{ secrets.CLOUDFLARE_PAGES_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: crates/web
           command: pages deploy dist --project-name=rainai --branch=preview
@@ -47,7 +57,7 @@ jobs:
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: cloudflare/wrangler-action@v3
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          apiToken: ${{ secrets.CLOUDFLARE_PAGES_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: crates/web
           command: pages deploy dist --project-name=rainai --branch=main

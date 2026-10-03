@@ -33,6 +33,7 @@ from src.models.physics_losses import (
     feature_matching_loss,
     BetaVAEDisentanglementLoss
 )
+from src.dsp.bfgs import create_optimizer, HybridBFGSOptimizer, BFGSCurvatureTracker
 
 torch._dynamo.config.recompile_limit = 32
 torch._dynamo.config.suppress_errors = True
@@ -179,20 +180,42 @@ def train_epoch(
             else:
                 consecutive_nans = 0
                 
-            loss_g = raw_loss_g / accumulation_steps
-            
-        scaler.scale(loss_g).backward()
+        is_bfgs = isinstance(opt_g, torch.optim.LBFGS) or (isinstance(opt_g, HybridBFGSOptimizer) and opt_g.is_bfgs_active)
+        if is_bfgs:
+            def closure():
+                opt_g.zero_grad()
+                with torch.amp.autocast(device_type, enabled=False):
+                    c_z, _, _, c_q_loss, _ = encoder(audio, u, active_slice_level=slice_level)
+                    c_audio_rec, _ = ddsp(c_z, u, noise)
+                    c_rec_f32 = c_audio_rec.to(torch.float32)
+                    c_phys = physics_criterion(c_rec_f32, audio_f32, u)
+                    c_loss = (c_phys["total_loss"] + c_q_loss) / accumulation_steps
+                c_loss.backward()
+                torch.nn.utils.clip_grad_norm_(encoder.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(ddsp.parameters(), max_norm=1.0)
+                return c_loss
+
+            opt_g.step(closure)
+            opt_g.zero_grad()
+        else:
+            scaler.scale(loss_g).backward()
         
         d_loss_val = 0.0
         if discriminator and opt_d:
             with torch.amp.autocast(device_type, enabled=False):
                 fake_scores_d, _ = discriminator(audio_rec_f32.detach())
                 loss_d = discriminator_hinge_loss(real_scores_d, fake_scores_d) / accumulation_steps
-            scaler.scale(loss_d).backward()
+            if is_bfgs:
+                loss_d.backward()
+                torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1.0)
+                opt_d.step()
+                opt_d.zero_grad()
+            else:
+                scaler.scale(loss_d).backward()
             d_loss_val = loss_d.item() * accumulation_steps
             
         is_last = (batch_idx == len(dataloader)) or (max_batches is not None and batch_idx == max_batches)
-        if batch_idx % accumulation_steps == 0 or is_last:
+        if not is_bfgs and (batch_idx % accumulation_steps == 0 or is_last):
             scaler.unscale_(opt_g)
             torch.nn.utils.clip_grad_norm_(encoder.parameters(), max_norm=1.0)
             torch.nn.utils.clip_grad_norm_(ddsp.parameters(), max_norm=1.0)
@@ -206,8 +229,8 @@ def train_epoch(
                 opt_d.zero_grad()
                 
             scaler.update()
-            if ema:
-                ema.update(encoder)
+        if ema:
+            ema.update(encoder)
                 
         global_step += 1
         num_batches += 1
@@ -278,7 +301,8 @@ def main():
     parser.add_argument("--max-batches", type=int, default=0)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--data-dir", type=str, default=None)
-    parser.add_argument("--chunk-curriculum", action="store_true", default=True)
+    parser.add_argument("--optimizer", type=str, default="adamw", choices=["adamw", "lbfgs", "bfgs", "hybrid_bfgs"], help="Optimizer selection: AdamW vs Quasi-Newton second-order L-BFGS")
+    parser.add_argument("--bfgs-history-size", type=int, default=10, help="L-BFGS history memory buffer size")
     parser.add_argument("--resume", action="store_true", default=True)
     parser.add_argument("--no-resume", dest="resume", action="store_false")
     args = parser.parse_args()
@@ -351,12 +375,28 @@ def main():
     disentangle_criterion = BetaVAEDisentanglementLoss(beta=1.5).to(device)
     hierarchical_criterion = HierarchicalMultiResLoss().to(device)
     
-    opt_g = torch.optim.AdamW(list(encoder.parameters()) + list(ddsp.parameters()), lr=args.lr, weight_decay=1e-4)
+    opt_g = create_optimizer(
+        list(encoder.parameters()) + list(ddsp.parameters()),
+        optimizer_type=args.optimizer,
+        lr=args.lr,
+        weight_decay=1e-4,
+        history_size=args.bfgs_history_size,
+    )
     opt_d = torch.optim.AdamW(discriminator.parameters(), lr=args.lr_d, betas=(0.5, 0.999)) if discriminator else None
 
+    is_bfgs = isinstance(opt_g, (torch.optim.LBFGS, HybridBFGSOptimizer))
+    effective_amp = args.use_amp and not (isinstance(opt_g, torch.optim.LBFGS))
     total_target_epochs = start_epoch + args.epochs - 1
-    scheduler_g = torch.optim.lr_scheduler.CosineAnnealingLR(opt_g, T_max=total_target_epochs, eta_min=1e-6)
-    scaler = torch.amp.GradScaler("cuda" if is_cuda else "cpu", enabled=args.use_amp)
+    scheduler_g = (
+        torch.optim.lr_scheduler.CosineAnnealingLR(
+            opt_g.adamw if isinstance(opt_g, HybridBFGSOptimizer) else opt_g,
+            T_max=total_target_epochs,
+            eta_min=1e-6,
+        )
+        if not isinstance(opt_g, torch.optim.LBFGS)
+        else None
+    )
+    scaler = torch.amp.GradScaler("cuda" if is_cuda else "cpu", enabled=effective_amp)
     tau_schedule = torch.linspace(1.0, 0.05, max(total_target_epochs, 1))
     global_step = (start_epoch - 1) * len(train_loader)
     
@@ -374,10 +414,15 @@ def main():
         global_step = int(train_metrics["global_step"])
         
         # Corrected order: optimizer.step() has completed inside train_epoch, now step scheduler_g safely
-        if math.isfinite(train_metrics["loss"]) and train_metrics["loss"] > 0.0:
+        if scheduler_g is not None and math.isfinite(train_metrics["loss"]) and train_metrics["loss"] > 0.0:
             scheduler_g.step()
+        elif scheduler_g is None:
+            pass
         else:
             print(f"[!] Notice: Skipping scheduler step (Loss: {train_metrics['loss']})", flush=True)
+
+        if isinstance(opt_g, HybridBFGSOptimizer):
+            opt_g.set_epoch(epoch + 1)
 
         val_metrics = validate_epoch(encoder=encoder, ddsp=ddsp, dataloader=val_loader, physics_criterion=physics_criterion, device=device, max_batches=args.max_batches)
 
