@@ -1,6 +1,7 @@
 name = "rainai"
 main = "worker.js"
 compatibility_date = "2026-08-18"
+pages_build_output_dir = "dist"
 
 [build]
 command = "trunk build --release"
