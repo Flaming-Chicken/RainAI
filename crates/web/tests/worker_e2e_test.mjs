@@ -139,10 +139,43 @@ class MockD1Database {
   }
 }
 
+// In-memory mock for Cloudflare Pages / Workers env.ASSETS
+class MockAssets {
+  constructor() {
+    this.files = new Map([
+      ["/index.html", "<!DOCTYPE html><html><body><canvas id='egui_canvas'></canvas></body></html>"],
+      ["/attributions.bin", Buffer.from("RATT\x01\x00\x00\x00\x00\x00")],
+      ["/pkg/web_bg.wasm", Buffer.from("\x00asm\x01\x00\x00\x00")],
+    ]);
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+    const path = url.pathname === "/" ? "/index.html" : url.pathname;
+    if (this.files.has(path)) {
+      const content = this.files.get(path);
+      const isHtml = path.endsWith(".html");
+      const isWasm = path.endsWith(".wasm");
+      return new Response(content, {
+        status: 200,
+        headers: {
+          "Content-Type": isHtml
+            ? "text/html; charset=utf-8"
+            : isWasm
+            ? "application/wasm"
+            : "application/octet-stream",
+        },
+      });
+    }
+    return new Response("Not Found", { status: 404 });
+  }
+}
+
 async function runE2ETests() {
   console.log("=== RainAI Edge Worker E2E Test Suite ===");
   const bucket = new MockR2Bucket();
-  const env = { DATA_BUCKET: bucket, STAGING_BUCKET: bucket };
+  const assets = new MockAssets();
+  const env = { DATA_BUCKET: bucket, STAGING_BUCKET: bucket, ASSETS: assets };
   let passed = 0;
   let failed = 0;
 
@@ -411,6 +444,52 @@ async function runE2ETests() {
 
     const d1Row = await d1Db.prepare("SELECT * FROM records WHERE sha256 = ?").bind(d1Sha).first();
     assert(d1Row === null, "Record successfully purged from D1 middle database");
+  }
+
+  console.log("\n--- Testing Cloudflare Pages / Workers Static Asset & Security Engine ---");
+
+  // 15. Root HTML Entry Point & COOP/COEP Headers for SharedArrayBuffer
+  {
+    const req = new Request("https://rainai.app/", { method: "GET" });
+    const res = await worker.fetch(req, env, {});
+    assert(res.status === 200, "Root request returns 200 OK");
+    const text = await res.text();
+    assert(text.includes("egui_canvas"), "Serves HTML entrypoint containing egui_canvas");
+    assert(res.headers.get("Cross-Origin-Opener-Policy") === "same-origin", "COOP header set to 'same-origin'");
+    assert(res.headers.get("Cross-Origin-Embedder-Policy") === "require-corp", "COEP header set to 'require-corp'");
+  }
+
+  // 16. Zero-Copy Binary Attribution Dictionary with Immutable Caching
+  {
+    const req = new Request("https://rainai.app/attributions.bin", { method: "GET" });
+    const res = await worker.fetch(req, env, {});
+    assert(res.status === 200, "Attributions binary returns 200 OK");
+    assert(res.headers.get("Cache-Control").includes("immutable"), "Cache-Control is immutable");
+    assert(res.headers.get("Cross-Origin-Resource-Policy") === "cross-origin", "CORP header set to 'cross-origin'");
+    const buf = await res.arrayBuffer();
+    assert(buf.byteLength > 0, "Binary attribution dictionary body returned");
+  }
+
+  // 17. WebAssembly Binary Delivery
+  {
+    const req = new Request("https://rainai.app/pkg/web_bg.wasm", { method: "GET" });
+    const res = await worker.fetch(req, env, {});
+    assert(res.status === 200, "WASM binary returns 200 OK");
+    assert(res.headers.get("Content-Type") === "application/wasm", "Content-Type is application/wasm");
+    assert(res.headers.get("Cache-Control").includes("immutable"), "WASM caching is immutable");
+  }
+
+  // 18. Single-Page Application (SPA) Client Routing Fallback
+  {
+    const req = new Request("https://rainai.app/presets/attic_roof", {
+      method: "GET",
+      headers: { "Sec-Fetch-Mode": "navigate" },
+    });
+    const res = await worker.fetch(req, env, {});
+    assert(res.status === 200, "SPA deep route navigation returns 200 via index.html fallback");
+    const text = await res.text();
+    assert(text.includes("egui_canvas"), "SPA fallback serves root HTML application");
+    assert(res.headers.get("Cross-Origin-Opener-Policy") === "same-origin", "SPA fallback preserves COOP header");
   }
 
   console.log(`\nResults: ${passed} passed, ${failed} failed.\n`);
