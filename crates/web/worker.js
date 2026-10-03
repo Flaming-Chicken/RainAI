@@ -107,9 +107,9 @@ export default {
 
         if (env.DATA_BUCKET && sha256) {
           const checkKeys = [
-            `/quarantine/${sha256}.json`,
-            `/approved/${sha256}.json`,
-            `/urls/${sha256}.json`,
+            `ingest/quarantine/${sha256}.json`,
+            `ingest/approved/${sha256}.json`,
+            `ingest/urls/${sha256}.json`,
           ];
           for (const k of checkKeys) {
             const obj = await env.DATA_BUCKET.get(k);
@@ -211,10 +211,10 @@ export default {
 
             // Move any audio blob associated with this sha256
             for (const ext of ["flac", "wav", "m4a", "opus", "mp3"]) {
-              const oldBlobKey = `/quarantine/${sha256}.${ext}`;
+              const oldBlobKey = `ingest/quarantine/${sha256}.${ext}`;
               const blobObj = await env.DATA_BUCKET.get(oldBlobKey);
               if (blobObj) {
-                const newBlobKey = `/approved/${sha256}.${ext}`;
+                const newBlobKey = `ingest/approved/${sha256}.${ext}`;
                 await env.DATA_BUCKET.put(newBlobKey, blobObj.body, {
                   httpMetadata: blobObj.httpMetadata,
                 });
@@ -244,7 +244,7 @@ export default {
         const sha256 = url.pathname.replace("/api/contribute/upload-blob/", "");
         const targetStatus = request.headers.get("X-Target-Status") || "approved";
         const fileExt = request.headers.get("X-File-Extension") || "flac";
-        const objectKey = `/${targetStatus}/${sha256}.${fileExt}`;
+        const objectKey = `ingest/${targetStatus}/${sha256}.${fileExt}`;
 
         if (env.DATA_BUCKET) {
           await env.DATA_BUCKET.put(objectKey, request.body, {
