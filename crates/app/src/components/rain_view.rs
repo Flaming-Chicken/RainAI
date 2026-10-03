@@ -20,6 +20,7 @@ pub enum RainTab {
 }
 
 pub const DROPLET_PANNING_SHADER_WGSL: &str = include_str!("../shaders/droplet_panning.wgsl");
+pub const ATTRIBUTION_BYTES: &[u8] = include_bytes!("../../../../Data/rain/attributions.bin");
 
 /// Uniform buffer payload matching droplet_panning.wgsl WebGPU shader pipeline
 #[repr(C)]
@@ -88,6 +89,7 @@ pub struct RainView {
     pub enable_gpu_radar: bool,
     pub dragged_source: Option<RadarDragSource>,
     pub show_advanced_inspector: bool,
+    pub show_provenance_hud: bool,
 
     // Phase 22: Flow Solver, WebGPU Governor & UX Telemetry
     pub flow_solver: FlowSolverAlgorithm,
@@ -116,6 +118,7 @@ impl Default for RainView {
             enable_gpu_radar: false,
             dragged_source: None,
             show_advanced_inspector: false,
+            show_provenance_hud: false,
 
             flow_solver: FlowSolverAlgorithm::AdaptiveRk45 { tol: 1e-3, initial_h: 0.1 },
             live_step_trajectory: vec![0.10, 0.09, 0.11, 0.08, 0.12, 0.10, 0.09, 0.10],
@@ -234,10 +237,61 @@ impl RainView {
                     RainTab::Telemetry => self.render_telemetry_tab(ui, rain, audio_state),
                 }
             }
+
+            ui.add_space(8.0);
+            self.render_provenance_hud(ui, rain);
         });
 
         // Synchronize real-time UI parameters to the WASM AudioWorklet
         self.sync_wasm_telemetry(rain);
+    }
+
+    fn render_provenance_hud(&mut self, ui: &mut egui::Ui, _rain: &RainState) {
+        ui.horizontal(|ui| {
+            let label = if self.show_provenance_hud {
+                "🔽 Hide Live Soundscape Provenance"
+            } else {
+                "📜 Live Soundscape Provenance (Offline XAI)"
+            };
+            if ui.button(egui::RichText::new(label).size(12.0).color(Color32::from_rgb(180, 220, 255))).clicked() {
+                self.show_provenance_hud = !self.show_provenance_hud;
+            }
+            ui.label(egui::RichText::new("⚖️ CC-BY & Open Data Compliant (100% Offline)").size(11.0).color(Color32::from_rgb(150, 200, 150)));
+        });
+
+        if self.show_provenance_hud {
+            ui.group(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new("Spodeian 4-Stage Offline Explainable AI (XAI)").strong().size(12.0));
+                    ui.label(egui::RichText::new("The neural synthesis engine modulates transparent DDSP physical parameters. Contributor credits are resolved offline via zero-copy binary dictionary with zero cloud telemetry.").size(11.0).color(Color32::LIGHT_GRAY));
+                    ui.add_space(4.0);
+
+                    if let Some(dict) = shared::attribution::BinaryAttributionDictionary::new(ATTRIBUTION_BYTES) {
+                        ui.label(egui::RichText::new(format!("Active Dataset Corpus: {} attributed field & synthetic assets", dict.len())).size(11.0));
+                        ui.add_space(2.0);
+
+                        egui::ScrollArea::vertical().max_height(140.0).show(ui, |ui| {
+                            for entry in dict.iter() {
+                                ui.horizontal(|ui| {
+                                    ui.label(egui::RichText::new(format!("• {}", entry.surface)).strong().size(11.0));
+                                    ui.label(egui::RichText::new(format!("by {}", entry.contributor)).size(11.0));
+                                    let lic_color = match entry.license_tier {
+                                        4 | 3 => Color32::from_rgb(120, 200, 255), // CC-BY
+                                        5 => Color32::from_rgb(150, 240, 150),     // CC0
+                                        6 => Color32::from_rgb(255, 200, 100),     // Proprietary
+                                        _ => Color32::GRAY,
+                                    };
+                                    ui.colored_label(lic_color, format!("[{}]", entry.license));
+                                });
+                            }
+                        });
+                    } else {
+                        ui.label(egui::RichText::new("Attribution dictionary unavailable offline").size(11.0).color(Color32::YELLOW));
+                    }
+                });
+            });
+            ui.add_space(4.0);
+        }
     }
 
     #[cfg(target_arch = "wasm32")]

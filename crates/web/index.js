@@ -43,15 +43,25 @@ async function initializeAudioEngine() {
 
 (function () {
   const unlockAudio = async () => {
-    if (window.__rainAudioContext && window.__rainAudioContext.state === 'suspended') {
-      window.__rainAudioContext.resume().catch(() => {});
+    if (window.__rainAudioContext) {
+      if (window.__rainAudioContext.state === 'suspended') {
+        try {
+          await window.__rainAudioContext.resume();
+          // Mobile Safari AudioContext unlock: play 1 frame of silence
+          const buffer = window.__rainAudioContext.createBuffer(1, 1, 22050);
+          const source = window.__rainAudioContext.createBufferSource();
+          source.buffer = buffer;
+          source.connect(window.__rainAudioContext.destination);
+          source.start(0);
+        } catch (_) {}
+      }
     }
-    // Initialize the WASM engine on the first user interaction
+    // Initialize the WASM engine on user interaction if not yet started
     if (!window.__rainEngine) {
       await initializeAudioEngine().catch(e => console.error("Audio Engine Init Failed:", e));
     }
   };
-  ['click', 'touchstart', 'pointerdown', 'keydown'].forEach((evt) => {
+  ['click', 'touchstart', 'touchend', 'pointerdown', 'keydown'].forEach((evt) => {
     window.addEventListener(evt, unlockAudio, { passive: true });
   });
 })();

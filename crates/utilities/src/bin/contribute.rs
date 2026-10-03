@@ -61,6 +61,9 @@ SUBCOMMANDS:
     triage [DIR]                 Inspect quarantined contributions and failure diagnostics (default: Data/staging/quarantine)
     pull-approved [DIR]          Promote approved staging records to dev branch Data/raw/ and sources.json
     reconcile [TARGET_DIR]       Promote approved quarantine items and reconcile duplicate metadata in manifest_provenance.json
+    export-attributions          Compile manifest_provenance.json into a zero-copy binary dictionary
+        --manifest <FILE>        Source provenance manifest (default: Data/rain/manifest_provenance.json)
+        --out <FILE>             Output binary path (default: Data/rain/attributions.bin)
 
 EXAMPLES:
     rainai_contribute template --out contribution.json
@@ -70,6 +73,7 @@ EXAMPLES:
     rainai_contribute triage
     rainai_contribute reconcile
     rainai_contribute pull-approved
+    rainai_contribute export-attributions --out Data/rain/attributions.bin
 "#
     );
 }
@@ -503,6 +507,64 @@ fn main() -> Result<()> {
             println!("\nReconciliation Complete:");
             println!("  Quarantined items promoted: {}", promoted_from_quarantine);
             println!("  Duplicate provenance records merged: {}", merged_duplicates);
+        }
+        "export-attributions" => {
+            let mut manifest_path = PathBuf::from("Data/rain/manifest_provenance.json");
+            let mut out_path = PathBuf::from("Data/rain/attributions.bin");
+            let mut i = 2;
+            while i < args.len() {
+                if args[i] == "--manifest" && i + 1 < args.len() {
+                    manifest_path = PathBuf::from(&args[i + 1]);
+                    i += 1;
+                } else if args[i] == "--out" && i + 1 < args.len() {
+                    out_path = PathBuf::from(&args[i + 1]);
+                    i += 1;
+                }
+                i += 1;
+            }
+
+            if !manifest_path.exists() {
+                eprintln!("[!] Provenance manifest not found at: {:?}", manifest_path);
+                return Ok(());
+            }
+
+            println!("[*] Loading provenance manifest from: {:?}", manifest_path);
+            let content = fs::read_to_string(&manifest_path)?;
+            let manifest: ProvenanceManifest = serde_json::from_str(&content)?;
+
+            let mut inputs = Vec::with_capacity(manifest.records.len());
+            for rec in manifest.records {
+                let contributor = if !rec.contributors.is_empty() {
+                    rec.contributors.join(", ")
+                } else {
+                    "RainAI Community".to_string()
+                };
+
+                let license = rec.license.unwrap_or_else(|| "Unknown".to_string());
+                let surface = rec.tags.first().cloned().unwrap_or_else(|| "ambient".to_string());
+                let tier = rec.license_tier.preference_rank();
+
+                inputs.push(shared::attribution::AttributionRecordInput {
+                    sha256_hex: rec.sha256,
+                    contributor,
+                    license,
+                    license_tier: tier,
+                    surface,
+                });
+            }
+
+            let num_records = inputs.len();
+            let binary_data = shared::attribution::compile_binary_attribution_dictionary(inputs);
+
+            if let Some(parent) = out_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+
+            utilities::ingest::atomic_write(&out_path, &binary_data)?;
+            println!(
+                "[+] Successfully exported {} attribution records to binary dictionary: {:?} ({} bytes)",
+                num_records, out_path, binary_data.len()
+            );
         }
         _ => {
             print_usage();

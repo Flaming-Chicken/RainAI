@@ -16,6 +16,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod attribution;
 pub mod conditioning;
 pub mod export;
 pub mod models;
@@ -24,6 +25,7 @@ pub mod preset;
 pub mod rain;
 pub mod surface;
 
+pub use attribution::*;
 pub use conditioning::*;
 pub use export::*;
 pub use models::*;
