@@ -544,6 +544,35 @@ pub fn compute_file_sha256(path: &Path) -> Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+/// Atomically writes content to a file via a temporary file, fsync, and atomic rename.
+///
+/// Guarantees Atomicity and Durability without leaving orphaned backup or history files.
+pub fn atomic_write(path: &Path, content: &[u8]) -> Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("Failed to create parent directory at {:?}", parent))?;
+
+    let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+    let tmp_path = parent.join(format!("{}.tmp.{}", file_name, std::process::id()));
+
+    let mut file = std::fs::File::create(&tmp_path)
+        .with_context(|| format!("Failed to create temporary file at {:?}", tmp_path))?;
+
+    use std::io::Write;
+    file.write_all(content)
+        .with_context(|| format!("Failed to write data to {:?}", tmp_path))?;
+    file.sync_all()
+        .with_context(|| format!("Failed to fsync {:?}", tmp_path))?;
+    drop(file);
+
+    if let Err(e) = std::fs::rename(&tmp_path, path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        bail!("Failed to atomically rename {:?} to {:?}: {}", tmp_path, path, e);
+    }
+
+    Ok(())
+}
+
 /// Provenance metadata record for an ingested audio asset.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProvenanceRecord {

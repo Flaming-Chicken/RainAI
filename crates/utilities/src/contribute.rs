@@ -31,8 +31,8 @@ use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
 use crate::ingest::{
-    analyze_pcm_samples, compute_file_sha256, AcousticQualityMetrics, DownloadItem, LicenseTier,
-    LicenseVerifier, ProvenanceManifest, ProvenanceRecord,
+    analyze_pcm_samples, atomic_write, compute_file_sha256, AcousticQualityMetrics, DownloadItem,
+    LicenseTier, LicenseVerifier, ProvenanceManifest, ProvenanceRecord,
 };
 
 /// Precipitation intensity category for acoustic droplet dynamics.
@@ -870,6 +870,7 @@ pub fn import_local_directory(
     let mut rejected_reasons = Vec::new();
     let mut new_sources = Vec::new();
     let mut provenance_records = Vec::new();
+    let mut attributions_to_append = Vec::new();
 
     // Verify default license if provided
     if let Some(lic) = &options.default_license {
@@ -1049,35 +1050,46 @@ pub fn import_local_directory(
             ingest_method: "local_import".to_string(),
         });
 
-        // 7. Append to ATTRIBUTIONS.txt
+        // 7. Buffer attribution entry
         if options.update_attributions {
-            if let Some(attr_path) = shared::paths::WorkspacePaths::resolve_attributions() {
-                let tags_str = "auto_imported"; // Just a placeholder for logging
-                let license_str = options.default_license.as_deref().unwrap_or("Unknown");
-                let log_line = format!(
-                    "Platform: Contribution ({}) | File: {} | Tags: {} | Tier: {:?} | License: {} | SHA256: {} | Path: {:?}\n",
-                    author_str, dest_filename, tags_str, license_tier, license_str, sha256, file
-                );
-                if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&attr_path) {
-                    use std::io::Write;
-                    let _ = f.write_all(log_line.as_bytes());
+            let tags_str = "auto_imported"; // Placeholder for logging
+            let license_str = options.default_license.as_deref().unwrap_or("Unknown");
+            let log_line = format!(
+                "Platform: Contribution ({}) | File: {} | Tags: {} | Tier: {:?} | License: {} | SHA256: {} | Path: {:?}\n",
+                author_str, dest_filename, tags_str, license_tier, license_str, sha256, file
+            );
+            attributions_to_append.push(log_line);
+        }
+    }
+
+    // 8. Atomic batch append to ATTRIBUTIONS.txt only if files were imported
+    if options.update_attributions && !attributions_to_append.is_empty() {
+        if let Some(attr_path) = shared::paths::WorkspacePaths::resolve_attributions() {
+            if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&attr_path) {
+                use std::io::Write;
+                for line in &attributions_to_append {
+                    let _ = f.write_all(line.as_bytes());
+                }
+                let _ = f.sync_all();
+            }
+        }
+    }
+
+    // 9. Update sources.json if requested via atomic_write
+    if options.update_sources_json && (!new_sources.is_empty() || !existing_sources.is_empty()) {
+        if let Some(ref sources_path) = sources_path_opt {
+            existing_sources.extend(new_sources);
+            if let Ok(json) = serde_json::to_string_pretty(&existing_sources) {
+                if let Err(e) = atomic_write(sources_path, json.as_bytes()) {
+                    warn!("[!] Failed atomic write to sources.json: {}", e);
+                } else {
+                    info!("[+] Synchronized sources.json with contributed items.");
                 }
             }
         }
     }
 
-    // 8. Update sources.json if requested
-    if options.update_sources_json && (!new_sources.is_empty() || !existing_sources.is_empty()) {
-        if let Some(ref sources_path) = sources_path_opt {
-            existing_sources.extend(new_sources);
-            if let Ok(json) = serde_json::to_string_pretty(&existing_sources) {
-                let _ = fs::write(sources_path, json);
-                info!("[+] Synchronized sources.json with contributed items.");
-            }
-        }
-    }
-
-    // 9. Update manifest_provenance.json
+    // 10. Update manifest_provenance.json via atomic_write
     let mut final_manifest = existing_manifest.unwrap_or_else(|| ProvenanceManifest {
         generated_at_utc: crate::ingest::chrono_lite_timestamp(),
         total_sources: 0,
@@ -1090,8 +1102,11 @@ pub fn import_local_directory(
         *final_manifest.tags_distribution.entry(tag.clone()).or_insert(0) += count;
     }
     if let Ok(json) = serde_json::to_string_pretty(&final_manifest) {
-        let _ = fs::write(&prov_manifest_path, json);
-        info!("[+] Synchronized manifest_provenance.json.");
+        if let Err(e) = atomic_write(&prov_manifest_path, json.as_bytes()) {
+            warn!("[!] Failed atomic write to manifest_provenance.json: {}", e);
+        } else {
+            info!("[+] Synchronized manifest_provenance.json.");
+        }
     }
 
     info!(
