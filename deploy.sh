@@ -27,17 +27,23 @@ elif command -v python3 &> /dev/null; then
     PYTHON_EXE="python3"
 fi
 
-echo "[*] Using Python environment: $($PYTHON_EXE --version)"
-"$PYTHON_EXE" -X utf8 src/export/export_all.py
-
 # Workspace-anchored export target unified with crates/inference/data
 EXPORT_DIR="$ROOT_DIR/crates/inference/data"
 SLICES_DIR="$EXPORT_DIR/wasm"
 DEPLOY_CONFIG="$EXPORT_DIR/rainai_deployment_config.json"
 
-if [ ! -f "$DEPLOY_CONFIG" ]; then
-    echo "[!] Error: $DEPLOY_CONFIG was not generated!"
-    exit 1
+if [ -f "$DEPLOY_CONFIG" ] && [ "${FORCE_REEXPORT:-false}" != "true" ]; then
+    echo "[*] Pre-compiled model artifacts found in $EXPORT_DIR. Reusing existing deployment models."
+else
+    echo "[*] Using Python environment: $($PYTHON_EXE --version)"
+    if "$PYTHON_EXE" -c "import torch" &> /dev/null; then
+        "$PYTHON_EXE" -X utf8 src/export/export_all.py
+    elif [ -f "$DEPLOY_CONFIG" ]; then
+        echo "[!] PyTorch not detected in build container; falling back to existing pre-compiled models in $EXPORT_DIR."
+    else
+        echo "[!] Fatal: PyTorch is not installed and no pre-compiled models exist at $DEPLOY_CONFIG!"
+        exit 1
+    fi
 fi
 
 # ==========================================
@@ -57,11 +63,15 @@ fi
 
 if ! command -v rustup &> /dev/null; then
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "$RUST_TOOLCHAIN" --target wasm32-unknown-unknown
+    if [ -f "$HOME/.cargo/env" ]; then
+        source "$HOME/.cargo/env"
+    fi
 else
     rustup target add wasm32-unknown-unknown 2>/dev/null || true
 fi
 
 # Trunk Installation
+mkdir -p "$CARGO_HOME/bin"
 if ! command -v trunk &> /dev/null; then
     echo "Downloading and caching latest Trunk asset bundler..."
     wget -qO- https://github.com/trunk-rs/trunk/releases/latest/download/trunk-x86_64-unknown-linux-gnu.tar.gz | tar -xzf - -C "$CARGO_HOME/bin"
@@ -135,6 +145,8 @@ fi
 
 cp -f crates/web/_headers "$DIST_DIR/_headers" 2>/dev/null || true
 cp -f crates/web/_redirects "$DIST_DIR/_redirects" 2>/dev/null || true
+cp -f crates/web/_worker.js "$DIST_DIR/_worker.js" 2>/dev/null || true
+cp -f data/rain/attributions.bin "$DIST_DIR/attributions.bin" 2>/dev/null || true
 
 # ==========================================
 # PHASE 5: Deployment & Benchmarks
