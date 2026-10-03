@@ -34,14 +34,14 @@ jobs:
         run: trunk build --release
         working-directory: crates/web
 
-      - name: Deploy to Cloudflare Staging
+      - name: Deploy to Cloudflare Staging (Preview)
         if: github.event_name == 'pull_request'
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: crates/web
-          command: deploy --env staging
+          command: pages deploy dist --project-name=rainai --branch=preview
 
       - name: Deploy to Cloudflare Production
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -50,4 +50,4 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: crates/web
-          command: deploy --env production
+          command: pages deploy dist --project-name=rainai --branch=main
