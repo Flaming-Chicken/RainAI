@@ -5,6 +5,10 @@ compatibility_date = "2026-08-18"
 [build]
 command = "trunk build --release"
 
+[assets]
+directory = "dist"
+binding = "ASSETS"
+
 # Unified R2 Bucket for accepting end-user data (Used by both staging and prod)
 [[r2_buckets]]
 binding = "DATA_BUCKET"

@@ -79,6 +79,36 @@ export default {
       return new Response(null, { headers: corsHeaders });
     }
 
+    // 0. Static Asset Passthrough (Cloudflare Pages / Workers Assets)
+    if (!url.pathname.startsWith("/api/")) {
+      if (env.ASSETS) {
+        let assetResponse = await env.ASSETS.fetch(request);
+
+        // SPA navigation fallback: if 404 on an HTML navigation request, serve index.html
+        if (assetResponse.status === 404 && (request.mode === "navigate" || !url.pathname.includes("."))) {
+          const indexReq = new Request(new URL("/index.html", request.url), request);
+          assetResponse = await env.ASSETS.fetch(indexReq);
+        }
+
+        // Attach critical Security & Multi-threading headers for WASM SharedArrayBuffer
+        const response = new Response(assetResponse.body, assetResponse);
+        response.headers.set("Cross-Origin-Opener-Policy", "same-origin");
+        response.headers.set("Cross-Origin-Embedder-Policy", "require-corp");
+
+        // Set optimized Cache-Control headers
+        if (url.pathname.endsWith(".wasm") || url.pathname.endsWith(".bin")) {
+          response.headers.set("Cache-Control", "public, max-age=31536000, immutable");
+          response.headers.set("Cross-Origin-Resource-Policy", "cross-origin");
+        } else if (url.pathname === "/" || url.pathname.endsWith(".html") || url.pathname.endsWith("/sw.js")) {
+          response.headers.set("Cache-Control", "no-cache, no-store, must-revalidate, max-age=0");
+        }
+
+        return response;
+      }
+
+      return new Response("Not Found", { status: 404, headers: corsHeaders });
+    }
+
     try {
       // 1. Health & Quota Diagnostics
       if (url.pathname === "/api/contribute/health" && request.method === "GET") {
