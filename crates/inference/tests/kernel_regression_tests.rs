@@ -3,10 +3,10 @@
 //! Ensures that numerical drift during the Mamba recurrence loop and Box-Cox companding
 //! remains strictly below perceptual thresholds.
 
+use inference::model::BoxCoxDequantizer;
 use serde::Deserialize;
 use std::fs;
 use std::path::PathBuf;
-use inference::model::BoxCoxDequantizer;
 
 #[derive(Debug, Deserialize)]
 struct BoxCoxReference {
@@ -49,12 +49,11 @@ struct GoldenVectors {
 fn load_golden_vectors() -> GoldenVectors {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push("data/golden_vectors/baseline_step_trace.json");
-    
+
     let file_content = fs::read_to_string(&path)
         .unwrap_or_else(|_| panic!("Failed to read golden vectors at: {:?}", path));
-        
-    serde_json::from_str(&file_content)
-        .expect("Failed to deserialize golden vectors JSON")
+
+    serde_json::from_str(&file_content).expect("Failed to deserialize golden vectors JSON")
 }
 
 #[test]
@@ -65,11 +64,15 @@ fn test_box_cox_inversion_precision() {
     for ref_point in golden.box_cox_reference {
         let calculated = BoxCoxDequantizer::dequantize_continuous(ref_point.y, ref_point.lambda);
         let error = (calculated - ref_point.exact_x).abs();
-        
+
         assert!(
             error < epsilon,
             "Box-Cox mismatch at y={}, lambda={}: expected {}, got {} (error: {})",
-            ref_point.y, ref_point.lambda, ref_point.exact_x, calculated, error
+            ref_point.y,
+            ref_point.lambda,
+            ref_point.exact_x,
+            calculated,
+            error
         );
     }
 }

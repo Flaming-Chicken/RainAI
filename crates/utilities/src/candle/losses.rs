@@ -156,7 +156,10 @@ pub fn compute_moe_load_balancing_loss(router_probs: &Tensor) -> Result<Tensor> 
 /// Penalizes extreme logit magnitudes: L_z = 1/B sum_b (log sum_e exp(z_{b, e}))^2.
 pub fn compute_router_z_loss(router_logits: &Tensor) -> Result<Tensor> {
     let max_logit = router_logits.max_keepdim(1)?;
-    let exp_diff = router_logits.broadcast_sub(&max_logit)?.clamp(-20.0f32, 20.0f32)?.exp()?;
+    let exp_diff = router_logits
+        .broadcast_sub(&max_logit)?
+        .clamp(-20.0f32, 20.0f32)?
+        .exp()?;
     let sum_exp = exp_diff.sum_keepdim(1)?.clamp(1e-8f32, 1e8f32)?;
     let log_sum_exp = (&max_logit + &sum_exp.log()?)?;
     let z_loss = log_sum_exp.sqr()?.mean_all()?;
@@ -258,17 +261,10 @@ pub fn compute_beta_vae_loss(
     logvar: &Tensor,
     beta: f64,
 ) -> Result<(Tensor, Tensor, Tensor)> {
-    let (total, recon_loss, kl, _active) = compute_beta_vae_loss_with_free_bits(
-        pred_bands,
-        target_bands,
-        mu,
-        logvar,
-        beta,
-        0.0,
-    )?;
+    let (total, recon_loss, kl, _active) =
+        compute_beta_vae_loss_with_free_bits(pred_bands, target_bands, mu, logvar, beta, 0.0)?;
     Ok((total, recon_loss, kl))
 }
-
 
 /// Hardware-in-the-Loop (HWIL) governor budget penalty.
 pub fn compute_hwil_penalty(
@@ -294,7 +290,8 @@ pub fn compute_continuous_hwil_penalty(
     active_experts: f32,
     budget_experts: f32,
 ) -> f32 {
-    let buffer_deficit = ((target_buffer_ms - buffer_health_ms).max(0.0) / target_buffer_ms.max(1.0)).powi(2);
+    let buffer_deficit =
+        ((target_buffer_ms - buffer_health_ms).max(0.0) / target_buffer_ms.max(1.0)).powi(2);
     let expert_excess = ((active_experts - budget_experts).max(0.0) * 0.15).powi(2);
     expert_excess + buffer_deficit * 0.35
 }
@@ -331,7 +328,10 @@ pub fn compute_straight_flow_loss(
     let base_flow = diff.sqr()?.mean_all()?;
 
     let mean_target = target_velocity.mean_keepdim(0)?;
-    let curvature = pred_velocity.broadcast_sub(&mean_target)?.sqr()?.mean_all()?;
+    let curvature = pred_velocity
+        .broadcast_sub(&mean_target)?
+        .sqr()?
+        .mean_all()?;
     let total = (&base_flow + (&curvature * lambda_straight)?)?;
     Ok((total, base_flow))
 }
@@ -418,12 +418,12 @@ pub fn compute_trajectory_diversity_loss(z_pred: &Tensor, min_std: f64) -> Resul
 /// Live Model Health & Collapse Diagnostics snapshot.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelCollapseDiagnostics {
-    pub active_latents: usize,         // Active latent channels (out of 64) with Var > 0.01
-    pub latent_total_dim: usize,       // 64
-    pub router_perplexity: f32,       // Router effective expert diversity [1.0 .. 8.0]
-    pub dead_experts: usize,           // Experts receiving < 1.25% routing probability
-    pub trajectory_variance: f32,      // Mean standard deviation of predicted trajectories
-    pub status_code: String,           // "OPTIMAL", "POSTERIOR_RISK", "ROUTER_STARVATION", "MODE_COLLAPSE"
+    pub active_latents: usize, // Active latent channels (out of 64) with Var > 0.01
+    pub latent_total_dim: usize, // 64
+    pub router_perplexity: f32, // Router effective expert diversity [1.0 .. 8.0]
+    pub dead_experts: usize,   // Experts receiving < 1.25% routing probability
+    pub trajectory_variance: f32, // Mean standard deviation of predicted trajectories
+    pub status_code: String,   // "OPTIMAL", "POSTERIOR_RISK", "ROUTER_STARVATION", "MODE_COLLAPSE"
     pub is_mitigating: bool,
 }
 

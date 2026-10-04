@@ -16,6 +16,10 @@ fn main() -> Result<()> {
     let file = File::create(&target_file).context("Failed creating output file")?;
     serde_json::to_writer_pretty(file, &payload).context("Failed serializing JSON payload")?;
 
-    println!("Successfully generated {} steps to {:?}", payload.trace.len(), target_file);
+    println!(
+        "Successfully generated {} steps to {:?}",
+        payload.trace.len(),
+        target_file
+    );
     Ok(())
 }

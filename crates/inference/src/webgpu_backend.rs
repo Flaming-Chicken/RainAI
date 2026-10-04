@@ -6,8 +6,8 @@ use bytemuck::{Pod, Zeroable};
 use ringbuf::HeapRb;
 use shared::rain::CONDITION_DIM;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use wgpu::util::DeviceExt;
 
@@ -152,7 +152,9 @@ impl std::fmt::Debug for GpuInferenceRunner {
 }
 
 impl GpuInferenceRunner {
-    pub async fn new(cache: &WeightCache) -> Result<(Self, ringbuf::Consumer<f32, Arc<HeapRb<f32>>>), String> {
+    pub async fn new(
+        cache: &WeightCache,
+    ) -> Result<(Self, ringbuf::Consumer<f32, Arc<HeapRb<f32>>>), String> {
         let instance = wgpu::Instance::default();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -210,7 +212,9 @@ impl GpuInferenceRunner {
         });
         let deliberation_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Deliberation Recurrence Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/mamba2_deliberation.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("shaders/mamba2_deliberation.wgsl").into(),
+            ),
         });
         let ssd_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Mamba2 SSD Shader"),
@@ -218,7 +222,9 @@ impl GpuInferenceRunner {
         });
         let soup_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Dense Soup Dispatch Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/dense_soup_dispatch.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("shaders/dense_soup_dispatch.wgsl").into(),
+            ),
         });
 
         // 2. Allocate VRAM Buffers
@@ -232,14 +238,18 @@ impl GpuInferenceRunner {
         let ssd_scratch_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("SSD / Dense Soup Scratch Buffer"),
             size: (64 * 4) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let latent_state_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Latent State Vector (s_t)"),
             size: (64 * 4) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -268,7 +278,8 @@ impl GpuInferenceRunner {
         let extract_weights = |layer_name: &str, expected_len: usize| -> Vec<f32> {
             if let Some(l) = cache.get(layer_name) {
                 if l.format == PrecisionFormat::Ternary158 && !l.packed_weights.is_empty() {
-                    let unpacked = WeightLoader::unpack_ternary_2bit(&l.packed_weights, l.num_elements());
+                    let unpacked =
+                        WeightLoader::unpack_ternary_2bit(&l.packed_weights, l.num_elements());
                     unpacked.iter().map(|&v| (v as f32) * l.scale).collect()
                 } else if !l.weights.is_empty() {
                     l.weights.clone()
@@ -392,16 +403,17 @@ impl GpuInferenceRunner {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let deliberation_uniforms_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Deliberation Uniforms"),
-            contents: bytemuck::bytes_of(&DeliberationUniforms {
-                thinking_steps: 2,
-                decay_rate: 0.85,
-                step_size: 1.0,
-                reserved: 0,
-            }),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let deliberation_uniforms_buf =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Deliberation Uniforms"),
+                contents: bytemuck::bytes_of(&DeliberationUniforms {
+                    thinking_steps: 2,
+                    decay_rate: 0.85,
+                    step_size: 1.0,
+                    reserved: 0,
+                }),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
 
         let ssd_uniforms_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Mamba2 SSD Uniforms"),
@@ -426,22 +438,24 @@ impl GpuInferenceRunner {
         });
 
         // 4. Create Pipelines & Bind Groups
-        let projection_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Projection Pipeline"),
-            layout: None,
-            module: &proj_shader,
-            entry_point: Some("dense_proj"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
-        let recurrence_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Recurrence Pipeline"),
-            layout: None,
-            module: &mamba_shader,
-            entry_point: Some("step_recurrence"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
+        let projection_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Projection Pipeline"),
+                layout: None,
+                module: &proj_shader,
+                entry_point: Some("dense_proj"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            });
+        let recurrence_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Recurrence Pipeline"),
+                layout: None,
+                module: &mamba_shader,
+                entry_point: Some("step_recurrence"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            });
         let moe_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("MoE Pipeline"),
             layout: None,
@@ -458,48 +472,67 @@ impl GpuInferenceRunner {
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             cache: None,
         });
-        let consistency_jump_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Consistency Jump Pipeline"),
-            layout: None,
-            module: &jump_shader,
-            entry_point: Some("consistency_jump"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
-        let deliberation_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Deliberation Pipeline"),
-            layout: None,
-            module: &deliberation_shader,
-            entry_point: Some("deliberate_recurrence"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
-        let mamba2_ssd_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Mamba2 SSD Pipeline"),
-            layout: None,
-            module: &ssd_shader,
-            entry_point: Some("main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
-        let dense_soup_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Dense Soup Pipeline"),
-            layout: None,
-            module: &soup_shader,
-            entry_point: Some("main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
+        let consistency_jump_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Consistency Jump Pipeline"),
+                layout: None,
+                module: &jump_shader,
+                entry_point: Some("consistency_jump"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            });
+        let deliberation_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Deliberation Pipeline"),
+                layout: None,
+                module: &deliberation_shader,
+                entry_point: Some("deliberate_recurrence"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            });
+        let mamba2_ssd_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Mamba2 SSD Pipeline"),
+                layout: None,
+                module: &ssd_shader,
+                entry_point: Some("main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            });
+        let dense_soup_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Dense Soup Pipeline"),
+                layout: None,
+                module: &soup_shader,
+                entry_point: Some("main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            });
 
         let projection_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Projection Bind Group"),
             layout: &projection_pipeline.get_bind_group_layout(0),
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: input_conditioning_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: cond_weights_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: u_t_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: cond_bias_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: proj_uniforms.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: input_conditioning_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: cond_weights_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: u_t_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: cond_bias_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: proj_uniforms.as_entire_binding(),
+                },
             ],
         });
 
@@ -507,10 +540,22 @@ impl GpuInferenceRunner {
             label: Some("Recurrence Bind Group"),
             layout: &recurrence_pipeline.get_bind_group_layout(0),
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: latent_state_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: a_diag_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: b_diag_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: u_t_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: latent_state_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: a_diag_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: b_diag_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: u_t_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -518,9 +563,18 @@ impl GpuInferenceRunner {
             label: Some("MoE Bind Group"),
             layout: &moe_pipeline.get_bind_group_layout(0),
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: latent_state_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: router_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: moe_uniforms.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: latent_state_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: router_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: moe_uniforms.as_entire_binding(),
+                },
             ],
         });
 
@@ -528,10 +582,22 @@ impl GpuInferenceRunner {
             label: Some("FOA Bind Group"),
             layout: &foa_pipeline.get_bind_group_layout(0),
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: latent_state_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: foa_weights_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: foa_output_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: foa_uniforms_buf.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: latent_state_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: foa_weights_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: foa_output_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: foa_uniforms_buf.as_entire_binding(),
+                },
             ],
         });
 
@@ -539,11 +605,26 @@ impl GpuInferenceRunner {
             label: Some("Consistency Jump Bind Group"),
             layout: &consistency_jump_pipeline.get_bind_group_layout(0),
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: input_conditioning_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: jump_weights_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: jump_bias_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: foa_output_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: jump_uniforms_buf.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: input_conditioning_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: jump_weights_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: jump_bias_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: foa_output_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: jump_uniforms_buf.as_entire_binding(),
+                },
             ],
         });
 
@@ -551,11 +632,26 @@ impl GpuInferenceRunner {
             label: Some("Deliberation Bind Group"),
             layout: &deliberation_pipeline.get_bind_group_layout(0),
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: latent_state_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: a_diag_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: b_diag_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: u_t_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: deliberation_uniforms_buf.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: latent_state_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: a_diag_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: b_diag_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: u_t_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: deliberation_uniforms_buf.as_entire_binding(),
+                },
             ],
         });
 
@@ -563,12 +659,30 @@ impl GpuInferenceRunner {
             label: Some("Mamba2 SSD Bind Group"),
             layout: &mamba2_ssd_pipeline.get_bind_group_layout(0),
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: ssd_uniforms_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: u_t_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: a_diag_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: b_diag_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: latent_state_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: ssd_scratch_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: ssd_uniforms_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: u_t_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: a_diag_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: b_diag_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: latent_state_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: ssd_scratch_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -576,11 +690,26 @@ impl GpuInferenceRunner {
             label: Some("Dense Soup Bind Group"),
             layout: &dense_soup_pipeline.get_bind_group_layout(0),
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: soup_uniforms_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: latent_state_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: soup_weights_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: soup_bias_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: ssd_scratch_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: soup_uniforms_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: latent_state_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: soup_weights_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: soup_bias_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: ssd_scratch_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -623,7 +752,7 @@ impl GpuInferenceRunner {
                 use_ssd_scan: false,
                 foa_producer: producer,
             },
-            consumer
+            consumer,
         ))
     }
 
@@ -652,7 +781,11 @@ impl GpuInferenceRunner {
             step_size: 1.0,
             reserved: 0,
         };
-        self.queue.write_buffer(&self.deliberation_uniforms_buf, 0, bytemuck::bytes_of(&uniforms));
+        self.queue.write_buffer(
+            &self.deliberation_uniforms_buf,
+            0,
+            bytemuck::bytes_of(&uniforms),
+        );
     }
 
     pub fn set_listener_yaw(&mut self, yaw_rad: f32) {
@@ -662,20 +795,30 @@ impl GpuInferenceRunner {
             yaw_rad,
             pitch_rad: 0.0,
         };
-        self.queue.write_buffer(&self.foa_uniforms_buf, 0, bytemuck::bytes_of(&uniforms));
+        self.queue
+            .write_buffer(&self.foa_uniforms_buf, 0, bytemuck::bytes_of(&uniforms));
     }
 
     /// Single-pass 1-step direct consistency distillation jump (554 -> 4 FOA)
-    pub async fn step_consistency_jump_async(&mut self, conditioning: &[f32; CONDITION_DIM]) -> Result<(f32, f32, f32, f32), String> {
+    pub async fn step_consistency_jump_async(
+        &mut self,
+        conditioning: &[f32; CONDITION_DIM],
+    ) -> Result<(f32, f32, f32, f32), String> {
         if self.is_context_lost() {
             return Err("WebGPU context has been lost".to_string());
         }
 
-        self.queue.write_buffer(&self.input_conditioning_buffer, 0, bytemuck::cast_slice(conditioning));
+        self.queue.write_buffer(
+            &self.input_conditioning_buffer,
+            0,
+            bytemuck::cast_slice(conditioning),
+        );
 
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Consistency Jump Encoder"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Consistency Jump Encoder"),
+            });
 
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -711,7 +854,10 @@ impl GpuInferenceRunner {
     }
 
     /// Executes the WebGPU pipeline for a single audio frame step (with automatic consistency jump or multi-step deliberation)
-    pub async fn step_async(&mut self, conditioning: &[f32; CONDITION_DIM]) -> Result<(f32, f32, f32, f32), String> {
+    pub async fn step_async(
+        &mut self,
+        conditioning: &[f32; CONDITION_DIM],
+    ) -> Result<(f32, f32, f32, f32), String> {
         if self.is_context_lost() {
             return Err("WebGPU context has been lost".to_string());
         }
@@ -720,15 +866,24 @@ impl GpuInferenceRunner {
             return self.step_consistency_jump_async(conditioning).await;
         }
 
-        self.queue.write_buffer(&self.input_conditioning_buffer, 0, bytemuck::cast_slice(conditioning));
+        self.queue.write_buffer(
+            &self.input_conditioning_buffer,
+            0,
+            bytemuck::cast_slice(conditioning),
+        );
 
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Inference Multi-Pass Encoder"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Inference Multi-Pass Encoder"),
+            });
 
         // Pass 1: Conditioning Projection (554 -> 64)
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("Projection Pass"), timestamp_writes: None });
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Projection Pass"),
+                timestamp_writes: None,
+            });
             pass.set_pipeline(&self.projection_pipeline);
             pass.set_bind_group(0, &self.projection_bind_group, &[]);
             pass.dispatch_workgroups(1, 1, 1);
@@ -736,7 +891,10 @@ impl GpuInferenceRunner {
 
         // Pass 2: In-VRAM Recurrence, Multi-Step Deliberation, or Parallel SSD Scan
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("Recurrence/Deliberation/SSD Pass"), timestamp_writes: None });
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Recurrence/Deliberation/SSD Pass"),
+                timestamp_writes: None,
+            });
             if self.use_ssd_scan {
                 pass.set_pipeline(&self.mamba2_ssd_pipeline);
                 pass.set_bind_group(0, &self.mamba2_ssd_bind_group, &[]);
@@ -753,18 +911,26 @@ impl GpuInferenceRunner {
         // Pass 3: MoE Routing & Decay OR Single-Pass Dense Soup
         if self.moe_mode.is_dense_soup() {
             {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("Dense Soup Pass"), timestamp_writes: None });
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Dense Soup Pass"),
+                    timestamp_writes: None,
+                });
                 pass.set_pipeline(&self.dense_soup_pipeline);
                 pass.set_bind_group(0, &self.dense_soup_bind_group, &[]);
                 pass.dispatch_workgroups(1, 1, 1);
             }
             encoder.copy_buffer_to_buffer(
-                &self.ssd_scratch_buffer, 0,
-                &self.latent_state_buffer, 0,
-                64 * 4
+                &self.ssd_scratch_buffer,
+                0,
+                &self.latent_state_buffer,
+                0,
+                64 * 4,
             );
         } else {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("MoE Dispatch Pass"), timestamp_writes: None });
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("MoE Dispatch Pass"),
+                timestamp_writes: None,
+            });
             pass.set_pipeline(&self.moe_pipeline);
             pass.set_bind_group(0, &self.moe_bind_group, &[]);
             pass.dispatch_workgroups(1, 1, 1);
@@ -772,17 +938,16 @@ impl GpuInferenceRunner {
 
         // Pass 4: Ambisonic FOA Projection (64 -> 4)
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("FOA Projection Pass"), timestamp_writes: None });
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("FOA Projection Pass"),
+                timestamp_writes: None,
+            });
             pass.set_pipeline(&self.foa_pipeline);
             pass.set_bind_group(0, &self.foa_bind_group, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
 
-        encoder.copy_buffer_to_buffer(
-            &self.foa_output_buffer, 0,
-            &self.foa_staging_buffer, 0,
-            16
-        );
+        encoder.copy_buffer_to_buffer(&self.foa_output_buffer, 0, &self.foa_staging_buffer, 0, 16);
 
         self.queue.submit(Some(encoder.finish()));
 
@@ -798,10 +963,10 @@ impl GpuInferenceRunner {
             let data = buffer_slice.get_mapped_range().map_err(|e| e.to_string())?;
             let result: &[f32] = bytemuck::cast_slice(&data);
             let foa = (result[0], result[1], result[2], result[3]);
-            
+
             drop(data);
             self.foa_staging_buffer.unmap();
-            
+
             Ok(foa)
         } else {
             Err("Failed to read FOA output from WebGPU memory".to_string())
@@ -810,7 +975,10 @@ impl GpuInferenceRunner {
 
     /// Asynchronously processes a block of conditioning vectors on the GPU and pushes
     /// synthesized Ambisonic FOA frames into the ring buffer for wait-free audio thread reads.
-    pub async fn step_block_async(&mut self, conditioning_block: &[[f32; CONDITION_DIM]]) -> Result<usize, String> {
+    pub async fn step_block_async(
+        &mut self,
+        conditioning_block: &[[f32; CONDITION_DIM]],
+    ) -> Result<usize, String> {
         if self.is_context_lost() {
             return Err("WebGPU context has been lost".to_string());
         }

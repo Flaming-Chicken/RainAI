@@ -69,7 +69,9 @@ impl SofaSpatializer {
                 + (a.position.elevation_deg - pos.elevation_deg).powi(2);
             let dist_b = (b.position.azimuth_deg - pos.azimuth_deg).powi(2)
                 + (b.position.elevation_deg - pos.elevation_deg).powi(2);
-            dist_a.partial_cmp(&dist_b).unwrap_or(std::cmp::Ordering::Equal)
+            dist_a
+                .partial_cmp(&dist_b)
+                .unwrap_or(std::cmp::Ordering::Equal)
         })
     }
 
@@ -88,7 +90,9 @@ impl SofaSpatializer {
 
         if let Some(hrir) = self.find_nearest_hrir(pos) {
             let ir_len = hrir.left_ir.len().min(hrir.right_ir.len());
-            let out_len = (n + ir_len.saturating_sub(1)).min(left_out.len()).min(right_out.len());
+            let out_len = (n + ir_len.saturating_sub(1))
+                .min(left_out.len())
+                .min(right_out.len());
             left_out[..out_len].fill(0.0);
             right_out[..out_len].fill(0.0);
 
@@ -135,7 +139,11 @@ impl SofaSpatializer {
             let left_gain = ((1.0 - pan) * 0.5).sqrt();
             let right_gain = ((1.0 + pan) * 0.5).sqrt();
 
-            for (i, &s) in input.iter().enumerate().take(left_out.len().min(right_out.len())) {
+            for (i, &s) in input
+                .iter()
+                .enumerate()
+                .take(left_out.len().min(right_out.len()))
+            {
                 left_out[i] = s * left_gain;
                 right_out[i] = s * right_gain;
             }
@@ -184,17 +192,16 @@ impl SofaSpatializer {
 
         if is_wav {
             let cursor = std::io::Cursor::new(data);
-            let mut reader = hound::WavReader::new(cursor)
-                .map_err(|e| format!("Invalid WAV format: {}", e))?;
+            let mut reader =
+                hound::WavReader::new(cursor).map_err(|e| format!("Invalid WAV format: {}", e))?;
             let spec = reader.spec();
             channels = spec.channels as usize;
             sample_rate = spec.sample_rate;
 
             let raw_samples: Vec<f32> = match spec.sample_format {
-                hound::SampleFormat::Float => reader
-                    .samples::<f32>()
-                    .filter_map(Result::ok)
-                    .collect(),
+                hound::SampleFormat::Float => {
+                    reader.samples::<f32>().filter_map(Result::ok).collect()
+                }
                 hound::SampleFormat::Int => {
                     let max_val = (1i64 << (spec.bits_per_sample.saturating_sub(1))) as f32;
                     reader
@@ -231,18 +238,31 @@ impl SofaSpatializer {
                 let right_val = val.get("right_ir").or_else(|| val.get("right"));
 
                 if let Some(arr) = left_val.and_then(|v| v.as_array()) {
-                    left_ir = arr.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+                    left_ir = arr
+                        .iter()
+                        .filter_map(|v| v.as_f64().map(|f| f as f32))
+                        .collect();
                     if let Some(r_arr) = right_val.and_then(|v| v.as_array()) {
-                        right_ir = r_arr.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+                        right_ir = r_arr
+                            .iter()
+                            .filter_map(|v| v.as_f64().map(|f| f as f32))
+                            .collect();
                     } else {
                         right_ir = left_ir.clone();
                     }
-                    if let Some(sr) = val.get("sample_rate").or_else(|| val.get("SampleRate")).and_then(|v| v.as_u64()) {
+                    if let Some(sr) = val
+                        .get("sample_rate")
+                        .or_else(|| val.get("SampleRate"))
+                        .and_then(|v| v.as_u64())
+                    {
                         sample_rate = sr as u32;
                     }
                     channels = 2;
                 } else if let Some(arr) = val.as_array() {
-                    left_ir = arr.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+                    left_ir = arr
+                        .iter()
+                        .filter_map(|v| v.as_f64().map(|f| f as f32))
+                        .collect();
                     right_ir = left_ir.clone();
                 } else {
                     return Err("Unsupported SOFA/JSON IR schema".to_string());
@@ -259,7 +279,8 @@ impl SofaSpatializer {
 
         // Store into spodeian-cache CAS for zero-copy reuse
         let sha256_hash = spodeian_cache::ContentAddressedStorage::compute_sha256(data);
-        let tier = spodeian_cache::PreferentialRouter::determine_tier(data.len(), "audio/wav", true);
+        let tier =
+            spodeian_cache::PreferentialRouter::determine_tier(data.len(), "audio/wav", true);
 
         if let Some(dir) = cache_dir {
             if let Ok(cas) = spodeian_cache::ContentAddressedStorage::new(dir) {
@@ -268,13 +289,18 @@ impl SofaSpatializer {
         }
 
         // Replace default center HRIR with user custom impulse response
-        self.impulse_responses.retain(|h| h.position != SphericalPosition::new(0.0, 0.0, 1.0));
+        self.impulse_responses
+            .retain(|h| h.position != SphericalPosition::new(0.0, 0.0, 1.0));
         self.add_hrir(SphericalPosition::new(0.0, 0.0, 1.0), left_ir, right_ir);
 
         Ok(CustomIrMetadata {
             name: file_name.to_string(),
             sha256_hash,
-            format: if is_wav { "wav".to_string() } else { "sofa".to_string() },
+            format: if is_wav {
+                "wav".to_string()
+            } else {
+                "sofa".to_string()
+            },
             sample_rate,
             channels,
             sample_count,
@@ -345,8 +371,11 @@ impl AtomicBinauralDecoderMode {
         self.inner.store(mode.to_u8(), order);
     }
 
-    pub fn swap(&self, mode: BinauralDecoderMode, order: std::sync::atomic::Ordering) -> BinauralDecoderMode {
+    pub fn swap(
+        &self,
+        mode: BinauralDecoderMode,
+        order: std::sync::atomic::Ordering,
+    ) -> BinauralDecoderMode {
         BinauralDecoderMode::from_u8(self.inner.swap(mode.to_u8(), order))
     }
 }
-

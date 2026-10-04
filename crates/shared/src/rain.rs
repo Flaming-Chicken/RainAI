@@ -365,9 +365,9 @@ impl Default for EngineTelemetry {
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum MetaControllerInterceptionMode {
     #[default]
-    MediatedLive,       // Live play: Smooths intent, enforces physical limits & thermal headroom
-    DirectBypass,       // Direct raw parameter application without governor intervention
-    OfflineMaxQuality,  // Non-realtime export: Latency budget = inf, Headroom = 100%, Max Fidelity
+    MediatedLive, // Live play: Smooths intent, enforces physical limits & thermal headroom
+    DirectBypass,      // Direct raw parameter application without governor intervention
+    OfflineMaxQuality, // Non-realtime export: Latency budget = inf, Headroom = 100%, Max Fidelity
 }
 
 impl MetaControllerInterceptionMode {
@@ -434,11 +434,21 @@ impl GovernorOptimizationProfile {
 
     pub fn description(self) -> &'static str {
         match self {
-            Self::EcoBatterySaver => "Extreme power saving mode capping bit-width at ≤4b, using 2 MoE experts, and keeping 50% procedural blend for thermal budget under 0.5W.",
-            Self::LowLatencyInteractive => "Ultra-fast response with a tight 15ms buffer and quick fallback recovery for live real-time slider scrubbing.",
-            Self::BalancedAdaptive => "Default operational profile with 45ms target buffer, 6 experts, and 1.2s anti-hunting hysteresis.",
-            Self::StudioMaster => "Pristine audio priority locking a ≥16b precision floor, all 8 MoE experts, 0% procedural blend, and 120ms buffer reserve.",
-            Self::BluetoothA2DPSink => "Extended 150ms safety reserve with jitter damping to prevent underruns on high-latency wireless audio sinks.",
+            Self::EcoBatterySaver => {
+                "Extreme power saving mode capping bit-width at ≤4b, using 2 MoE experts, and keeping 50% procedural blend for thermal budget under 0.5W."
+            }
+            Self::LowLatencyInteractive => {
+                "Ultra-fast response with a tight 15ms buffer and quick fallback recovery for live real-time slider scrubbing."
+            }
+            Self::BalancedAdaptive => {
+                "Default operational profile with 45ms target buffer, 6 experts, and 1.2s anti-hunting hysteresis."
+            }
+            Self::StudioMaster => {
+                "Pristine audio priority locking a ≥16b precision floor, all 8 MoE experts, 0% procedural blend, and 120ms buffer reserve."
+            }
+            Self::BluetoothA2DPSink => {
+                "Extended 150ms safety reserve with jitter damping to prevent underruns on high-latency wireless audio sinks."
+            }
         }
     }
 }
@@ -467,7 +477,9 @@ impl HardwareStressProfile {
             Self::DynamicGameDawInterference => "4: Dynamic Game/DAW Interference (Host Bursts)",
             Self::BluetoothA2dpAudioSink => "5: Bluetooth A2DP Audio Sink (Jitter & Latency)",
             Self::EcoSleepSoundscapeMode => "6: Eco Sleep Soundscape Mode (Low-Power Throttle)",
-            Self::HeterogeneousEcoreAsymmetry => "7: Heterogeneous E-Core Asymmetry (Core Bouncing)",
+            Self::HeterogeneousEcoreAsymmetry => {
+                "7: Heterogeneous E-Core Asymmetry (Core Bouncing)"
+            }
         }
     }
 
@@ -486,14 +498,30 @@ impl HardwareStressProfile {
 
     pub fn description(self) -> &'static str {
         match self {
-            Self::NominalDesktop => "Unconstrained execution with maximum CPU/GPU headroom and minimal jitter.",
-            Self::ThermalThrottlingCascade => "Simulates thermal clock collapse with progressive compute latency and rising panic factor.",
-            Self::GcWebAudioMicroStalls => "Injects periodic 5-25ms garbage collector pauses into the buffer pipeline.",
-            Self::UnifiedMemoryBusContention => "Simulates memory bandwidth saturation, inducing jitter in weight/latent tensor transfers.",
-            Self::DynamicGameDawInterference => "Simulates competing heavy background workloads with sudden high-priority thread spikes.",
-            Self::BluetoothA2dpAudioSink => "Simulates wireless audio output with high transmission latency and variable packet dispatch.",
-            Self::EcoSleepSoundscapeMode => "Aggressively restricts compute to ultra-low frequency and throttles background tasks.",
-            Self::HeterogeneousEcoreAsymmetry => "Simulates thread migration bouncing between high-frequency P-cores and low-power E-cores.",
+            Self::NominalDesktop => {
+                "Unconstrained execution with maximum CPU/GPU headroom and minimal jitter."
+            }
+            Self::ThermalThrottlingCascade => {
+                "Simulates thermal clock collapse with progressive compute latency and rising panic factor."
+            }
+            Self::GcWebAudioMicroStalls => {
+                "Injects periodic 5-25ms garbage collector pauses into the buffer pipeline."
+            }
+            Self::UnifiedMemoryBusContention => {
+                "Simulates memory bandwidth saturation, inducing jitter in weight/latent tensor transfers."
+            }
+            Self::DynamicGameDawInterference => {
+                "Simulates competing heavy background workloads with sudden high-priority thread spikes."
+            }
+            Self::BluetoothA2dpAudioSink => {
+                "Simulates wireless audio output with high transmission latency and variable packet dispatch."
+            }
+            Self::EcoSleepSoundscapeMode => {
+                "Aggressively restricts compute to ultra-low frequency and throttles background tasks."
+            }
+            Self::HeterogeneousEcoreAsymmetry => {
+                "Simulates thread migration bouncing between high-frequency P-cores and low-power E-cores."
+            }
         }
     }
 }
@@ -572,10 +600,18 @@ impl SynthesisMode {
 
     pub fn description(self) -> &'static str {
         match self {
-            Self::NeuralAi => "Recurrent Mamba-2 SSM + Spatial VAE DDSP generative soundscape synthesis.",
-            Self::PhysicalSynth => "Physical acoustic simulation of Gunn-Kinzer droplet velocities, Ulbrich DSD, and impact cavitation.",
-            Self::ProceduralFilterbank => "16-band resonant subtractive filterbank with colored noise shaping (zero latency).",
-            Self::HybridAdaptive => "Autonomous governor dynamically blending Neural and Procedural/Physical engines based on compute headroom.",
+            Self::NeuralAi => {
+                "Recurrent Mamba-2 SSM + Spatial VAE DDSP generative soundscape synthesis."
+            }
+            Self::PhysicalSynth => {
+                "Physical acoustic simulation of Gunn-Kinzer droplet velocities, Ulbrich DSD, and impact cavitation."
+            }
+            Self::ProceduralFilterbank => {
+                "16-band resonant subtractive filterbank with colored noise shaping (zero latency)."
+            }
+            Self::HybridAdaptive => {
+                "Autonomous governor dynamically blending Neural and Procedural/Physical engines based on compute headroom."
+            }
         }
     }
 }
@@ -671,7 +707,8 @@ impl RainState {
         // Gentle insect/bird diurnal fluctuation
         let bio_drift = (t * 0.25).cos() * 0.05;
         if self.side_sounds.bird_activity > 0.02 {
-            self.side_sounds.bird_activity = (self.side_sounds.bird_activity + bio_drift * dt).clamp(0.0, 0.8);
+            self.side_sounds.bird_activity =
+                (self.side_sounds.bird_activity + bio_drift * dt).clamp(0.0, 0.8);
         }
     }
 

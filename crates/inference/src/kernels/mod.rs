@@ -22,5 +22,3 @@ pub use posit_simd::posit8_matmul_simd_f32;
 pub use quant_activations::simd_silu_in_place;
 pub use rk4_flow_solver::Rk4FlowSolver;
 pub use ternary_simd::ternary_matmul_simd_f32;
-
-

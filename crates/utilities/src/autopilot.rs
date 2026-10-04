@@ -12,16 +12,11 @@ use anyhow::Result;
 #[cfg(any(feature = "cuda", feature = "metal"))]
 use candle_core::Device;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::mpsc::Sender,
-    time::Instant,
-};
+use std::{collections::HashMap, path::PathBuf, sync::mpsc::Sender, time::Instant};
 use sysinfo::System;
 use tracing::{info, warn};
 
-use crate::candle_train::{run_candle_training_pipeline, CandleTrainConfig, TrainingPhase};
+use crate::candle_train::{CandleTrainConfig, TrainingPhase, run_candle_training_pipeline};
 
 /// Canonical surface categories used across RainAI physical modeling.
 pub const CANONICAL_SURFACES: [&str; 9] = [
@@ -81,7 +76,10 @@ pub struct HardwareProfile {
 /// Dynamically queries host NVIDIA GPU via driver without requiring static CUDA SDK linking.
 pub fn probe_host_nvidia_gpu() -> Option<(String, u64)> {
     if let Ok(output) = std::process::Command::new("nvidia-smi")
-        .args(["--query-gpu=name,memory.total", "--format=csv,noheader,nounits"])
+        .args([
+            "--query-gpu=name,memory.total",
+            "--format=csv,noheader,nounits",
+        ])
         .output()
     {
         if output.status.success() {
@@ -207,7 +205,11 @@ impl SurfaceEntropyAuditor {
         let total: usize = counts.values().sum();
         let k = CANONICAL_SURFACES.len() as f64;
         let target_proportion = 1.0 / k;
-        let target_count_per_surface = if total > 0 { (total as f64 / k).ceil() as usize } else { 10 };
+        let target_count_per_surface = if total > 0 {
+            (total as f64 / k).ceil() as usize
+        } else {
+            10
+        };
 
         let mut quotas = Vec::with_capacity(CANONICAL_SURFACES.len());
         let mut entropy = 0.0;
@@ -282,7 +284,10 @@ impl AutoPilotConvergenceTracker {
     /// Record a loss step and check if convergence has plateaued.
     pub fn record_loss(&mut self, loss: f64) -> bool {
         if loss.is_nan() || loss.is_infinite() {
-            warn!("[AutoPilot] Anomaly detected: Loss is NaN/infinite ({})", loss);
+            warn!(
+                "[AutoPilot] Anomaly detected: Loss is NaN/infinite ({})",
+                loss
+            );
             return false;
         }
 
@@ -471,7 +476,9 @@ impl AutoPilotTrainer {
         let mut counts = HashMap::new();
         if manifest_path.exists() {
             if let Ok(content) = std::fs::read_to_string(&manifest_path) {
-                if let Ok(map) = serde_json::from_str::<HashMap<String, serde_json::Value>>(&content) {
+                if let Ok(map) =
+                    serde_json::from_str::<HashMap<String, serde_json::Value>>(&content)
+                {
                     for (_, v) in map {
                         if let Some(tag) = v.get("surface_tag").and_then(|s| s.as_str()) {
                             *counts.entry(tag.to_string()).or_insert(0) += 1;
@@ -501,7 +508,9 @@ impl AutoPilotTrainer {
         // Stage 3: VAE Pretraining
         self.telemetry.stage = AutoPilotStage::VaePretraining;
         self.telemetry.progress = 0.4;
-        self.emit_log("[AutoPilot:3/6] Launching Stage: Spatial Latent VAE Pretraining...".to_string());
+        self.emit_log(
+            "[AutoPilot:3/6] Launching Stage: Spatial Latent VAE Pretraining...".to_string(),
+        );
         base_config.phases = vec![TrainingPhase::Vae];
         if let Err(e) = run_candle_training_pipeline(&base_config) {
             self.telemetry.stage = AutoPilotStage::Failed;
@@ -513,7 +522,9 @@ impl AutoPilotTrainer {
         // Stage 4: Mamba-2 MoE + Dense Soup
         self.telemetry.stage = AutoPilotStage::MambaMoEAndSoup;
         self.telemetry.progress = 0.65;
-        self.emit_log("[AutoPilot:4/6] Launching Stage: Mamba-2 MoE & Dense Soup Alignment...".to_string());
+        self.emit_log(
+            "[AutoPilot:4/6] Launching Stage: Mamba-2 MoE & Dense Soup Alignment...".to_string(),
+        );
         base_config.phases = vec![TrainingPhase::Mamba];
         if let Err(e) = run_candle_training_pipeline(&base_config) {
             self.telemetry.stage = AutoPilotStage::Failed;
@@ -525,13 +536,19 @@ impl AutoPilotTrainer {
         // Stage 5: Progressive QAT Quantization Calibration
         self.telemetry.stage = AutoPilotStage::ProgressiveQat;
         self.telemetry.progress = 0.85;
-        self.emit_log("[AutoPilot:5/6] Calibrating Progressive QAT Quantization levels (S0..S4 slices)...".to_string());
+        self.emit_log(
+            "[AutoPilot:5/6] Calibrating Progressive QAT Quantization levels (S0..S4 slices)..."
+                .to_string(),
+        );
         self.emit_log("[AutoPilot:5/6] Posit-8 / Int-8 quant boundaries verified.".to_string());
 
         // Stage 6: Export & Golden Verification
         self.telemetry.stage = AutoPilotStage::ExportAndValidation;
         self.telemetry.progress = 0.95;
-        self.emit_log("[AutoPilot:6/6] Exporting SafeTensors and running Golden Regression verification...".to_string());
+        self.emit_log(
+            "[AutoPilot:6/6] Exporting SafeTensors and running Golden Regression verification..."
+                .to_string(),
+        );
         base_config.phases = vec![TrainingPhase::Export];
         if let Err(e) = run_candle_training_pipeline(&base_config) {
             self.telemetry.stage = AutoPilotStage::Failed;

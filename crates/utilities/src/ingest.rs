@@ -8,11 +8,11 @@
 //! - 9-class physical surface classification & quota tracking (`SurfaceBalanceQuota`).
 //! - SHA-256 cryptographic provenance records (`ProvenanceRecord`, `ProvenanceManifest`).
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use futures::StreamExt;
 use hound::{SampleFormat, WavReader};
-use rustfft::num_complex::Complex;
 use rustfft::FftPlanner;
+use rustfft::num_complex::Complex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -124,8 +124,12 @@ impl LicenseTier {
     /// Returns human-readable label for the policy tier.
     pub fn policy_description(&self) -> &'static str {
         match self {
-            Self::PublicDomain => "Public Domain (CC0 / Unlicense / PDDL / Government unconstrained)",
-            Self::AttributionOnly => "Permissive Attribution (CC-BY 4.0/3.0/2.0, MIT, Apache 2.0, BSD, ISC, ODC-By)",
+            Self::PublicDomain => {
+                "Public Domain (CC0 / Unlicense / PDDL / Government unconstrained)"
+            }
+            Self::AttributionOnly => {
+                "Permissive Attribution (CC-BY 4.0/3.0/2.0, MIT, Apache 2.0, BSD, ISC, ODC-By)"
+            }
             Self::ShareAlike => "Share-Alike (CC-BY-SA 4.0/3.0)",
             Self::ProjectProprietary => {
                 "RainAI / Spodeian / Flaming Chicken Proprietary (Commercial grant with XAI transparency)"
@@ -176,15 +180,9 @@ pub enum AttributionPolicyOutcome {
         tier: LicenseTier,
     },
     /// Runtime XAI untraced, but global training attribution is permanently recorded in ATTRIBUTIONS.txt. Output is safely served.
-    GlobalTrainingAttributed {
-        note: String,
-        tier: LicenseTier,
-    },
+    GlobalTrainingAttributed { note: String, tier: LicenseTier },
     /// Public domain or unconstrained asset; no individual attribution needed. Output is safely served.
-    Unconstrained {
-        note: String,
-        tier: LicenseTier,
-    },
+    Unconstrained { note: String, tier: LicenseTier },
 }
 
 /// Evaluates attribution resolution for an XAI model output.
@@ -205,7 +203,9 @@ pub fn evaluate_attribution_policy(
         }
     } else if tier == LicenseTier::PublicDomain {
         AttributionPolicyOutcome::Unconstrained {
-            note: "Public domain asset; unconstrained generation with permanent bibliography record.".to_string(),
+            note:
+                "Public domain asset; unconstrained generation with permanent bibliography record."
+                    .to_string(),
             tier,
         }
     } else {
@@ -255,7 +255,11 @@ impl LicenseVerifier {
         }
 
         // 3. Ineligible: NonCommercial / NoDerivatives
-        if clean.contains("nc") || clean.contains("noncommercial") || clean.contains("nd") || clean.contains("noderivatives") {
+        if clean.contains("nc")
+            || clean.contains("noncommercial")
+            || clean.contains("nd")
+            || clean.contains("noderivatives")
+        {
             return (
                 false,
                 LicenseTier::Restricted,
@@ -314,7 +318,7 @@ impl LicenseVerifier {
 }
 
 /// Tracks distribution of tags in the dataset.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TagBalanceQuota {
     pub counts: HashMap<String, usize>,
 }
@@ -353,7 +357,11 @@ pub struct AcousticQualityMetrics {
 }
 
 /// Computes acoustic quality metrics from mono/downmixed PCM floating point audio samples.
-pub fn analyze_pcm_samples(samples: &[f32], sample_rate: u32, channels: u16) -> AcousticQualityMetrics {
+pub fn analyze_pcm_samples(
+    samples: &[f32],
+    sample_rate: u32,
+    channels: u16,
+) -> AcousticQualityMetrics {
     let n = samples.len();
     if n == 0 {
         return AcousticQualityMetrics {
@@ -401,7 +409,13 @@ pub fn analyze_pcm_samples(samples: &[f32], sample_rate: u32, channels: u16) -> 
     let mut total_hf_ratio = 0.0f32;
     let mut valid_hops = 0usize;
 
-    let mut buffer = vec![Complex { re: 0.0f32, im: 0.0f32 }; FFT_SIZE];
+    let mut buffer = vec![
+        Complex {
+            re: 0.0f32,
+            im: 0.0f32
+        };
+        FFT_SIZE
+    ];
     let half = FFT_SIZE / 2;
     let bin_hz = sample_rate as f32 / FFT_SIZE as f32;
     let hf_bin_start = (4000.0 / bin_hz).clamp(1.0, (half - 1) as f32) as usize;
@@ -567,7 +581,12 @@ pub fn atomic_write(path: &Path, content: &[u8]) -> Result<()> {
 
     if let Err(e) = std::fs::rename(&tmp_path, path) {
         let _ = std::fs::remove_file(&tmp_path);
-        bail!("Failed to atomically rename {:?} to {:?}: {}", tmp_path, path, e);
+        bail!(
+            "Failed to atomically rename {:?} to {:?}: {}",
+            tmp_path,
+            path,
+            e
+        );
     }
 
     Ok(())
@@ -714,14 +733,18 @@ pub fn chrono_lite_timestamp() -> String {
     let duration = std::time::SystemTime::now()
         .duration_since(std::time::SystemTime::UNIX_EPOCH)
         .unwrap_or_default();
-    format!("{}.{:03}s_since_epoch", duration.as_secs(), duration.subsec_millis())
+    format!(
+        "{}.{:03}s_since_epoch",
+        duration.as_secs(),
+        duration.subsec_millis()
+    )
 }
 
 use std::path::PathBuf;
 use std::sync::{
+    Arc,
     atomic::{AtomicBool, Ordering},
     mpsc::Sender,
-    Arc,
 };
 
 /// In-process dataset ingestion pipeline callable on a background thread.
@@ -746,7 +769,9 @@ pub async fn run_ingestion_pipeline_async(
         }
     };
 
-    emit_log("[*] Starting in-process Asynchronous Multi-Source Audio Ingest (Pure-Rust)...".to_string());
+    emit_log(
+        "[*] Starting in-process Asynchronous Multi-Source Audio Ingest (Pure-Rust)...".to_string(),
+    );
 
     let db_path = shared::paths::WorkspacePaths::resolve_sources()
         .unwrap_or_else(|| PathBuf::from("sources.json"));
@@ -760,7 +785,10 @@ pub async fn run_ingestion_pipeline_async(
 
     let attr_path = shared::paths::WorkspacePaths::resolve_attributions()
         .unwrap_or_else(|| PathBuf::from("Data/rain/ATTRIBUTIONS.txt"));
-    let target_dir = attr_path.parent().unwrap_or(Path::new("Data/rain")).to_path_buf();
+    let target_dir = attr_path
+        .parent()
+        .unwrap_or(Path::new("Data/rain"))
+        .to_path_buf();
     tokio::fs::create_dir_all(&target_dir).await?;
     let provenance_file = target_dir.join("manifest_provenance.json");
 
@@ -772,7 +800,7 @@ pub async fn run_ingestion_pipeline_async(
 
     let mut quota = TagBalanceQuota::new();
     for item in &curated_sources {
-        quota.record(&[item.category.clone()]);
+        quota.record(std::slice::from_ref(&item.category));
     }
 
     emit_log(format!(
@@ -792,14 +820,19 @@ pub async fn run_ingestion_pipeline_async(
 
         let (allowed, tier, reason) = LicenseVerifier::verify(&item.license);
         if !allowed {
-            emit_log(format!("  [i] Skipping non-approved source '{}': {}", item.filename, reason));
+            emit_log(format!(
+                "  [i] Skipping non-approved source '{}': {}",
+                item.filename, reason
+            ));
             continue;
         }
 
         // Account for absence of easily accessed Python environment:
         // Validate direct HTTP/HTTPS endpoint. If an external CLI method is declared,
         // log a clear informative note and skip rather than attempting an invalid request.
-        if item.ingest_method != "direct_http" || (!item.url.starts_with("http://") && !item.url.starts_with("https://")) {
+        if item.ingest_method != "direct_http"
+            || (!item.url.starts_with("http://") && !item.url.starts_with("https://"))
+        {
             emit_log(format!(
                 "  [i] Skipping source '{}' (Method: {}, requires external Python CLI; pure-Rust HTTP mode active)",
                 item.filename, item.ingest_method
@@ -838,12 +871,23 @@ pub async fn run_ingestion_pipeline_async(
 
         let log_line = format!(
             "Platform: {} | File: {} | Tags: {} | Tier: {:?} | License: {} | SHA256: {} | URL: {}\n",
-            item.source_platform, item.filename, item.category, tier, item.license, sha256, item.url
+            item.source_platform,
+            item.filename,
+            item.category,
+            tier,
+            item.license,
+            sha256,
+            item.url
         );
 
         // Append to ATTRIBUTIONS.txt if newly acquired
         if !already_existed {
-            if let Ok(mut f) = tokio::fs::OpenOptions::new().create(true).append(true).open(&attr_path).await {
+            if let Ok(mut f) = tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&attr_path)
+                .await
+            {
                 let _ = f.write_all(log_line.as_bytes()).await;
             }
         }
@@ -883,4 +927,3 @@ pub async fn run_ingestion_pipeline_async(
     ));
     Ok(downloaded_count)
 }
-

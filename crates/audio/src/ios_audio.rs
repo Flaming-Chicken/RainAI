@@ -32,7 +32,9 @@ impl IosAudioSessionManager {
     /// Handles iOS audio interruptions (e.g. incoming phone call, timer/alarm ringing).
     pub fn handle_interruption(began: bool) {
         if began {
-            info!("iOS AudioSession interrupted (e.g., incoming call / alarm). Suspending synthesis buffer.");
+            info!(
+                "iOS AudioSession interrupted (e.g., incoming call / alarm). Suspending synthesis buffer."
+            );
         } else {
             info!("iOS AudioSession interruption ended. Resuming soundscape synthesis.");
         }
@@ -40,6 +42,9 @@ impl IosAudioSessionManager {
 
     /// Handles iOS silent switch toggles and route changes (e.g. AirPods connected/disconnected).
     pub fn handle_route_change(reason: u32) {
-        info!("iOS Audio route change detected (reason: {}). Re-synchronizing hardware sample rate.", reason);
+        info!(
+            "iOS Audio route change detected (reason: {}). Re-synchronizing hardware sample rate.",
+            reason
+        );
     }
 }

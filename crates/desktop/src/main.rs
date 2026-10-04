@@ -69,7 +69,10 @@ fn main() -> eframe::Result<()> {
     let cli_args = parse_cli_args();
 
     if cli_args.headless || cli_args.export_path.is_some() {
-        info!("Running RainAI in headless batch mode (duration: {:.1}s)...", cli_args.duration);
+        info!(
+            "Running RainAI in headless batch mode (duration: {:.1}s)...",
+            cli_args.duration
+        );
         let mut rain = shared::preset::WeatherPreset::gentle_summer_rain().state;
         rain.is_playing = true;
 
@@ -78,11 +81,17 @@ fn main() -> eframe::Result<()> {
             if p.exists() {
                 if let Ok(bytes) = std::fs::read(p) {
                     let mut spatializer = audio::SofaSpatializer::new(48000);
-                    let fname = p.file_name().and_then(|s| s.to_str()).unwrap_or("custom_ir.wav");
+                    let fname = p
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("custom_ir.wav");
                     let cache_dir = std::path::Path::new("data/cache/ir");
                     match spatializer.load_custom_ir_from_bytes(fname, &bytes, Some(cache_dir)) {
                         Ok(meta) => {
-                            info!("Loaded custom IR '{}' ({} samples, {} channels, sha256: {})", meta.name, meta.sample_count, meta.channels, meta.sha256_hash);
+                            info!(
+                                "Loaded custom IR '{}' ({} samples, {} channels, sha256: {})",
+                                meta.name, meta.sample_count, meta.channels, meta.sha256_hash
+                            );
                         }
                         Err(e) => {
                             warn!("Failed to parse custom IR: {e}");
@@ -94,11 +103,15 @@ fn main() -> eframe::Result<()> {
             }
         }
 
-        let out_path = cli_args.export_path.unwrap_or_else(|| "rainai_export.wav".to_string());
-        info!("Rendering {:.1}s audio to '{}'...", cli_args.duration, out_path);
-        let mut file = std::fs::File::create(&out_path).map_err(|e| {
-            eframe::Error::AppCreation(Box::new(e))
-        })?;
+        let out_path = cli_args
+            .export_path
+            .unwrap_or_else(|| "rainai_export.wav".to_string());
+        info!(
+            "Rendering {:.1}s audio to '{}'...",
+            cli_args.duration, out_path
+        );
+        let mut file = std::fs::File::create(&out_path)
+            .map_err(|e| eframe::Error::AppCreation(Box::new(e)))?;
 
         audio::render_wav_stream(
             &rain,
@@ -111,9 +124,8 @@ fn main() -> eframe::Result<()> {
                     info!("Export progress: {:.0}%", progress * 100.0);
                 }
             },
-        ).map_err(|e| {
-            eframe::Error::AppCreation(Box::new(std::io::Error::other(e.to_string())))
-        })?;
+        )
+        .map_err(|e| eframe::Error::AppCreation(Box::new(std::io::Error::other(e.to_string()))))?;
 
         info!("Headless export complete: '{}'", out_path);
         return Ok(());
@@ -142,9 +154,14 @@ fn main() -> eframe::Result<()> {
                 let path = std::path::Path::new(path_str);
                 if path.exists() {
                     if let Ok(bytes) = std::fs::read(path) {
-                        let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("custom_ir.wav");
+                        let file_name = path
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("custom_ir.wav");
                         let cache_dir = std::path::Path::new("data/cache/ir");
-                        let _ = app.rain_view.load_custom_ir_bytes(file_name, &bytes, Some(cache_dir));
+                        let _ =
+                            app.rain_view
+                                .load_custom_ir_bytes(file_name, &bytes, Some(cache_dir));
                     }
                 }
             }

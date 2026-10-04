@@ -5,9 +5,9 @@ use hound::{SampleFormat, WavSpec, WavWriter};
 use std::fs;
 use std::path::{Path, PathBuf};
 use utilities::contribute::{
-    generate_manifest_template, import_local_directory, validate_audio_file, validate_manifest,
-    AudioQualityThresholds, LocalImportOptions, MicrophoneSetup,
-    PrecipitationRate, RainContributionManifest, RainSourceEntry,
+    AudioQualityThresholds, LocalImportOptions, MicrophoneSetup, PrecipitationRate,
+    RainContributionManifest, RainSourceEntry, generate_manifest_template, import_local_directory,
+    validate_audio_file, validate_manifest,
 };
 
 /// Generates a test WAV file with realistic broadband cavitation noise simulating rainfall.
@@ -76,16 +76,25 @@ fn test_manifest_serialization_and_template() {
     let template = generate_manifest_template();
     assert_eq!(template.manifest_version, "1.0");
     assert!(!template.sources.is_empty());
-    assert_eq!(template.default_license.as_deref(), Some("CC0 1.0 Universal"));
+    assert_eq!(
+        template.default_license.as_deref(),
+        Some("CC0 1.0 Universal")
+    );
 
     // Verify template contains tags
-    let tags: Vec<String> = template.sources.iter().flat_map(|s| s.tags.clone()).collect();
+    let tags: Vec<String> = template
+        .sources
+        .iter()
+        .flat_map(|s| s.tags.clone())
+        .collect();
     assert!(tags.iter().any(|t| t == "tin_roof"));
     assert!(tags.iter().any(|t| t == "foliage"));
     assert!(tags.iter().any(|t| t == "glass"));
 
     // Roundtrip JSON serialization
-    let json = template.to_json_pretty().expect("Failed to serialize template");
+    let json = template
+        .to_json_pretty()
+        .expect("Failed to serialize template");
     let roundtrip = RainContributionManifest::from_json(&json).expect("Failed to deserialize");
 
     assert_eq!(roundtrip.dataset_name, template.dataset_name);
@@ -142,7 +151,11 @@ fn test_license_and_quality_screening_in_manifest_validation() {
     assert_eq!(res.rejected_entries.len(), 1);
     assert_eq!(res.valid_entries[0].source.id, "valid_cc0_src");
     assert_eq!(res.rejected_entries[0].source_id, "rejected_nc_src");
-    assert!(res.rejected_entries[0].rejection_reason.contains("NonCommercial"));
+    assert!(
+        res.rejected_entries[0]
+            .rejection_reason
+            .contains("NonCommercial")
+    );
     assert!(!res.is_passing);
 }
 
@@ -156,8 +169,8 @@ fn test_audio_validation_on_synthetic_pcm_wav() {
     create_synthetic_rain_wav(&wav_path, 3.0, 48000, 0.25, false);
 
     let thresholds = AudioQualityThresholds::default();
-    let (metrics, sha, duration) =
-        validate_audio_file(&wav_path, &thresholds).expect("Valid rain audio rejected unexpectedly");
+    let (metrics, sha, duration) = validate_audio_file(&wav_path, &thresholds)
+        .expect("Valid rain audio rejected unexpectedly");
 
     assert!((2.9..=3.1).contains(&duration));
     assert_eq!(metrics.sample_rate, 48000);
@@ -205,9 +218,27 @@ fn test_import_local_directory_end_to_end() {
     let _ = fs::create_dir_all(&target_dir);
 
     // Create 3 valid audio recordings with different names
-    create_synthetic_rain_wav(&input_dir.join("rain_tin_roof_porch.wav"), 2.5, 48000, 0.20, false);
-    create_synthetic_rain_wav(&input_dir.join("heavy_deluge_asphalt_road.wav"), 2.5, 48000, 0.22, false);
-    create_synthetic_rain_wav(&input_dir.join("window_glass_patter.wav"), 2.5, 48000, 0.18, false);
+    create_synthetic_rain_wav(
+        &input_dir.join("rain_tin_roof_porch.wav"),
+        2.5,
+        48000,
+        0.20,
+        false,
+    );
+    create_synthetic_rain_wav(
+        &input_dir.join("heavy_deluge_asphalt_road.wav"),
+        2.5,
+        48000,
+        0.22,
+        false,
+    );
+    create_synthetic_rain_wav(
+        &input_dir.join("window_glass_patter.wav"),
+        2.5,
+        48000,
+        0.18,
+        false,
+    );
 
     // Create 1 invalid silent file that should be rejected
     create_silent_wav(&input_dir.join("bad_silent_recording.wav"), 2.5, 48000);
@@ -245,18 +276,51 @@ fn test_import_local_directory_end_to_end() {
 
 #[test]
 fn test_precipitation_rate_and_mic_setup_tagging() {
-    assert_eq!(PrecipitationRate::from_tag("misty_drizzle"), PrecipitationRate::Drizzle);
-    assert_eq!(PrecipitationRate::from_tag("light_shower"), PrecipitationRate::LightRain);
-    assert_eq!(PrecipitationRate::from_tag("heavy_downpour"), PrecipitationRate::HeavyRain);
-    assert_eq!(PrecipitationRate::from_tag("thunder_storm"), PrecipitationRate::ViolentStorm);
-    assert_eq!(PrecipitationRate::from_tag("regular_rain"), PrecipitationRate::ModerateRain);
+    assert_eq!(
+        PrecipitationRate::from_tag("misty_drizzle"),
+        PrecipitationRate::Drizzle
+    );
+    assert_eq!(
+        PrecipitationRate::from_tag("light_shower"),
+        PrecipitationRate::LightRain
+    );
+    assert_eq!(
+        PrecipitationRate::from_tag("heavy_downpour"),
+        PrecipitationRate::HeavyRain
+    );
+    assert_eq!(
+        PrecipitationRate::from_tag("thunder_storm"),
+        PrecipitationRate::ViolentStorm
+    );
+    assert_eq!(
+        PrecipitationRate::from_tag("regular_rain"),
+        PrecipitationRate::ModerateRain
+    );
 
-    assert_eq!(MicrophoneSetup::from_tag("in_ear_binaural_mics"), MicrophoneSetup::BinauralInEar);
-    assert_eq!(MicrophoneSetup::from_tag("ambisonic_b_format"), MicrophoneSetup::AmbisonicFoa);
-    assert_eq!(MicrophoneSetup::from_tag("higher_order_hoa_16ch"), MicrophoneSetup::AmbisonicHoa);
-    assert_eq!(MicrophoneSetup::from_tag("underwater_hydrophone"), MicrophoneSetup::Hydrophone);
-    assert_eq!(MicrophoneSetup::from_tag("piezo_contact_disc"), MicrophoneSetup::ContactMic);
-    assert_eq!(MicrophoneSetup::from_tag("spaced_pair_omnis"), MicrophoneSetup::StereoSpaced);
+    assert_eq!(
+        MicrophoneSetup::from_tag("in_ear_binaural_mics"),
+        MicrophoneSetup::BinauralInEar
+    );
+    assert_eq!(
+        MicrophoneSetup::from_tag("ambisonic_b_format"),
+        MicrophoneSetup::AmbisonicFoa
+    );
+    assert_eq!(
+        MicrophoneSetup::from_tag("higher_order_hoa_16ch"),
+        MicrophoneSetup::AmbisonicHoa
+    );
+    assert_eq!(
+        MicrophoneSetup::from_tag("underwater_hydrophone"),
+        MicrophoneSetup::Hydrophone
+    );
+    assert_eq!(
+        MicrophoneSetup::from_tag("piezo_contact_disc"),
+        MicrophoneSetup::ContactMic
+    );
+    assert_eq!(
+        MicrophoneSetup::from_tag("spaced_pair_omnis"),
+        MicrophoneSetup::StereoSpaced
+    );
 }
 
 #[test]
@@ -283,7 +347,11 @@ fn test_source_entry_reconciliation_multi_license_and_descriptions() {
         id: "sample_001_recontributed".to_string(),
         file_path: "audio/rain_roof.wav".to_string(),
         url: Some("https://archive.org/details/rain_roof".to_string()),
-        tags: vec!["tin_roof".to_string(), "rural".to_string(), "monsoon".to_string()],
+        tags: vec![
+            "tin_roof".to_string(),
+            "rural".to_string(),
+            "monsoon".to_string(),
+        ],
         precipitation_rate: Some(PrecipitationRate::HeavyRain),
         environment: None,
         microphone_setup: None,
@@ -307,23 +375,38 @@ fn test_source_entry_reconciliation_multi_license_and_descriptions() {
 
     // 2. Parallel descriptions preserved without duplicates
     assert_eq!(entry1.descriptions.len(), 3); // "Rhythmic...", "Original...", "Resonant..."
-    assert!(entry1.descriptions.contains(&"Rhythmic rain drumming on corrugated tin roof".to_string()));
-    assert!(entry1.descriptions.contains(&"Resonant high-frequency metallic splatter texture".to_string()));
+    assert!(
+        entry1
+            .descriptions
+            .contains(&"Rhythmic rain drumming on corrugated tin roof".to_string())
+    );
+    assert!(
+        entry1
+            .descriptions
+            .contains(&"Resonant high-frequency metallic splatter texture".to_string())
+    );
 
     // 3. Multi-contributors merged
     assert_eq!(entry1.contributors, vec!["Alice", "Bob"]);
 
     // 4. Predominant license selection: ProjectProprietary (Rank 6) > CC-BY 4.0 (Rank 4)
-    assert_eq!(entry1.license.as_deref(), Some("RainAI-FC-Proprietary-License"));
+    assert_eq!(
+        entry1.license.as_deref(),
+        Some("RainAI-FC-Proprietary-License")
+    );
     assert!(entry1.alternate_licenses.contains(&"CC-BY 4.0".to_string()));
 
     // 5. Backfilled metadata
-    assert_eq!(entry1.url.as_deref(), Some("https://archive.org/details/rain_roof"));
+    assert_eq!(
+        entry1.url.as_deref(),
+        Some("https://archive.org/details/rain_roof")
+    );
 }
 
 #[test]
 fn test_validate_manifest_content_addressed_deduplication() {
-    let temp_dir = std::env::temp_dir().join(format!("rainai_test_manifest_dedup_{}", std::process::id()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("rainai_test_manifest_dedup_{}", std::process::id()));
     let _ = fs::create_dir_all(&temp_dir);
     let wav_path = temp_dir.join("shared_rain_audio.wav");
 
@@ -369,7 +452,8 @@ fn test_validate_manifest_content_addressed_deduplication() {
         contributors: vec!["Bob".to_string()],
     });
 
-    let res = validate_manifest(&manifest, Some(&temp_dir), None).expect("Manifest validation failed");
+    let res =
+        validate_manifest(&manifest, Some(&temp_dir), None).expect("Manifest validation failed");
 
     // Only 1 unique valid entry exists after content-addressed deduplication
     assert_eq!(res.valid_entries.len(), 1);
@@ -381,8 +465,15 @@ fn test_validate_manifest_content_addressed_deduplication() {
     // Metadata is reconciled
     let reconciled = &res.valid_entries[0].source;
     assert_eq!(reconciled.tags, vec!["pavement", "asphalt"]);
-    assert_eq!(reconciled.license.as_deref(), Some("RainAI-FC-Proprietary-License"));
-    assert!(reconciled.alternate_licenses.contains(&"CC-BY 4.0".to_string()));
+    assert_eq!(
+        reconciled.license.as_deref(),
+        Some("RainAI-FC-Proprietary-License")
+    );
+    assert!(
+        reconciled
+            .alternate_licenses
+            .contains(&"CC-BY 4.0".to_string())
+    );
     assert_eq!(reconciled.contributors, vec!["Alice", "Bob"]);
     assert_eq!(reconciled.descriptions.len(), 2);
 
@@ -391,7 +482,8 @@ fn test_validate_manifest_content_addressed_deduplication() {
 
 #[test]
 fn test_import_local_directory_content_addressed_deduplication() {
-    let temp_dir = std::env::temp_dir().join(format!("rainai_test_import_dedup_{}", std::process::id()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("rainai_test_import_dedup_{}", std::process::id()));
     let input_dir = temp_dir.join("inputs");
     let target_dir = temp_dir.join("dataset");
 
@@ -443,7 +535,8 @@ fn test_import_local_directory_content_addressed_deduplication() {
         thresholds: AudioQualityThresholds::default(),
     };
 
-    let report2 = import_local_directory(&duplicate_input_dir, &options2).expect("Second import failed");
+    let report2 =
+        import_local_directory(&duplicate_input_dir, &options2).expect("Second import failed");
     assert_eq!(report2.successfully_imported, 1);
 
     // CRITICAL: Binary storage was NOT duplicated! Still only 1 WAV file on disk!
@@ -465,7 +558,10 @@ fn test_import_local_directory_content_addressed_deduplication() {
     assert!(record.tags.contains(&"tin_roof".to_string()));
     assert!(record.tags.contains(&"metal_surface".to_string()));
     assert!(record.tags.contains(&"monsoon".to_string()));
-    assert_eq!(record.license.as_deref(), Some("RainAI-FC-Proprietary-License"));
+    assert_eq!(
+        record.license.as_deref(),
+        Some("RainAI-FC-Proprietary-License")
+    );
     assert!(record.alternate_licenses.contains(&"CC-BY 4.0".to_string()));
     assert!(record.contributors.contains(&"Recordist_A".to_string()));
     assert!(record.contributors.contains(&"Recordist_B".to_string()));

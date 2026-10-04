@@ -6,22 +6,17 @@ use hound::{SampleFormat, WavSpec, WavWriter};
 use std::fs;
 use std::path::Path;
 use utilities::contribute::{
-    import_local_directory, validate_audio_file, validate_manifest, AudioQualityThresholds,
-    LocalImportOptions, MicrophoneSetup, PrecipitationRate, RainContributionManifest,
-    RainSourceEntry,
+    AudioQualityThresholds, LocalImportOptions, MicrophoneSetup, PrecipitationRate,
+    RainContributionManifest, RainSourceEntry, import_local_directory, validate_audio_file,
+    validate_manifest,
 };
 use utilities::ingest::{
-    compute_file_sha256, evaluate_attribution_policy,
     AttributionPolicyOutcome, LicenseTier, LicenseVerifier, ProvenanceManifest,
+    compute_file_sha256, evaluate_attribution_policy,
 };
 
 /// Generates a test WAV file with realistic broadband cavitation noise simulating rainfall.
-fn create_synthetic_rain_wav(
-    path: &Path,
-    duration_secs: f32,
-    sample_rate: u32,
-    amplitude: f32,
-) {
+fn create_synthetic_rain_wav(path: &Path, duration_secs: f32, sample_rate: u32, amplitude: f32) {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
@@ -57,7 +52,8 @@ fn create_synthetic_rain_wav(
 
 #[test]
 fn test_e2e_full_contribution_lifecycle() {
-    let test_root = std::env::temp_dir().join(format!("rainai_e2e_lifecycle_{}", std::process::id()));
+    let test_root =
+        std::env::temp_dir().join(format!("rainai_e2e_lifecycle_{}", std::process::id()));
     let staging_quarantine = test_root.join("staging").join("quarantine");
     let staging_approved = test_root.join("staging").join("approved");
     let input_dir = test_root.join("incoming_recordings");
@@ -115,7 +111,11 @@ fn test_e2e_full_contribution_lifecycle() {
     // License was Unknown, so it must be rejected from direct ingestion
     assert_eq!(val_res.valid_entries.len(), 0);
     assert_eq!(val_res.rejected_entries.len(), 1);
-    assert!(val_res.rejected_entries[0].rejection_reason.contains("Quarantined"));
+    assert!(
+        val_res.rejected_entries[0]
+            .rejection_reason
+            .contains("Quarantined")
+    );
 
     // Staging sidecar written to quarantine
     let quarantine_sidecar = staging_quarantine.join(format!("{}.json", sha256));
@@ -134,7 +134,11 @@ fn test_e2e_full_contribution_lifecycle() {
         "contributors": ["Alice"],
         "quarantine_reason": "UNAPPROVED_OR_MISSING_LICENSE"
     });
-    fs::write(&quarantine_sidecar, serde_json::to_string_pretty(&quarantine_payload).unwrap()).unwrap();
+    fs::write(
+        &quarantine_sidecar,
+        serde_json::to_string_pretty(&quarantine_payload).unwrap(),
+    )
+    .unwrap();
     assert!(quarantine_sidecar.exists());
 
     // =========================================================================
@@ -154,7 +158,9 @@ fn test_e2e_full_contribution_lifecycle() {
         author: Some("Bob".to_string()),
         notes: None,
         sha256: Some(sha256.clone()),
-        descriptions: vec!["Acoustic high-frequency fabric saturation splatter texture".to_string()],
+        descriptions: vec![
+            "Acoustic high-frequency fabric saturation splatter texture".to_string(),
+        ],
         alternate_licenses: Vec::new(),
         contributors: vec!["Bob".to_string()],
     };
@@ -163,18 +169,36 @@ fn test_e2e_full_contribution_lifecycle() {
     reconciled_entry.reconcile_with(&recontributed_entry);
 
     // Assert reconciliation results
-    assert_eq!(reconciled_entry.tags, vec!["canvas_tent", "camping", "mountain_storm"]);
+    assert_eq!(
+        reconciled_entry.tags,
+        vec!["canvas_tent", "camping", "mountain_storm"]
+    );
     assert_eq!(reconciled_entry.descriptions.len(), 2);
-    assert!(reconciled_entry.descriptions.contains(&"Heavy rain drumming rhythmically on taut canvas tent roof".to_string()));
-    assert!(reconciled_entry.descriptions.contains(&"Acoustic high-frequency fabric saturation splatter texture".to_string()));
+    assert!(
+        reconciled_entry
+            .descriptions
+            .contains(&"Heavy rain drumming rhythmically on taut canvas tent roof".to_string())
+    );
+    assert!(
+        reconciled_entry
+            .descriptions
+            .contains(&"Acoustic high-frequency fabric saturation splatter texture".to_string())
+    );
     assert_eq!(reconciled_entry.contributors, vec!["Alice", "Bob"]);
-    assert_eq!(reconciled_entry.license.as_deref(), Some("RainAI-FC-Proprietary-License"));
-    assert_eq!(reconciled_entry.url.as_deref(), Some("https://archive.org/details/rain_canvas_tent"));
+    assert_eq!(
+        reconciled_entry.license.as_deref(),
+        Some("RainAI-FC-Proprietary-License")
+    );
+    assert_eq!(
+        reconciled_entry.url.as_deref(),
+        Some("https://archive.org/details/rain_canvas_tent")
+    );
 
     // =========================================================================
     // Stage 4: Promotion from Quarantine to Approved Staging
     // =========================================================================
-    let (is_approved, tier, _) = LicenseVerifier::verify(reconciled_entry.license.as_deref().unwrap());
+    let (is_approved, tier, _) =
+        LicenseVerifier::verify(reconciled_entry.license.as_deref().unwrap());
     assert!(is_approved);
     assert_eq!(tier, LicenseTier::ProjectProprietary);
 
@@ -194,7 +218,11 @@ fn test_e2e_full_contribution_lifecycle() {
         "contributors": reconciled_entry.contributors,
         "promoted": true
     });
-    fs::write(&approved_sidecar, serde_json::to_string_pretty(&approved_payload).unwrap()).unwrap();
+    fs::write(
+        &approved_sidecar,
+        serde_json::to_string_pretty(&approved_payload).unwrap(),
+    )
+    .unwrap();
     fs::copy(&quarantine_audio, &approved_audio).unwrap();
 
     // Clean quarantine
@@ -273,7 +301,10 @@ fn test_e2e_full_contribution_lifecycle() {
     assert!(record.tags.contains(&"monsoon".to_string()));
     assert!(record.contributors.contains(&"Alice".to_string()));
     assert!(record.contributors.contains(&"Bob".to_string()));
-    assert_eq!(record.license.as_deref(), Some("RainAI-FC-Proprietary-License"));
+    assert_eq!(
+        record.license.as_deref(),
+        Some("RainAI-FC-Proprietary-License")
+    );
 
     // =========================================================================
     // Stage 6: Non-Blocking Attribution Outcome Evaluation

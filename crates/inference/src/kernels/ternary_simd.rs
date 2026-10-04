@@ -18,13 +18,13 @@ pub fn ternary_matmul_simd_f32(
 
         for (b_idx, &byte) in row_bytes.iter().enumerate() {
             let act_offset = b_idx * 4;
-            
+
             for bit_shift in 0..4 {
                 let act_idx = act_offset + bit_shift;
                 if act_idx >= in_dim {
                     break;
                 }
-                
+
                 let code = (byte >> (bit_shift * 2)) & 0x03;
                 let w = match code {
                     0x01 => 1.0,
@@ -62,15 +62,31 @@ pub fn ternary_matmul_simd_f32(
             for j in 0..iters {
                 let byte = packed_weights[w_offset + j];
                 let act_v = v128_load(activations.as_ptr().add(j * 4) as *const v128);
-                
+
                 // Manually unroll the byte extraction to avoid branching in the hot loop
-                let w0 = match byte & 0x03 { 0x01 => 1.0, 0x03 => -1.0, _ => 0.0 };
-                let w1 = match (byte >> 2) & 0x03 { 0x01 => 1.0, 0x03 => -1.0, _ => 0.0 };
-                let w2 = match (byte >> 4) & 0x03 { 0x01 => 1.0, 0x03 => -1.0, _ => 0.0 };
-                let w3 = match (byte >> 6) & 0x03 { 0x01 => 1.0, 0x03 => -1.0, _ => 0.0 };
-                
+                let w0 = match byte & 0x03 {
+                    0x01 => 1.0,
+                    0x03 => -1.0,
+                    _ => 0.0,
+                };
+                let w1 = match (byte >> 2) & 0x03 {
+                    0x01 => 1.0,
+                    0x03 => -1.0,
+                    _ => 0.0,
+                };
+                let w2 = match (byte >> 4) & 0x03 {
+                    0x01 => 1.0,
+                    0x03 => -1.0,
+                    _ => 0.0,
+                };
+                let w3 = match (byte >> 6) & 0x03 {
+                    0x01 => 1.0,
+                    0x03 => -1.0,
+                    _ => 0.0,
+                };
+
                 let w_v = f32x4(w0, w1, w2, w3);
-                
+
                 sum_v = f32x4_add(sum_v, f32x4_mul(w_v, act_v));
             }
         }
@@ -86,7 +102,11 @@ pub fn ternary_matmul_simd_f32(
             for bit_shift in 0..(in_dim % 4) {
                 let act_idx = iters * 4 + bit_shift;
                 let code = (byte >> (bit_shift * 2)) & 0x03;
-                let w = match code { 0x01 => 1.0, 0x03 => -1.0, _ => 0.0 };
+                let w = match code {
+                    0x01 => 1.0,
+                    0x03 => -1.0,
+                    _ => 0.0,
+                };
                 total += w * activations[act_idx];
             }
         }

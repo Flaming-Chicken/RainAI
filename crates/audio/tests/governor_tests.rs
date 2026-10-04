@@ -98,7 +98,10 @@ fn test_governor_anti_hunting_upscale() {
         0.5,
     );
     assert_eq!(action3.recommended_tier, QualityTier::StudioFp32);
-    assert!(action3.status_label.contains("Pristine Headroom") || action3.status_label.contains("Max Quality"));
+    assert!(
+        action3.status_label.contains("Pristine Headroom")
+            || action3.status_label.contains("Max Quality")
+    );
 }
 
 #[test]
@@ -298,7 +301,10 @@ fn test_buffer_resize_cooldown_and_emergency_bypass() {
         None,
         0.1,
     );
-    assert!(action3.resize_commanded, "Emergency health drop must bypass cooldown");
+    assert!(
+        action3.resize_commanded,
+        "Emergency health drop must bypass cooldown"
+    );
     assert_eq!(action3.buffer_resizes_count, 2);
 }
 
@@ -359,13 +365,19 @@ fn test_quantization_macro_cooldown() {
 
 #[test]
 fn test_environmental_byte_ceilings() {
-    let eco_nominal = MetaGovernor::compute_env_max_bytes(GovernorOptimizationProfile::EcoBatterySaver, false);
-    let low_lat = MetaGovernor::compute_env_max_bytes(GovernorOptimizationProfile::LowLatencyInteractive, false);
+    let eco_nominal =
+        MetaGovernor::compute_env_max_bytes(GovernorOptimizationProfile::EcoBatterySaver, false);
+    let low_lat = MetaGovernor::compute_env_max_bytes(
+        GovernorOptimizationProfile::LowLatencyInteractive,
+        false,
+    );
     assert_eq!(eco_nominal, 24 * 1024);
     assert_eq!(low_lat, 32 * 1024);
 
-    let studio_nominal = MetaGovernor::compute_env_max_bytes(GovernorOptimizationProfile::StudioMaster, false);
-    let studio_stressed = MetaGovernor::compute_env_max_bytes(GovernorOptimizationProfile::StudioMaster, true);
+    let studio_nominal =
+        MetaGovernor::compute_env_max_bytes(GovernorOptimizationProfile::StudioMaster, false);
+    let studio_stressed =
+        MetaGovernor::compute_env_max_bytes(GovernorOptimizationProfile::StudioMaster, true);
     assert_eq!(studio_nominal, 128 * 1024);
     assert_eq!(studio_stressed, 64 * 1024);
 }
@@ -385,7 +397,10 @@ fn test_governor_recommends_dense_soup_under_battery_and_stress() {
         None,
         0.1,
     );
-    assert_eq!(eco_action.recommended_moe_mode, MoeExecutionMode::DenseSoupStatic);
+    assert_eq!(
+        eco_action.recommended_moe_mode,
+        MoeExecutionMode::DenseSoupStatic
+    );
 
     // 2. Moderate stress recommends DenseSoupDynamic
     let moderate_stress_telemetry = EngineTelemetry {
@@ -404,7 +419,10 @@ fn test_governor_recommends_dense_soup_under_battery_and_stress() {
         None,
         0.1,
     );
-    assert_eq!(stress_action.recommended_moe_mode, MoeExecutionMode::DenseSoupDynamic);
+    assert_eq!(
+        stress_action.recommended_moe_mode,
+        MoeExecutionMode::DenseSoupDynamic
+    );
 
     // 3. Severe stress / emergency recommends DenseSoupStatic
     let severe_stress_telemetry = EngineTelemetry {
@@ -423,7 +441,10 @@ fn test_governor_recommends_dense_soup_under_battery_and_stress() {
         None,
         0.1,
     );
-    assert_eq!(severe_action.recommended_moe_mode, MoeExecutionMode::DenseSoupStatic);
+    assert_eq!(
+        severe_action.recommended_moe_mode,
+        MoeExecutionMode::DenseSoupStatic
+    );
 }
 
 #[test]
@@ -494,5 +515,3 @@ fn test_meta_controller_alterable_pre_generated_steps() {
     );
     assert_eq!(override_action.thinking_steps, 5);
 }
-
-

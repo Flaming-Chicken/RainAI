@@ -1,6 +1,5 @@
 use app::TemplateApp;
-use shared::{Priority, ItemCollection, export_to_json, import_from_json};
-
+use shared::{ItemCollection, Priority, export_to_json, import_from_json};
 
 #[test]
 fn test_template_app_initialization() {
@@ -38,12 +37,19 @@ fn test_rain_view_custom_ir_file_picker_and_session_state() {
 
     let temp_dir = std::env::temp_dir().join(format!(
         "rainai_app_cas_{}",
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
 
     // Synthetic impulse response JSON
     let ir_json = r#"{"left_ir": [1.0, 0.5, 0.25], "right_ir": [0.25, 0.5, 1.0]}"#;
-    let res = rain_view.load_custom_ir_bytes("custom_cathedral.sofa", ir_json.as_bytes(), Some(&temp_dir));
+    let res = rain_view.load_custom_ir_bytes(
+        "custom_cathedral.sofa",
+        ir_json.as_bytes(),
+        Some(&temp_dir),
+    );
     assert!(res.is_ok());
 
     assert!(rain_view.custom_ir_meta.is_some());
@@ -71,7 +77,8 @@ fn test_rain_view_custom_ir_file_picker_and_session_state() {
     };
 
     let serialized = serde_json::to_string(&session).expect("serialize session");
-    let deserialized: app::storage_manager::PersistentSessionState = serde_json::from_str(&serialized).expect("deserialize session");
+    let deserialized: app::storage_manager::PersistentSessionState =
+        serde_json::from_str(&serialized).expect("deserialize session");
     assert_eq!(deserialized.custom_ir_hash, Some(meta.sha256_hash.clone()));
 
     let _ = std::fs::remove_dir_all(&temp_dir);
@@ -90,6 +97,8 @@ fn test_first_launch_rain_audio_auto_playback() {
 
     assert!(rain_state.is_playing);
     assert!((rain_state.master_volume - 0.60).abs() < f32::EPSILON);
-    assert_eq!(app::storage_manager::FIRST_LAUNCH_STORAGE_KEY, "rainai_first_launch_done");
+    assert_eq!(
+        app::storage_manager::FIRST_LAUNCH_STORAGE_KEY,
+        "rainai_first_launch_done"
+    );
 }
-

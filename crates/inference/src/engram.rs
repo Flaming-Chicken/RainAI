@@ -12,7 +12,6 @@ const HASH_PRIMES: [u64; 4] = [2654435761, 2246822519, 3266489917, 668265263];
 /// Real-time Engram static knowledge bank.
 #[derive(Clone, Debug)]
 pub struct EngramBank {
-
     pub bank: Vec<[f32; ENGRAM_EMBED_DIM]>,
     pub hash_projections: [[f32; ENGRAM_EMBED_DIM]; ENGRAM_HASH_HEADS],
 }
@@ -32,7 +31,9 @@ impl EngramBank {
             let mut norm = 0.0f32;
             for val in head.iter_mut() {
                 // Linear congruential generator for deterministic weights
-                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                seed = seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 let rand_f32 = ((seed >> 33) as f32) / (u32::MAX as f32) - 0.5;
                 *val = rand_f32;
                 norm += rand_f32 * rand_f32;
@@ -50,7 +51,10 @@ impl EngramBank {
     }
 
     /// Computes deterministic multi-head hash indices from query feature vector.
-    pub fn compute_hash_indices(&self, query: &[f32; ENGRAM_EMBED_DIM]) -> [usize; ENGRAM_HASH_HEADS] {
+    pub fn compute_hash_indices(
+        &self,
+        query: &[f32; ENGRAM_EMBED_DIM],
+    ) -> [usize; ENGRAM_HASH_HEADS] {
         let mut indices = [0usize; ENGRAM_HASH_HEADS];
         for (h, idx) in indices.iter_mut().enumerate() {
             let proj: f32 = self.hash_projections[h]

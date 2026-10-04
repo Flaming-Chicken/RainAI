@@ -4,9 +4,9 @@
 
 use anyhow::Result;
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Sender;
-use std::sync::Arc;
 
 use crate::features::run_features_pipeline;
 use crate::golden_vectors::run_golden_vectors_pipeline;
@@ -84,11 +84,7 @@ impl PipelineTask {
                 stop_flag,
                 log_tx,
             ),
-            Self::Features => run_features_pipeline(
-                Path::new("Data/processed"),
-                stop_flag,
-                log_tx,
-            ),
+            Self::Features => run_features_pipeline(Path::new("Data/processed"), stop_flag, log_tx),
             Self::GoldenVectors => run_golden_vectors_pipeline(log_tx),
             Self::Synth => run_synth_pipeline(
                 Path::new("Data/processed"),

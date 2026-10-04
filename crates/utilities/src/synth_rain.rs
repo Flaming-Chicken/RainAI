@@ -144,7 +144,16 @@ pub fn generate_rain_texture(
     for d in diameters {
         let t_start = rng.gen_range(0..n_samples.saturating_sub(1000).max(1));
         let pan: f32 = rng.gen_range(0.2..0.8);
-        render_single_droplet(&mut left, &mut right, t_start, d, surface, 4.0, pan, sample_rate);
+        render_single_droplet(
+            &mut left,
+            &mut right,
+            t_start,
+            d,
+            surface,
+            4.0,
+            pan,
+            sample_rate,
+        );
     }
 
     let mut max_val = 0.0f32;
@@ -249,9 +258,9 @@ use hound::{SampleFormat, WavSpec, WavWriter};
 use std::fs;
 use std::path::Path;
 use std::sync::{
+    Arc,
     atomic::{AtomicBool, Ordering},
     mpsc::Sender,
-    Arc,
 };
 
 /// Pure-Rust Physical Rain Synthesizer pipeline callable in-process.
@@ -267,7 +276,10 @@ pub fn run_synth_pipeline(
         }
     };
 
-    emit_log(format!("[*] Starting in-process Physical Rain Synthesizer into {:?}...", out_dir));
+    emit_log(format!(
+        "[*] Starting in-process Physical Rain Synthesizer into {:?}...",
+        out_dir
+    ));
     fs::create_dir_all(out_dir)?;
 
     let default_configs: Vec<(&str, f32, &str)> = vec![
@@ -292,7 +304,11 @@ pub fn run_synth_pipeline(
     let configs: Vec<(&str, f32, &str)> = if let Some(targets) = target_surfaces {
         default_configs
             .into_iter()
-            .filter(|(_, _, surf)| targets.iter().any(|t| t.contains(surf) || surf.contains(t.as_str())))
+            .filter(|(_, _, surf)| {
+                targets
+                    .iter()
+                    .any(|t| t.contains(surf) || surf.contains(t.as_str()))
+            })
             .collect()
     } else {
         default_configs
@@ -306,7 +322,10 @@ pub fn run_synth_pipeline(
         }
 
         let file_path = out_dir.join(format!("synth_{}.wav", name));
-        emit_log(format!("  -> Synthesizing '{}' (Rate: {:.1} mm/h, Surf: {})", name, rate, surf));
+        emit_log(format!(
+            "  -> Synthesizing '{}' (Rate: {:.1} mm/h, Surf: {})",
+            name, rate, surf
+        ));
         let stereo = generate_rain_texture(15.0, rate, surf, DEFAULT_SAMPLE_RATE);
 
         let spec = WavSpec {
@@ -327,6 +346,9 @@ pub fn run_synth_pipeline(
         }
     }
 
-    emit_log(format!("[+] Synthetic generation complete! {} chunks created.", generated_count));
+    emit_log(format!(
+        "[+] Synthetic generation complete! {} chunks created.",
+        generated_count
+    ));
     Ok(generated_count)
 }

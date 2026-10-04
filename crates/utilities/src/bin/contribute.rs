@@ -22,13 +22,13 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use utilities::contribute::{
-    assert_not_main_branch, generate_manifest_template, import_local_directory, validate_audio_file,
-    validate_manifest, AudioQualityThresholds, LocalImportOptions, MicrophoneSetup,
-    PrecipitationRate, RainContributionManifest,
+    AudioQualityThresholds, LocalImportOptions, MicrophoneSetup, PrecipitationRate,
+    RainContributionManifest, assert_not_main_branch, generate_manifest_template,
+    import_local_directory, validate_audio_file, validate_manifest,
 };
 use utilities::ingest::{
-    chrono_lite_timestamp, DownloadItem, LicenseVerifier, ProvenanceManifest, ProvenanceRecord,
-    TagBalanceQuota,
+    DownloadItem, LicenseVerifier, ProvenanceManifest, ProvenanceRecord, TagBalanceQuota,
+    chrono_lite_timestamp,
 };
 
 fn print_usage() {
@@ -100,7 +100,10 @@ fn main() -> Result<()> {
             }
             let template = generate_manifest_template();
             template.save_to_file(&out_path)?;
-            println!("[+] Generated contribution manifest template at: {:?}", out_path);
+            println!(
+                "[+] Generated contribution manifest template at: {:?}",
+                out_path
+            );
             println!("    Fill in your audio file paths, surfaces, and licenses, then run:");
             println!("    rainai_contribute validate {:?}", out_path);
         }
@@ -129,41 +132,72 @@ fn main() -> Result<()> {
                 println!("Valid & Approved:    {}", res.valid_entries.len());
                 println!("Rejected / Failed:   {}", res.rejected_entries.len());
                 println!("Total Duration:      {:.1}s", res.total_duration_secs);
-                println!("Normalized Diversity:{:.1}%", res.normalized_diversity * 100.0);
+                println!(
+                    "Normalized Diversity:{:.1}%",
+                    res.normalized_diversity * 100.0
+                );
 
                 if !res.rejected_entries.is_empty() {
                     println!("\n[!] Rejection Diagnostics:");
                     for rej in &res.rejected_entries {
-                        println!("  - [{}] {}: {}", rej.source_id, rej.file_path, rej.rejection_reason);
+                        println!(
+                            "  - [{}] {}: {}",
+                            rej.source_id, rej.file_path, rej.rejection_reason
+                        );
                     }
                 }
 
                 if res.is_passing {
-                    println!("\n[+] SUCCESS: All audio assets passed licensing and acoustic screening!");
+                    println!(
+                        "\n[+] SUCCESS: All audio assets passed licensing and acoustic screening!"
+                    );
                 } else {
-                    println!("\n[!] WARNING: Some items failed validation. Please resolve issues above.");
+                    println!(
+                        "\n[!] WARNING: Some items failed validation. Please resolve issues above."
+                    );
                 }
             } else if path.is_dir() {
-                println!("[*] Scanning and acoustically screening directory: {:?}", path);
+                println!(
+                    "[*] Scanning and acoustically screening directory: {:?}",
+                    path
+                );
                 let thresholds = AudioQualityThresholds::default();
                 let mut passed = 0;
                 let mut failed = 0;
 
                 for entry in walkdir(path)? {
-                    if entry.extension().and_then(|s| s.to_str()).unwrap_or("").eq_ignore_ascii_case("wav") {
+                    if entry
+                        .extension()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                        .eq_ignore_ascii_case("wav")
+                    {
                         match validate_audio_file(&entry, &thresholds) {
                             Ok((m, sha, dur)) => {
-                                println!("  [PASS] {:?} ({:.1}s, RMS={:.4}, SHA256={:.8}..)", entry.file_name().unwrap_or_default(), dur, m.rms_energy, sha);
+                                println!(
+                                    "  [PASS] {:?} ({:.1}s, RMS={:.4}, SHA256={:.8}..)",
+                                    entry.file_name().unwrap_or_default(),
+                                    dur,
+                                    m.rms_energy,
+                                    sha
+                                );
                                 passed += 1;
                             }
                             Err(e) => {
-                                println!("  [FAIL] {:?}: {}", entry.file_name().unwrap_or_default(), e);
+                                println!(
+                                    "  [FAIL] {:?}: {}",
+                                    entry.file_name().unwrap_or_default(),
+                                    e
+                                );
                                 failed += 1;
                             }
                         }
                     }
                 }
-                println!("\nDirectory Validation Summary: {} passed, {} failed.", passed, failed);
+                println!(
+                    "\nDirectory Validation Summary: {} passed, {} failed.",
+                    passed, failed
+                );
             } else if path.is_file() {
                 let thresholds = AudioQualityThresholds::default();
                 match validate_audio_file(path, &thresholds) {
@@ -252,7 +286,11 @@ fn main() -> Result<()> {
 
             println!("[*] Validating manifest sources before import...");
             let res = validate_manifest(&manifest, base_dir, Some(&options.thresholds))?;
-            println!("Approved {} / {} sources.", res.valid_entries.len(), manifest.sources.len());
+            println!(
+                "Approved {} / {} sources.",
+                res.valid_entries.len(),
+                manifest.sources.len()
+            );
 
             let mut imported = 0;
             for entry in &res.valid_entries {
@@ -263,8 +301,18 @@ fn main() -> Result<()> {
                 };
 
                 if src_path.exists() {
-                    let first_tag = entry.source.tags.first().cloned().unwrap_or_else(|| "audio".to_string());
-                    let author_str = entry.source.author.as_deref().unwrap_or("Anonymous").replace(' ', "_");
+                    let first_tag = entry
+                        .source
+                        .tags
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "audio".to_string());
+                    let author_str = entry
+                        .source
+                        .author
+                        .as_deref()
+                        .unwrap_or("Anonymous")
+                        .replace(' ', "_");
                     let dest_name = format!(
                         "contrib_{}_{}_{}",
                         first_tag,
@@ -277,7 +325,10 @@ fn main() -> Result<()> {
                     imported += 1;
                 }
             }
-            println!("[+] Imported {} audio files into {:?}", imported, options.target_dir);
+            println!(
+                "[+] Imported {} audio files into {:?}",
+                imported, options.target_dir
+            );
         }
         "quota" => {
             println!("[*] Auditing active dataset surface balance & diversity...");
@@ -294,7 +345,7 @@ fn main() -> Result<()> {
 
             let mut quota = TagBalanceQuota::new();
             for s in &sources {
-                quota.record(&[s.category.clone()]);
+                quota.record(std::slice::from_ref(&s.category));
             }
 
             println!("\n=== Tags Balance Quota Register ===");
@@ -331,11 +382,33 @@ fn main() -> Result<()> {
                     count += 1;
                     let content = fs::read_to_string(&path)?;
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
-                        println!("\n[!] Quarantined Item #{}: {}", count, path.file_stem().unwrap_or_default().to_string_lossy());
-                        println!("    Reason:  {}", val.get("quarantine_reason").and_then(|v| v.as_str()).unwrap_or("Unknown reason"));
-                        println!("    License: {}", val.get("license").and_then(|v| v.as_str()).unwrap_or("Missing"));
-                        println!("    Author:  {}", val.get("author").and_then(|v| v.as_str()).unwrap_or("Anonymous"));
-                        println!("    Tags:    {}", val.get("tags").map(|v| v.to_string()).unwrap_or_default());
+                        println!(
+                            "\n[!] Quarantined Item #{}: {}",
+                            count,
+                            path.file_stem().unwrap_or_default().to_string_lossy()
+                        );
+                        println!(
+                            "    Reason:  {}",
+                            val.get("quarantine_reason")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Unknown reason")
+                        );
+                        println!(
+                            "    License: {}",
+                            val.get("license")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Missing")
+                        );
+                        println!(
+                            "    Author:  {}",
+                            val.get("author")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Anonymous")
+                        );
+                        println!(
+                            "    Tags:    {}",
+                            val.get("tags").map(|v| v.to_string()).unwrap_or_default()
+                        );
                         if let Some(url) = val.get("url").and_then(|v| v.as_str()) {
                             println!("    Source:  {}", url);
                         }
@@ -364,7 +437,10 @@ fn main() -> Result<()> {
             println!("Target Git LFS destination:    {:?}", target_raw_dir);
 
             if !approved_dir.exists() {
-                println!("[!] Approved staging directory does not exist: {:?}", approved_dir);
+                println!(
+                    "[!] Approved staging directory does not exist: {:?}",
+                    approved_dir
+                );
                 return Ok(());
             }
 
@@ -374,18 +450,29 @@ fn main() -> Result<()> {
             for entry in fs::read_dir(&approved_dir)? {
                 let entry = entry?;
                 let path = entry.path();
-                let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+                let ext = path
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
 
                 // Copy approved audio blobs directly
                 if ext == "flac" || ext == "opus" || ext == "ogg" || ext == "mp3" || ext == "wav" {
                     let dest = target_raw_dir.join(path.file_name().unwrap());
                     fs::copy(&path, &dest)?;
                     promoted += 1;
-                    println!("  [+] Promoted {:?} -> {:?}", path.file_name().unwrap(), dest);
+                    println!(
+                        "  [+] Promoted {:?} -> {:?}",
+                        path.file_name().unwrap(),
+                        dest
+                    );
                 }
             }
 
-            println!("\nSuccessfully promoted {} approved files into Git LFS (Data/raw/).", promoted);
+            println!(
+                "\nSuccessfully promoted {} approved files into Git LFS (Data/raw/).",
+                promoted
+            );
         }
         "reconcile" => {
             assert_not_main_branch()?;
@@ -413,19 +500,38 @@ fn main() -> Result<()> {
                     let path = entry.path();
                     if path.extension().and_then(|s| s.to_str()) == Some("json") {
                         if let Ok(content) = fs::read_to_string(&path) {
-                            if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&content) {
-                                let lic_str = val.get("license").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string();
+                            if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&content)
+                            {
+                                let lic_str = val
+                                    .get("license")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("Unknown")
+                                    .to_string();
                                 let (ok, tier, _reason) = LicenseVerifier::verify(&lic_str);
-                                let dsp_passed = val.get("dsp_passed").and_then(|v| v.as_bool()).unwrap_or(true);
+                                let dsp_passed = val
+                                    .get("dsp_passed")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(true);
 
                                 if ok && tier.is_approved() && dsp_passed {
                                     // Move JSON sidecar to approved
                                     let filename = path.file_name().unwrap();
                                     let dest_json = approved_dir.join(filename);
                                     if let Some(obj) = val.as_object_mut() {
-                                        obj.insert("target_prefix".to_string(), serde_json::Value::String("staging/approved".to_string()));
-                                        obj.insert("quarantine_reason".to_string(), serde_json::Value::Null);
-                                        obj.insert("promoted_at".to_string(), serde_json::Value::String(chrono_lite_timestamp()));
+                                        obj.insert(
+                                            "target_prefix".to_string(),
+                                            serde_json::Value::String(
+                                                "staging/approved".to_string(),
+                                            ),
+                                        );
+                                        obj.insert(
+                                            "quarantine_reason".to_string(),
+                                            serde_json::Value::Null,
+                                        );
+                                        obj.insert(
+                                            "promoted_at".to_string(),
+                                            serde_json::Value::String(chrono_lite_timestamp()),
+                                        );
                                     }
                                     fs::write(&dest_json, serde_json::to_string_pretty(&val)?)?;
                                     fs::remove_file(&path)?;
@@ -433,16 +539,21 @@ fn main() -> Result<()> {
                                     // Move corresponding audio blob if present
                                     let stem = path.file_stem().unwrap().to_string_lossy();
                                     for ext in ["flac", "wav", "m4a", "opus", "mp3"] {
-                                        let old_blob = quarantine_dir.join(format!("{}.{}", stem, ext));
+                                        let old_blob =
+                                            quarantine_dir.join(format!("{}.{}", stem, ext));
                                         if old_blob.exists() {
-                                            let new_blob = approved_dir.join(format!("{}.{}", stem, ext));
+                                            let new_blob =
+                                                approved_dir.join(format!("{}.{}", stem, ext));
                                             fs::copy(&old_blob, &new_blob)?;
                                             fs::remove_file(&old_blob)?;
                                         }
                                     }
 
                                     promoted_from_quarantine += 1;
-                                    println!("  [+] Promoted {:?} from quarantine to approved (License: {})", filename, lic_str);
+                                    println!(
+                                        "  [+] Promoted {:?} from quarantine to approved (License: {})",
+                                        filename, lic_str
+                                    );
                                 }
                             }
                         }
@@ -460,13 +571,15 @@ fn main() -> Result<()> {
                 let original_count = manifest.records.len();
 
                 // Group by SHA-256
-                let mut hash_map: std::collections::HashMap<String, Vec<ProvenanceRecord>> = std::collections::HashMap::new();
+                let mut hash_map: std::collections::HashMap<String, Vec<ProvenanceRecord>> =
+                    std::collections::HashMap::new();
                 for r in manifest.records {
                     hash_map.entry(r.sha256.clone()).or_default().push(r);
                 }
 
                 let mut reconciled_records: Vec<ProvenanceRecord> = Vec::new();
-                let mut tags_distribution: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+                let mut tags_distribution: std::collections::HashMap<String, usize> =
+                    std::collections::HashMap::new();
 
                 for (_sha, records) in hash_map {
                     if records.len() > 1 {
@@ -506,7 +619,10 @@ fn main() -> Result<()> {
 
             println!("\nReconciliation Complete:");
             println!("  Quarantined items promoted: {}", promoted_from_quarantine);
-            println!("  Duplicate provenance records merged: {}", merged_duplicates);
+            println!(
+                "  Duplicate provenance records merged: {}",
+                merged_duplicates
+            );
         }
         "export-attributions" => {
             let mut manifest_path = PathBuf::from("Data/rain/manifest_provenance.json");
@@ -541,7 +657,11 @@ fn main() -> Result<()> {
                 };
 
                 let license = rec.license.unwrap_or_else(|| "Unknown".to_string());
-                let surface = rec.tags.first().cloned().unwrap_or_else(|| "ambient".to_string());
+                let surface = rec
+                    .tags
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "ambient".to_string());
                 let tier = rec.license_tier.preference_rank();
 
                 inputs.push(shared::attribution::AttributionRecordInput {
@@ -563,7 +683,9 @@ fn main() -> Result<()> {
             utilities::ingest::atomic_write(&out_path, &binary_data)?;
             println!(
                 "[+] Successfully exported {} attribution records to binary dictionary: {:?} ({} bytes)",
-                num_records, out_path, binary_data.len()
+                num_records,
+                out_path,
+                binary_data.len()
             );
         }
         _ => {

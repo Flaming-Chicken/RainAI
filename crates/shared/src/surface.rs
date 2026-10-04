@@ -74,23 +74,111 @@ impl CanonicalSurface {
     /// Maps heterogeneous source category tags or file names to one of the 9 canonical physical surfaces.
     pub fn from_tag(tag: &str) -> Self {
         let s = tag.trim().to_lowercase();
-        if s.contains("asphalt") || s.contains("highway") || s.contains("street") || s.contains("traffic") || s.contains("tarmac") || s.contains("roadway") || s.contains("driveway") {
+        if s.contains("asphalt")
+            || s.contains("highway")
+            || s.contains("street")
+            || s.contains("traffic")
+            || s.contains("tarmac")
+            || s.contains("roadway")
+            || s.contains("driveway")
+        {
             Self::Asphalt
-        } else if s.contains("pavement") || s.contains("cobble") || s.contains("granite") || s.contains("sidewalk") || s.contains("courtyard") || s.contains("flagstone") || s.contains("brick") || s.contains("concrete") || s.contains("plaza") {
+        } else if s.contains("pavement")
+            || s.contains("cobble")
+            || s.contains("granite")
+            || s.contains("sidewalk")
+            || s.contains("courtyard")
+            || s.contains("flagstone")
+            || s.contains("brick")
+            || s.contains("concrete")
+            || s.contains("plaza")
+        {
             Self::Pavement
-        } else if s.contains("tin") || s.contains("roof") || s.contains("metal") || s.contains("iron") || s.contains("awning") || s.contains("downpipe") || s.contains("downspout") || s.contains("zinc") || s.contains("aluminum") || s.contains("corrugated") || s.contains("shed") || s.contains("gutter") {
+        } else if s.contains("tin")
+            || s.contains("roof")
+            || s.contains("metal")
+            || s.contains("iron")
+            || s.contains("awning")
+            || s.contains("downpipe")
+            || s.contains("downspout")
+            || s.contains("zinc")
+            || s.contains("aluminum")
+            || s.contains("corrugated")
+            || s.contains("shed")
+            || s.contains("gutter")
+        {
             Self::TinRoof
-        } else if s.contains("tent") || s.contains("canvas") || s.contains("umbrella") || s.contains("gazebo") || s.contains("rainfly") || s.contains("tarp") || s.contains("parasol") || s.contains("bimini") || s.contains("nylon") || s.contains("fabric") {
+        } else if s.contains("tent")
+            || s.contains("canvas")
+            || s.contains("umbrella")
+            || s.contains("gazebo")
+            || s.contains("rainfly")
+            || s.contains("tarp")
+            || s.contains("parasol")
+            || s.contains("bimini")
+            || s.contains("nylon")
+            || s.contains("fabric")
+        {
             Self::CanvasTent
-        } else if s.contains("foliage") || s.contains("leaves") || s.contains("leaf") || s.contains("forest") || s.contains("canopy") || s.contains("pine") || s.contains("needle") || s.contains("bamboo") || s.contains("moss") || s.contains("jungle") || s.contains("fern") || s.contains("vegetation") || s.contains("tree") || s.contains("woods") {
+        } else if s.contains("foliage")
+            || s.contains("leaves")
+            || s.contains("leaf")
+            || s.contains("forest")
+            || s.contains("canopy")
+            || s.contains("pine")
+            || s.contains("needle")
+            || s.contains("bamboo")
+            || s.contains("moss")
+            || s.contains("jungle")
+            || s.contains("fern")
+            || s.contains("vegetation")
+            || s.contains("tree")
+            || s.contains("woods")
+        {
             Self::Foliage
-        } else if s.contains("wood") || s.contains("deck") || s.contains("boardwalk") || s.contains("patio") || s.contains("bench") || s.contains("cedar") || s.contains("shingle") || s.contains("timber") || s.contains("plank") || s.contains("lumber") {
+        } else if s.contains("wood")
+            || s.contains("deck")
+            || s.contains("boardwalk")
+            || s.contains("patio")
+            || s.contains("bench")
+            || s.contains("cedar")
+            || s.contains("shingle")
+            || s.contains("timber")
+            || s.contains("plank")
+            || s.contains("lumber")
+        {
             Self::WoodDeck
-        } else if s.contains("glass") || s.contains("window") || s.contains("skylight") || s.contains("windshield") || s.contains("conservatory") || s.contains("pane") || s.contains("glazing") || s.contains("sunroof") {
+        } else if s.contains("glass")
+            || s.contains("window")
+            || s.contains("skylight")
+            || s.contains("windshield")
+            || s.contains("conservatory")
+            || s.contains("pane")
+            || s.contains("glazing")
+            || s.contains("sunroof")
+        {
             Self::Glass
-        } else if s.contains("puddle") || s.contains("splash") || s.contains("drain") || s.contains("shallow") || s.contains("gravel") || s.contains("plop") || s.contains("runoff") {
+        } else if s.contains("puddle")
+            || s.contains("splash")
+            || s.contains("drain")
+            || s.contains("shallow")
+            || s.contains("gravel")
+            || s.contains("plop")
+            || s.contains("runoff")
+        {
             Self::PuddleShallow
-        } else if s.contains("deep") || s.contains("water") || s.contains("lake") || s.contains("pond") || s.contains("hydrophone") || s.contains("ocean") || s.contains("river") || s.contains("sea") || s.contains("stream") || s.contains("reservoir") || s.contains("cavitation") {
+        } else if s.contains("deep")
+            || s.contains("water")
+            || s.contains("lake")
+            || s.contains("pond")
+            || s.contains("hydrophone")
+            || s.contains("ocean")
+            || s.contains("river")
+            || s.contains("sea")
+            || s.contains("stream")
+            || s.contains("reservoir")
+            || s.contains("cavitation")
+        {
             Self::WaterDeep
         } else {
             Self::Pavement

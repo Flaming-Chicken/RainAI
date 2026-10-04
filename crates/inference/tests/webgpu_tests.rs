@@ -1,5 +1,8 @@
 use futures::executor::block_on;
-use wgpu::{DeviceDescriptor, Features, Limits, PowerPreference, RequestAdapterOptions, ShaderModuleDescriptor, ShaderSource};
+use wgpu::{
+    DeviceDescriptor, Features, Limits, PowerPreference, RequestAdapterOptions,
+    ShaderModuleDescriptor, ShaderSource,
+};
 
 #[test]
 fn test_wgsl_shader_compilation() {
@@ -23,19 +26,52 @@ fn test_wgsl_shader_compilation() {
 
         if let Some((device, _queue)) = block_on(async { device_fut.await.ok() }) {
             let shaders = [
-                ("layer_forward.wgsl", include_str!("../src/shaders/layer_forward.wgsl")),
+                (
+                    "layer_forward.wgsl",
+                    include_str!("../src/shaders/layer_forward.wgsl"),
+                ),
                 ("mamba2.wgsl", include_str!("../src/shaders/mamba2.wgsl")),
-                ("moe_dispatch.wgsl", include_str!("../src/shaders/moe_dispatch.wgsl")),
-                ("foa_projection.wgsl", include_str!("../src/shaders/foa_projection.wgsl")),
-                ("consistency_jump.wgsl", include_str!("../src/shaders/consistency_jump.wgsl")),
-                ("mamba2_deliberation.wgsl", include_str!("../src/shaders/mamba2_deliberation.wgsl")),
-                ("binaural_convolver.wgsl", include_str!("../src/shaders/binaural_convolver.wgsl")),
+                (
+                    "moe_dispatch.wgsl",
+                    include_str!("../src/shaders/moe_dispatch.wgsl"),
+                ),
+                (
+                    "foa_projection.wgsl",
+                    include_str!("../src/shaders/foa_projection.wgsl"),
+                ),
+                (
+                    "consistency_jump.wgsl",
+                    include_str!("../src/shaders/consistency_jump.wgsl"),
+                ),
+                (
+                    "mamba2_deliberation.wgsl",
+                    include_str!("../src/shaders/mamba2_deliberation.wgsl"),
+                ),
+                (
+                    "binaural_convolver.wgsl",
+                    include_str!("../src/shaders/binaural_convolver.wgsl"),
+                ),
                 ("dequant.wgsl", include_str!("../src/shaders/dequant.wgsl")),
-                ("mamba2_ssd.wgsl", include_str!("../src/shaders/mamba2_ssd.wgsl")),
-                ("dense_soup_dispatch.wgsl", include_str!("../src/shaders/dense_soup_dispatch.wgsl")),
-                ("mla_attention.wgsl", include_str!("../src/shaders/mla_attention.wgsl")),
-                ("rk4_flow_matching.wgsl", include_str!("../src/shaders/rk4_flow_matching.wgsl")),
-                ("droplet_panning.wgsl", include_str!("../../app/src/shaders/droplet_panning.wgsl")),
+                (
+                    "mamba2_ssd.wgsl",
+                    include_str!("../src/shaders/mamba2_ssd.wgsl"),
+                ),
+                (
+                    "dense_soup_dispatch.wgsl",
+                    include_str!("../src/shaders/dense_soup_dispatch.wgsl"),
+                ),
+                (
+                    "mla_attention.wgsl",
+                    include_str!("../src/shaders/mla_attention.wgsl"),
+                ),
+                (
+                    "rk4_flow_matching.wgsl",
+                    include_str!("../src/shaders/rk4_flow_matching.wgsl"),
+                ),
+                (
+                    "droplet_panning.wgsl",
+                    include_str!("../../app/src/shaders/droplet_panning.wgsl"),
+                ),
             ];
 
             for (name, source) in shaders {
@@ -49,7 +85,9 @@ fn test_wgsl_shader_compilation() {
             if device.features().contains(Features::SHADER_F16) {
                 let _module_f16 = device.create_shader_module(ShaderModuleDescriptor {
                     label: Some("rk4_flow_matching_f16.wgsl"),
-                    source: ShaderSource::Wgsl(include_str!("../src/shaders/rk4_flow_matching_f16.wgsl").into()),
+                    source: ShaderSource::Wgsl(
+                        include_str!("../src/shaders/rk4_flow_matching_f16.wgsl").into(),
+                    ),
                 });
             }
         }

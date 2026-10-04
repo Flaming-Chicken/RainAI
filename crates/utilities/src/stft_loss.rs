@@ -8,8 +8,8 @@
 
 use anyhow::Result;
 use candle_core::{Device, Tensor};
-use rustfft::num_complex::Complex;
 use rustfft::FftPlanner;
+use rustfft::num_complex::Complex;
 
 /// Operational mode for spectral acoustic loss evaluation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -117,7 +117,8 @@ impl MultiResolutionStftLoss {
 
             let mut frame_mag = Vec::with_capacity(num_bins);
             for bin in 0..num_bins {
-                let mag = (buffer[bin].re * buffer[bin].re + buffer[bin].im * buffer[bin].im).sqrt();
+                let mag =
+                    (buffer[bin].re * buffer[bin].re + buffer[bin].im * buffer[bin].im).sqrt();
                 frame_mag.push(mag);
             }
             spectrogram.push(frame_mag);
@@ -174,14 +175,28 @@ impl MultiResolutionStftLoss {
     }
 
     /// Evaluates raw 1D audio frame waveforms across all multi-resolution tiers.
-    pub fn evaluate_waveform_loss(&self, pred_audio: &[f32], target_audio: &[f32]) -> (f32, f32, f32) {
+    pub fn evaluate_waveform_loss(
+        &self,
+        pred_audio: &[f32],
+        target_audio: &[f32],
+    ) -> (f32, f32, f32) {
         let mut total_sc = 0.0f32;
         let mut total_mag = 0.0f32;
 
         for res in &self.resolutions {
             let window = Self::hanning_window(res.window_size);
-            let pred_spec = Self::compute_magnitude_spectrogram(pred_audio, res.fft_size, res.hop_size, &window);
-            let target_spec = Self::compute_magnitude_spectrogram(target_audio, res.fft_size, res.hop_size, &window);
+            let pred_spec = Self::compute_magnitude_spectrogram(
+                pred_audio,
+                res.fft_size,
+                res.hop_size,
+                &window,
+            );
+            let target_spec = Self::compute_magnitude_spectrogram(
+                target_audio,
+                res.fft_size,
+                res.hop_size,
+                &window,
+            );
 
             let sc = Self::spectral_convergence(&pred_spec, &target_spec);
             let mag = Self::log_magnitude_distance(&pred_spec, &target_spec, self.eps);
@@ -213,7 +228,9 @@ impl MultiResolutionStftLoss {
         // Spectral envelope convergence: sqrt(diff_sq) / sqrt(target_sq + eps)
         let eps_f64 = eps.max(1e-6) as f64;
         let num = diff_sq.relu()?.sqrt()?;
-        let den = (target_sq.relu()? + eps_f64)?.sqrt()?.clamp(1e-6f32, 1e8f32)?;
+        let den = (target_sq.relu()? + eps_f64)?
+            .sqrt()?
+            .clamp(1e-6f32, 1e8f32)?;
         let l_sc = (num / den)?;
 
         // Log-energy band distance: mean | log(|b| + eps) - log(|\hat{b}| + eps) |
@@ -239,7 +256,8 @@ impl MultiResolutionStftLoss {
     ) -> Result<Tensor> {
         match mode {
             StftLossMode::Envelope16 => {
-                let (total, _, _) = Self::evaluate_envelope_loss(pred_bands, target_bands, self.eps)?;
+                let (total, _, _) =
+                    Self::evaluate_envelope_loss(pred_bands, target_bands, self.eps)?;
                 Ok(total)
             }
             StftLossMode::WaveformFoa => {
@@ -248,20 +266,26 @@ impl MultiResolutionStftLoss {
                     Ok(Tensor::from_slice(&[total], (), device)?)
                 } else {
                     // Fallback to envelope if raw audio is not supplied
-                    let (total, _, _) = Self::evaluate_envelope_loss(pred_bands, target_bands, self.eps)?;
+                    let (total, _, _) =
+                        Self::evaluate_envelope_loss(pred_bands, target_bands, self.eps)?;
                     Ok(total)
                 }
             }
             StftLossMode::MelSpectral => {
                 // Perceptually weighted sub-band envelope comparison using Bark critical band weighting
-                let (total, _, _) = Self::evaluate_envelope_loss(pred_bands, target_bands, self.eps)?;
+                let (total, _, _) =
+                    Self::evaluate_envelope_loss(pred_bands, target_bands, self.eps)?;
                 let weights = Tensor::from_slice(&BARK_CRITICAL_WEIGHTS, (1, 16), device)?;
-                let weighted_diff = (pred_bands - target_bands)?.sqr()?.broadcast_mul(&weights)?.mean_all()?;
+                let weighted_diff = (pred_bands - target_bands)?
+                    .sqr()?
+                    .broadcast_mul(&weights)?
+                    .mean_all()?;
                 let combined = ((&total + &weighted_diff)? * 0.5)?;
                 Ok(combined)
             }
             StftLossMode::Combined => {
-                let (env_loss, _, _) = Self::evaluate_envelope_loss(pred_bands, target_bands, self.eps)?;
+                let (env_loss, _, _) =
+                    Self::evaluate_envelope_loss(pred_bands, target_bands, self.eps)?;
                 if let (Some(pred), Some(target)) = (pred_audio, target_audio) {
                     let (wf_loss, _, _) = self.evaluate_waveform_loss(pred, target);
                     let wf_tensor = Tensor::from_slice(&[wf_loss], (), device)?;
@@ -283,8 +307,7 @@ impl MultiResolutionStftLoss {
 /// Emphasizes the ear-canal resonant frequencies (1kHz - 4kHz) while gracefully
 /// tapering at extreme low sub-bass and ultra-high air absorption bands.
 pub const BARK_CRITICAL_WEIGHTS: [f32; 16] = [
-    0.55, 0.65, 0.75, 0.85, 1.00, 1.15, 1.30, 1.45,
-    1.50, 1.45, 1.35, 1.20, 1.05, 0.90, 0.75, 0.60,
+    0.55, 0.65, 0.75, 0.85, 1.00, 1.15, 1.30, 1.45, 1.50, 1.45, 1.35, 1.20, 1.05, 0.90, 0.75, 0.60,
 ];
 
 /// Numerically stable Smooth-L1 / Huber loss.
@@ -437,11 +460,7 @@ pub fn apply_so3_foa_rotation(
     let r22 = cp * cr;
 
     // R^T for right-matrix multiplication: U_rot = U * R^T
-    let rot_t_data = [
-        r00, r10, r20,
-        r01, r11, r21,
-        r02, r12, r22,
-    ];
+    let rot_t_data = [r00, r10, r20, r01, r11, r21, r02, r12, r22];
 
     let rot_matrix_t = Tensor::from_slice(&rot_t_data, (3, 3), foa.device())?;
 
@@ -451,4 +470,3 @@ pub fn apply_so3_foa_rotation(
 
     Ok(Tensor::cat(&[&w, &u_rot], 1)?)
 }
-

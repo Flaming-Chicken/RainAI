@@ -11,34 +11,19 @@ pub const EMBEDDED_SLICE_0_TERNARY: &[u8] = include_bytes!("../data/slice_0_tern
 /// Pre-packed, cache-aligned weight buffer for zero-overhead runtime SIMD execution
 #[derive(Clone, Debug)]
 pub enum WeightBuffer {
-    Ternary2Bit {
-        packed: Vec<u8>,
-        gamma: f32,
-    },
-    Int8 {
-        weights: Vec<i8>,
-        scale: f32,
-    },
-    Posit8 {
-        raw: Vec<u8>,
-        scale: f32,
-    },
-    Bf16 {
-        raw: Vec<u16>,
-        scale: f32,
-    },
-    Fp16 {
-        raw: Vec<u16>,
-        scale: f32,
-    },
-    Fp32 {
-        weights: Vec<f32>,
-    },
+    Ternary2Bit { packed: Vec<u8>, gamma: f32 },
+    Int8 { weights: Vec<i8>, scale: f32 },
+    Posit8 { raw: Vec<u8>, scale: f32 },
+    Bf16 { raw: Vec<u16>, scale: f32 },
+    Fp16 { raw: Vec<u16>, scale: f32 },
+    Fp32 { weights: Vec<f32> },
 }
 
 impl Default for WeightBuffer {
     fn default() -> Self {
-        Self::Fp32 { weights: Vec::new() }
+        Self::Fp32 {
+            weights: Vec::new(),
+        }
     }
 }
 
@@ -213,11 +198,16 @@ impl WeightLoader {
                     }
                     let chunk = &raw_slice[byte_offset..byte_offset + bytes_needed];
                     byte_offset += bytes_needed;
-                    
+
                     weights.resize(num_elements, 0.0);
                     for (i, w) in weights.iter_mut().enumerate() {
                         let idx = i * 4;
-                        let bits = u32::from_le_bytes([chunk[idx], chunk[idx + 1], chunk[idx + 2], chunk[idx + 3]]);
+                        let bits = u32::from_le_bytes([
+                            chunk[idx],
+                            chunk[idx + 1],
+                            chunk[idx + 2],
+                            chunk[idx + 3],
+                        ]);
                         *w = f32::from_bits(bits) * meta.scale;
                     }
                 }
@@ -258,7 +248,9 @@ impl WeightLoader {
                     weights.resize(num_elements, 0.0);
                     for (i, w) in weights.iter_mut().enumerate() {
                         let signed = chunk[i] as i8 as f32 / 127.0;
-                        *w = BoxCoxDequantizer::dequantize_scalar(signed, meta.shape[0] as f32, 0.0) * meta.scale;
+                        *w =
+                            BoxCoxDequantizer::dequantize_scalar(signed, meta.shape[0] as f32, 0.0)
+                                * meta.scale;
                     }
                 }
             }
@@ -269,22 +261,52 @@ impl WeightLoader {
                     gamma: meta.scale,
                 },
                 PrecisionFormat::Bf16 => {
-                    let raw_bf16: Vec<u16> = weights.iter().map(|&w| BoxCoxDequantizer::encode_bf16(w)).collect();
-                    WeightBuffer::Bf16 { raw: raw_bf16, scale: meta.scale }
+                    let raw_bf16: Vec<u16> = weights
+                        .iter()
+                        .map(|&w| BoxCoxDequantizer::encode_bf16(w))
+                        .collect();
+                    WeightBuffer::Bf16 {
+                        raw: raw_bf16,
+                        scale: meta.scale,
+                    }
                 }
                 PrecisionFormat::Fp16 => {
-                    let raw_fp16: Vec<u16> = weights.iter().map(|&w| BoxCoxDequantizer::encode_fp16(w)).collect();
-                    WeightBuffer::Fp16 { raw: raw_fp16, scale: meta.scale }
+                    let raw_fp16: Vec<u16> = weights
+                        .iter()
+                        .map(|&w| BoxCoxDequantizer::encode_fp16(w))
+                        .collect();
+                    WeightBuffer::Fp16 {
+                        raw: raw_fp16,
+                        scale: meta.scale,
+                    }
                 }
                 PrecisionFormat::Posit8 => {
-                    let raw_p8: Vec<u8> = weights.iter().map(|&w| (BoxCoxDequantizer::encode_posit16(w) >> 8) as u8).collect();
-                    WeightBuffer::Posit8 { raw: raw_p8, scale: meta.scale }
+                    let raw_p8: Vec<u8> = weights
+                        .iter()
+                        .map(|&w| (BoxCoxDequantizer::encode_posit16(w) >> 8) as u8)
+                        .collect();
+                    WeightBuffer::Posit8 {
+                        raw: raw_p8,
+                        scale: meta.scale,
+                    }
                 }
                 PrecisionFormat::Int8 => {
-                    let raw_i8: Vec<i8> = weights.iter().map(|&w| (w / meta.scale.max(1e-6) * 127.0).round().clamp(-128.0, 127.0) as i8).collect();
-                    WeightBuffer::Int8 { weights: raw_i8, scale: meta.scale }
+                    let raw_i8: Vec<i8> = weights
+                        .iter()
+                        .map(|&w| {
+                            (w / meta.scale.max(1e-6) * 127.0)
+                                .round()
+                                .clamp(-128.0, 127.0) as i8
+                        })
+                        .collect();
+                    WeightBuffer::Int8 {
+                        weights: raw_i8,
+                        scale: meta.scale,
+                    }
                 }
-                _ => WeightBuffer::Fp32 { weights: weights.clone() },
+                _ => WeightBuffer::Fp32 {
+                    weights: weights.clone(),
+                },
             };
 
             cache.insert(LoadedLayer {
@@ -326,7 +348,12 @@ impl WeightLoader {
                 Dtype::F32 => {
                     let f32_slice: &[f32] = bytemuck::cast_slice(data);
                     let w_vec = f32_slice.to_vec();
-                    (PrecisionFormat::Fp32, w_vec.clone(), Vec::new(), WeightBuffer::Fp32 { weights: w_vec })
+                    (
+                        PrecisionFormat::Fp32,
+                        w_vec.clone(),
+                        Vec::new(),
+                        WeightBuffer::Fp32 { weights: w_vec },
+                    )
                 }
                 Dtype::F16 => {
                     let u16_slice: &[u16] = bytemuck::cast_slice(data);
@@ -334,7 +361,15 @@ impl WeightLoader {
                         .iter()
                         .map(|&bits| BoxCoxDequantizer::decode_fp16(bits))
                         .collect();
-                    (PrecisionFormat::Fp16, decoded, Vec::new(), WeightBuffer::Fp16 { raw: u16_slice.to_vec(), scale: 1.0 })
+                    (
+                        PrecisionFormat::Fp16,
+                        decoded,
+                        Vec::new(),
+                        WeightBuffer::Fp16 {
+                            raw: u16_slice.to_vec(),
+                            scale: 1.0,
+                        },
+                    )
                 }
                 Dtype::BF16 => {
                     let u16_slice: &[u16] = bytemuck::cast_slice(data);
@@ -342,7 +377,15 @@ impl WeightLoader {
                         .iter()
                         .map(|&bits| BoxCoxDequantizer::decode_bf16(bits))
                         .collect();
-                    (PrecisionFormat::Bf16, decoded, Vec::new(), WeightBuffer::Bf16 { raw: u16_slice.to_vec(), scale: 1.0 })
+                    (
+                        PrecisionFormat::Bf16,
+                        decoded,
+                        Vec::new(),
+                        WeightBuffer::Bf16 {
+                            raw: u16_slice.to_vec(),
+                            scale: 1.0,
+                        },
+                    )
                 }
                 Dtype::I8 => {
                     let i8_slice: &[i8] = bytemuck::cast_slice(data);
@@ -350,17 +393,39 @@ impl WeightLoader {
                     if is_ternary {
                         let packed = Self::pack_ternary_2bit(i8_slice);
                         let f32_weights: Vec<f32> = i8_slice.iter().map(|&v| v as f32).collect();
-                        (PrecisionFormat::Ternary158, f32_weights, packed.clone(), WeightBuffer::Ternary2Bit { packed, gamma: 1.0 })
+                        (
+                            PrecisionFormat::Ternary158,
+                            f32_weights,
+                            packed.clone(),
+                            WeightBuffer::Ternary2Bit { packed, gamma: 1.0 },
+                        )
                     } else {
-                        let decoded: Vec<f32> = i8_slice.iter().map(|&v| v as f32 / 127.0).collect();
-                        (PrecisionFormat::Int8, decoded, Vec::new(), WeightBuffer::Int8 { weights: i8_slice.to_vec(), scale: 1.0 })
+                        let decoded: Vec<f32> =
+                            i8_slice.iter().map(|&v| v as f32 / 127.0).collect();
+                        (
+                            PrecisionFormat::Int8,
+                            decoded,
+                            Vec::new(),
+                            WeightBuffer::Int8 {
+                                weights: i8_slice.to_vec(),
+                                scale: 1.0,
+                            },
+                        )
                     }
                 }
                 Dtype::U8 => {
                     let num_elements = shape.iter().product();
                     let unpacked = Self::unpack_ternary_2bit(data, num_elements);
                     let f32_weights: Vec<f32> = unpacked.iter().map(|&v| v as f32).collect();
-                    (PrecisionFormat::Ternary158, f32_weights, data.to_vec(), WeightBuffer::Ternary2Bit { packed: data.to_vec(), gamma: 1.0 })
+                    (
+                        PrecisionFormat::Ternary158,
+                        f32_weights,
+                        data.to_vec(),
+                        WeightBuffer::Ternary2Bit {
+                            packed: data.to_vec(),
+                            gamma: 1.0,
+                        },
+                    )
                 }
                 _ => {
                     return Err(format!(
@@ -394,4 +459,3 @@ impl WeightLoader {
         Self::load_safetensors_bytes(&bytes, tier)
     }
 }
-

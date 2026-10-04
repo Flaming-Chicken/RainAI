@@ -1,5 +1,9 @@
 #![allow(unsafe_code)]
-#![allow(clippy::excessive_precision, clippy::manual_memcpy, clippy::chunks_exact_to_as_chunks)]
+#![allow(
+    clippy::excessive_precision,
+    clippy::manual_memcpy,
+    clippy::chunks_exact_to_as_chunks
+)]
 //! Neural Inference Runtime for Continuous Mixed-Precision RainAI Models.
 //!
 //! Exposes unified execution engines across CPU SIMD vector baselines, Hugging Face Candle
@@ -38,7 +42,6 @@ pub use model::*;
 pub use runner::*;
 pub use weight_cache_manager::*;
 pub use weight_loader::*;
-
 
 use ringbuf::HeapRb;
 use std::sync::Arc;
@@ -92,7 +95,10 @@ impl InferenceEngine {
         self.foa_consumer = Some(consumer);
     }
 
-    pub fn infer(&mut self, conditioning: &[f32; shared::rain::CONDITION_DIM]) -> Result<(f32, f32, f32, f32), String> {
+    pub fn infer(
+        &mut self,
+        conditioning: &[f32; shared::rain::CONDITION_DIM],
+    ) -> Result<(f32, f32, f32, f32), String> {
         // Fast path: if async WebGPU producer has pushed synthesized Ambisonic FOA frames,
         // pop 4 samples directly with lock-free wait-free semantics!
         if let Some(consumer) = &mut self.foa_consumer {
@@ -101,10 +107,18 @@ impl InferenceEngine {
                 let mut x = 0.0f32;
                 let mut y = 0.0f32;
                 let mut z = 0.0f32;
-                if let Some(v) = consumer.pop() { w = v; }
-                if let Some(v) = consumer.pop() { x = v; }
-                if let Some(v) = consumer.pop() { y = v; }
-                if let Some(v) = consumer.pop() { z = v; }
+                if let Some(v) = consumer.pop() {
+                    w = v;
+                }
+                if let Some(v) = consumer.pop() {
+                    x = v;
+                }
+                if let Some(v) = consumer.pop() {
+                    y = v;
+                }
+                if let Some(v) = consumer.pop() {
+                    z = v;
+                }
                 return Ok((w, x, y, z));
             }
         }
@@ -120,10 +134,14 @@ impl InferenceEngine {
             InferenceBackend::WebGpuNeural(gpu_runner) => {
                 // Check if WebGPU context was lost due to browser backgrounding or resource exhaustion
                 if gpu_runner.is_context_lost() {
-                    tracing::warn!("WebGPU context loss detected during inference. Hot-swapping to CPU SIMD fallback.");
+                    tracing::warn!(
+                        "WebGPU context loss detected during inference. Hot-swapping to CPU SIMD fallback."
+                    );
 
                     // Fallback execution
-                    let result = if self.fallback.use_consistency_jump && self.fallback.has_consistency_jump_head() {
+                    let result = if self.fallback.use_consistency_jump
+                        && self.fallback.has_consistency_jump_head()
+                    {
                         self.fallback.fast_consistency_step(conditioning)
                     } else {
                         self.fallback.step(conditioning)

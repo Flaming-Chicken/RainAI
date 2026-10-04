@@ -1,5 +1,5 @@
-use audio::export::*;
 use audio::DecodeMode;
+use audio::export::*;
 use shared::RainState;
 
 #[test]

@@ -1,9 +1,9 @@
 use inference::model::PrecisionFormat;
 use inference::runner::InferenceRunner;
 use inference::weight_loader::WeightLoader;
-use safetensors::tensor::{Dtype, TensorView};
 use safetensors::serialize;
-use shared::rain::{QualityTier, CONDITION_DIM};
+use safetensors::tensor::{Dtype, TensorView};
+use shared::rain::{CONDITION_DIM, QualityTier};
 use std::collections::HashMap;
 
 #[test]
@@ -28,17 +28,42 @@ fn test_safetensors_loading_and_consistency_jump() {
     let jump_b_bytes: &[u8] = bytemuck::cast_slice(&jump_bias);
 
     let mut data_map = HashMap::new();
-    data_map.insert("encoder.cond_proj.weight".to_string(), TensorView::new(Dtype::F32, vec![64, CONDITION_DIM], cond_w_bytes).unwrap());
-    data_map.insert("encoder.cond_proj.bias".to_string(), TensorView::new(Dtype::F32, vec![64], cond_b_bytes).unwrap());
-    data_map.insert("mamba.A_diag.weight".to_string(), TensorView::new(Dtype::F32, vec![64], a_bytes).unwrap());
-    data_map.insert("mamba.B_diag.weight".to_string(), TensorView::new(Dtype::F32, vec![64], b_bytes).unwrap());
-    data_map.insert("moe.router.weight".to_string(), TensorView::new(Dtype::F32, vec![8, 64], router_bytes).unwrap());
-    data_map.insert("decoder.foa_proj.weight".to_string(), TensorView::new(Dtype::F32, vec![4, 64], foa_bytes).unwrap());
-    data_map.insert("consistency_head.proj.weight".to_string(), TensorView::new(Dtype::F32, vec![4, 64], jump_w_bytes).unwrap());
-    data_map.insert("consistency_head.proj.bias".to_string(), TensorView::new(Dtype::F32, vec![4], jump_b_bytes).unwrap());
+    data_map.insert(
+        "encoder.cond_proj.weight".to_string(),
+        TensorView::new(Dtype::F32, vec![64, CONDITION_DIM], cond_w_bytes).unwrap(),
+    );
+    data_map.insert(
+        "encoder.cond_proj.bias".to_string(),
+        TensorView::new(Dtype::F32, vec![64], cond_b_bytes).unwrap(),
+    );
+    data_map.insert(
+        "mamba.A_diag.weight".to_string(),
+        TensorView::new(Dtype::F32, vec![64], a_bytes).unwrap(),
+    );
+    data_map.insert(
+        "mamba.B_diag.weight".to_string(),
+        TensorView::new(Dtype::F32, vec![64], b_bytes).unwrap(),
+    );
+    data_map.insert(
+        "moe.router.weight".to_string(),
+        TensorView::new(Dtype::F32, vec![8, 64], router_bytes).unwrap(),
+    );
+    data_map.insert(
+        "decoder.foa_proj.weight".to_string(),
+        TensorView::new(Dtype::F32, vec![4, 64], foa_bytes).unwrap(),
+    );
+    data_map.insert(
+        "consistency_head.proj.weight".to_string(),
+        TensorView::new(Dtype::F32, vec![4, 64], jump_w_bytes).unwrap(),
+    );
+    data_map.insert(
+        "consistency_head.proj.bias".to_string(),
+        TensorView::new(Dtype::F32, vec![4], jump_b_bytes).unwrap(),
+    );
 
     let metadata_map = HashMap::new();
-    let safetensors_bytes = serialize(&data_map, &Some(metadata_map)).expect("SafeTensors serialization failed");
+    let safetensors_bytes =
+        serialize(&data_map, &Some(metadata_map)).expect("SafeTensors serialization failed");
 
     // 2. Load directly into WeightCache via WeightLoader
     let cache = WeightLoader::load_safetensors_bytes(&safetensors_bytes, QualityTier::StudioFp32)
@@ -59,7 +84,7 @@ fn test_safetensors_loading_and_consistency_jump() {
     let mut cond = [0.0f32; CONDITION_DIM];
     cond[0] = 0.75; // Rain intensity
     cond[5] = 0.40; // Wind speed
-    cond[9] = 1.0;  // Tin roof surface
+    cond[9] = 1.0; // Tin roof surface
 
     // 4. Test standard step with thinking steps
     runner.set_thinking_steps(1);
@@ -71,7 +96,6 @@ fn test_safetensors_loading_and_consistency_jump() {
     let (w4, x4, _y4, _z4) = runner.step(&cond);
     assert!(w4.is_finite());
     assert!(x4.is_finite());
-
 
     // 5. Test 1-step Consistency Jump Head evaluation
     let (jw, jx, jy, jz) = runner.fast_consistency_step(&cond);

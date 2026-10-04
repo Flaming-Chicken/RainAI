@@ -10,15 +10,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{
+    Arc, Mutex,
     atomic::{AtomicBool, AtomicU64, Ordering},
     mpsc::Sender,
-    Arc, Mutex,
 };
 use std::time::{Duration, Instant};
 use tracing::info;
 
-use crate::stft_loss::{MultiResolutionStftLoss, StftLossMode};
 use super::*;
+use crate::stft_loss::{MultiResolutionStftLoss, StftLossMode};
 
 /// Atomic checkpoint and metadata transaction manager guaranteeing corruption-proof persistence.
 pub struct AtomicCheckpointManager;
@@ -155,7 +155,6 @@ impl Default for TrainingProgressUpdate {
     }
 }
 
-
 /// Real-time steering and dynamic control handle for in-process training.
 #[derive(Clone)]
 pub struct CandleTrainingSteeringHandle {
@@ -201,7 +200,6 @@ pub const FOA_CHANNELS: usize = 4;
 // 1. Spatial VAE + HOA-DDSP Continuous Latent Projection (Phase 2)
 // ============================================================================
 
-
 // ============================================================================
 // 4. Model Exponential Moving Average (EMA)
 // ============================================================================
@@ -238,7 +236,6 @@ impl ModelEma {
 // ============================================================================
 // 5. Dataset Ingestion & Synthetic Physics Generator
 // ============================================================================
-
 
 /// Cosine Annealing Learning Rate Scheduler with Linear Warm-up.
 pub struct CosineAnnealingWithWarmup {
@@ -325,7 +322,9 @@ pub fn clip_grad_norm_varmap(
     }
 
     if has_non_finite || !sum_sq.is_finite() {
-        tracing::warn!("[!] Non-finite gradient encountered across VarMap! Sanitizing all gradients to zero to prevent momentum poisoning.");
+        tracing::warn!(
+            "[!] Non-finite gradient encountered across VarMap! Sanitizing all gradients to zero to prevent momentum poisoning."
+        );
         for var in varmap.all_vars() {
             let t = var.as_tensor();
             if grads.get(t).is_some() {
@@ -354,7 +353,10 @@ pub fn verify_varmap_integrity(varmap: &VarMap, name: &str) -> Result<()> {
         let vals = flattened.to_vec1::<f32>()?;
         for v in vals {
             if !v.is_finite() {
-                anyhow::bail!("[!] Numerical instability: {} contains non-finite parameters (NaN/Inf)!", name);
+                anyhow::bail!(
+                    "[!] Numerical instability: {} contains non-finite parameters (NaN/Inf)!",
+                    name
+                );
             }
         }
     }
@@ -376,10 +378,10 @@ pub enum MoERuntimeEnvironment {
 
 /// Simulated runtime telemetry bundle for the Invasive Meta-Controller.
 pub struct SimulatedEnvironmentTelemetry {
-    pub telemetry: Tensor,       // [B, 4] [buffer_health_ms, cpu_headroom, gpu_headroom, delta_t_ms]
-    pub user_weights: Tensor,    // [B, 3] [quality_pref, perf_pref, target_buffer_ms]
-    pub quality_scores: Tensor,  // [B, 2]
-    pub slice_level: Tensor,     // [B, 1]
+    pub telemetry: Tensor, // [B, 4] [buffer_health_ms, cpu_headroom, gpu_headroom, delta_t_ms]
+    pub user_weights: Tensor, // [B, 3] [quality_pref, perf_pref, target_buffer_ms]
+    pub quality_scores: Tensor, // [B, 2]
+    pub slice_level: Tensor, // [B, 1]
     pub budget_experts: f32,
     pub target_buffer_ms: f32,
     pub tau_moe: f64,
@@ -412,34 +414,71 @@ impl MoERuntimeEnvironment {
         let mut qual_vec = Vec::with_capacity(batch_size * 2);
         let mut slice_vec = Vec::with_capacity(batch_size);
 
-        let (buf_range, cpu_range, gpu_range, dt_range, q_pref, p_pref, slice_range, q_range, budget, tau, tabu, drop_prob) = match self {
+        let (
+            buf_range,
+            cpu_range,
+            gpu_range,
+            dt_range,
+            q_pref,
+            p_pref,
+            slice_range,
+            q_range,
+            budget,
+            tau,
+            tabu,
+            drop_prob,
+        ) = match self {
             Self::ConstrainedMobile => (
-                (12.0f32, 28.0f32), (0.05f32, 0.35f32), (0.0f32, 0.15f32), (10.0f32, 25.0f32),
-                0.15f32, 0.85f32, (0.25f32, 0.50f32), (0.60f32, 0.80f32),
+                (12.0f32, 28.0f32),
+                (0.05f32, 0.35f32),
+                (0.0f32, 0.15f32),
+                (10.0f32, 25.0f32),
+                0.15f32,
+                0.85f32,
+                (0.25f32, 0.50f32),
+                (0.60f32, 0.80f32),
                 rng.gen_range(1.0f32..2.2f32),
                 0.35f64 * (rng.gen_range(-0.2f64..0.2f64)).exp(),
                 rng.gen_range(1.5f64..3.0f64),
                 0.08f32,
             ),
             Self::BalancedDesktop => (
-                (40.0f32, 70.0f32), (0.35f32, 0.70f32), (0.25f32, 0.65f32), (4.5f32, 6.0f32),
-                0.50f32, 0.50f32, (0.75f32, 1.00f32), (0.80f32, 0.93f32),
+                (40.0f32, 70.0f32),
+                (0.35f32, 0.70f32),
+                (0.25f32, 0.65f32),
+                (4.5f32, 6.0f32),
+                0.50f32,
+                0.50f32,
+                (0.75f32, 1.00f32),
+                (0.80f32, 0.93f32),
                 rng.gen_range(2.2f32..4.2f32),
                 0.75f64 * (rng.gen_range(-0.2f64..0.2f64)).exp(),
                 rng.gen_range(0.8f64..1.5f64),
                 0.04f32,
             ),
             Self::StudioUltraFidelity => (
-                (80.0f32, 160.0f32), (0.70f32, 0.98f32), (0.75f32, 0.99f32), (2.0f32, 5.33f32),
-                0.95f32, 0.05f32, (1.00f32, 1.00f32), (0.92f32, 0.99f32),
+                (80.0f32, 160.0f32),
+                (0.70f32, 0.98f32),
+                (0.75f32, 0.99f32),
+                (2.0f32, 5.33f32),
+                0.95f32,
+                0.05f32,
+                (1.00f32, 1.00f32),
+                (0.92f32, 0.99f32),
                 rng.gen_range(4.5f32..8.0f32),
                 1.35f64 * (rng.gen_range(-0.15f64..0.15f64)).exp(),
                 rng.gen_range(0.2f64..0.8f64),
                 0.02f32,
             ),
             Self::ThermalThrottledPanic => (
-                (2.0f32, 8.5f32), (0.01f32, 0.08f32), (0.0f32, 0.05f32), (20.0f32, 50.0f32),
-                0.05f32, 0.95f32, (0.10f32, 0.30f32), (0.40f32, 0.70f32),
+                (2.0f32, 8.5f32),
+                (0.01f32, 0.08f32),
+                (0.0f32, 0.05f32),
+                (20.0f32, 50.0f32),
+                0.05f32,
+                0.95f32,
+                (0.10f32, 0.30f32),
+                (0.40f32, 0.70f32),
                 1.0f32,
                 0.20f64,
                 3.5f64,
@@ -602,38 +641,38 @@ impl Default for CandleTrainConfig {
     }
 }
 
-
-
 /// Dynamic device selection supporting CPU, CUDA, and Metal backends.
 pub fn select_device(req: &str) -> Device {
     let lower = req.trim().to_lowercase();
     match lower.as_str() {
         #[cfg(feature = "cuda")]
-        "cuda" | "gpu" => {
-            match Device::new_cuda(0) {
-                Ok(dev) => {
-                    info!("[+] Successfully initialized CUDA device 0");
-                    dev
-                }
-                Err(e) => {
-                    warn!("[-] CUDA requested but initialization failed ({:?}); falling back to CPU", e);
-                    Device::Cpu
-                }
+        "cuda" | "gpu" => match Device::new_cuda(0) {
+            Ok(dev) => {
+                info!("[+] Successfully initialized CUDA device 0");
+                dev
             }
-        }
+            Err(e) => {
+                warn!(
+                    "[-] CUDA requested but initialization failed ({:?}); falling back to CPU",
+                    e
+                );
+                Device::Cpu
+            }
+        },
         #[cfg(feature = "metal")]
-        "metal" => {
-            match Device::new_metal(0) {
-                Ok(dev) => {
-                    info!("[+] Successfully initialized Metal device 0");
-                    dev
-                }
-                Err(e) => {
-                    warn!("[-] Metal requested but initialization failed ({:?}); falling back to CPU", e);
-                    Device::Cpu
-                }
+        "metal" => match Device::new_metal(0) {
+            Ok(dev) => {
+                info!("[+] Successfully initialized Metal device 0");
+                dev
             }
-        }
+            Err(e) => {
+                warn!(
+                    "[-] Metal requested but initialization failed ({:?}); falling back to CPU",
+                    e
+                );
+                Device::Cpu
+            }
+        },
         "auto" => {
             #[cfg(feature = "cuda")]
             if let Ok(dev) = Device::new_cuda(0) {
@@ -675,7 +714,8 @@ pub fn run_candle_training_pipeline_with_steering(
     if let Some((ref gpu_name, mem_mb)) = crate::autopilot::probe_host_nvidia_gpu() {
         log_msg(&format!(
             "[*] Compute Architecture: Dual Acceleration (Host Multicore CPU + NVIDIA {} [{:.1} GB VRAM])",
-            gpu_name, mem_mb as f64 / 1024.0
+            gpu_name,
+            mem_mb as f64 / 1024.0
         ));
     } else {
         log_msg(&format!("[*] Compute accelerator device: {:?}", device));
@@ -683,7 +723,8 @@ pub fn run_candle_training_pipeline_with_steering(
     std::fs::create_dir_all(&config.output_dir)?;
 
     let session_path = config.output_dir.join("training_session.json");
-    let mut session = AtomicCheckpointManager::load_session_state(&session_path).unwrap_or_default();
+    let mut session =
+        AtomicCheckpointManager::load_session_state(&session_path).unwrap_or_default();
     if session.completed_vae || session.completed_mamba {
         log_msg(&format!(
             "[*] Rehydrated existing session from {:?} (VAE done: {}, Mamba done: {}, Epoch: {})",
@@ -701,10 +742,16 @@ pub fn run_candle_training_pipeline_with_steering(
     let (train_dataset, val_dataset) = if config.use_real_data {
         let found = real_manifest_candidates.iter().find(|p| p.exists());
         if let Some(path) = found {
-            log_msg(&format!("[*] Ingesting real acoustic dataset manifest from {:?}...", path));
+            log_msg(&format!(
+                "[*] Ingesting real acoustic dataset manifest from {:?}...",
+                path
+            ));
             match CandleManifestDataset::load_from_manifest(path) {
                 Ok(ds) => {
-                    log_msg(&format!("[+] Successfully loaded {} real acoustic records.", ds.entries.len()));
+                    log_msg(&format!(
+                        "[+] Successfully loaded {} real acoustic records.",
+                        ds.entries.len()
+                    ));
                     let (train_ds, val_ds) = ds.split(config.val_ratio);
                     log_msg(&format!(
                         "[*] Dataset split: {} train samples, {} validation samples (val ratio: {:.2}).",
@@ -715,12 +762,17 @@ pub fn run_candle_training_pipeline_with_steering(
                     (Some(train_ds), Some(val_ds))
                 }
                 Err(e) => {
-                    log_msg(&format!("[!] Notice: Manifest parsing failed ({}). Using synthetic physics generator.", e));
+                    log_msg(&format!(
+                        "[!] Notice: Manifest parsing failed ({}). Using synthetic physics generator.",
+                        e
+                    ));
                     (None, None)
                 }
             }
         } else {
-            log_msg("[*] Manifest not found at standard paths. Utilizing high-fidelity synthetic physics generator.");
+            log_msg(
+                "[*] Manifest not found at standard paths. Utilizing high-fidelity synthetic physics generator.",
+            );
             (None, None)
         }
     } else {
@@ -749,8 +801,11 @@ pub fn run_candle_training_pipeline_with_steering(
         });
     }
 
-
-    let get_train_batch = |batch_size: usize, cfg_prob: f32, so3_prob: f32, mixup_prob: f32| -> Result<TrainingBatch> {
+    let get_train_batch = |batch_size: usize,
+                           cfg_prob: f32,
+                           so3_prob: f32,
+                           mixup_prob: f32|
+     -> Result<TrainingBatch> {
         if let Some(ref ds) = train_dataset {
             ds.sample_batch_augmented(batch_size, &device, cfg_prob, so3_prob, mixup_prob)
         } else {
@@ -766,18 +821,32 @@ pub fn run_candle_training_pipeline_with_steering(
         }
     };
 
-    let execute_vae = config.phases.contains(&TrainingPhase::All) || config.phases.contains(&TrainingPhase::Vae);
-    let execute_mamba = config.phases.contains(&TrainingPhase::All) || config.phases.contains(&TrainingPhase::Mamba);
-    let execute_export = config.phases.contains(&TrainingPhase::All) || config.phases.contains(&TrainingPhase::Export);
+    let execute_vae =
+        config.phases.contains(&TrainingPhase::All) || config.phases.contains(&TrainingPhase::Vae);
+    let execute_mamba = config.phases.contains(&TrainingPhase::All)
+        || config.phases.contains(&TrainingPhase::Mamba);
+    let execute_export = config.phases.contains(&TrainingPhase::All)
+        || config.phases.contains(&TrainingPhase::Export);
 
-    let mut best_vae_val_loss = if session.best_vae_loss.is_finite() { session.best_vae_loss } else { f32::INFINITY };
-    let mut best_mamba_val_loss = if session.best_mamba_loss.is_finite() { session.best_mamba_loss } else { f32::INFINITY };
+    let mut best_vae_val_loss = if session.best_vae_loss.is_finite() {
+        session.best_vae_loss
+    } else {
+        f32::INFINITY
+    };
+    let mut best_mamba_val_loss = if session.best_mamba_loss.is_finite() {
+        session.best_mamba_loss
+    } else {
+        f32::INFINITY
+    };
 
     // ------------------------------------------------------------------------
     // Phase 2: Train Continuous Spatial VAE + HOA-DDSP
     // ------------------------------------------------------------------------
     if execute_vae {
-        if session.completed_vae && !config.phases.contains(&TrainingPhase::Vae) && !config.continuous_refinement {
+        if session.completed_vae
+            && !config.phases.contains(&TrainingPhase::Vae)
+            && !config.continuous_refinement
+        {
             log_msg(&format!(
                 "[*] Skipping Spatial VAE (Phase 2): already marked completed in session (best loss: {:.5}).",
                 best_vae_val_loss
@@ -794,7 +863,10 @@ pub fn run_candle_training_pipeline_with_steering(
             let vae_path = config.output_dir.join("spatial_vae.safetensors");
             if vae_path.exists() {
                 if let Ok(()) = vae_varmap.load(&vae_path) {
-                    log_msg(&format!("[+] Rehydrated converged Spatial VAE weights from {:?}", vae_path));
+                    log_msg(&format!(
+                        "[+] Rehydrated converged Spatial VAE weights from {:?}",
+                        vae_path
+                    ));
                 }
             }
 
@@ -844,14 +916,22 @@ pub fn run_candle_training_pipeline_with_steering(
 
                     // Check stop
                     if steering.stop_signal.load(Ordering::Relaxed) {
-                        log_msg("[*] Stop signal detected during VAE training. Saving atomic session state...");
+                        log_msg(
+                            "[*] Stop signal detected during VAE training. Saving atomic session state...",
+                        );
                         session.current_epoch = epoch;
                         session.total_epochs = config.vae_epochs;
                         session.current_batch = batch_idx;
                         session.total_batches = config.max_batches;
-                        session.timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                        session.timestamp = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
                         let _ = AtomicCheckpointManager::atomic_save_json(&session, &session_path);
-                        let _ = AtomicCheckpointManager::atomic_save_safetensors(&vae_varmap, config.output_dir.join("spatial_vae.safetensors"));
+                        let _ = AtomicCheckpointManager::atomic_save_safetensors(
+                            &vae_varmap,
+                            config.output_dir.join("spatial_vae.safetensors"),
+                        );
                         return Ok(());
                     }
 
@@ -872,7 +952,8 @@ pub fn run_candle_training_pipeline_with_steering(
 
                     let active_cfg_dropout = if config.stochastic_hparams {
                         use rand_distr::{Beta, Distribution};
-                        let beta = Beta::new(2.0, 8.0).unwrap_or_else(|_| Beta::new(1.0, 1.0).unwrap());
+                        let beta =
+                            Beta::new(2.0, 8.0).unwrap_or_else(|_| Beta::new(1.0, 1.0).unwrap());
                         beta.sample(&mut rand::thread_rng())
                     } else {
                         config.cfg_dropout
@@ -884,7 +965,8 @@ pub fn run_candle_training_pipeline_with_steering(
                         config.so3_aug_prob,
                         config.surface_mixup_prob,
                     )?;
-                    let (pred_bands, pred_foa, mu, logvar) = vae_model.forward(&batch.audio_features, &batch.conditioning)?;
+                    let (pred_bands, pred_foa, mu, logvar) =
+                        vae_model.forward(&batch.audio_features, &batch.conditioning)?;
                     let (loss, recon, kl, active_latents) = compute_beta_vae_loss_with_free_bits(
                         &pred_bands,
                         &batch.target_bands,
@@ -897,7 +979,8 @@ pub fn run_candle_training_pipeline_with_steering(
                     let latent_var_loss = compute_latent_variance_loss(&mu, 1.0)?;
                     let mut vae_collapse_status = "OPTIMAL".to_string();
                     if config.enable_collapse_mitigation && active_latents < 25 {
-                        vae_collapse_status = format!("POSTERIOR_RISK ({}/64): MITIGATING", active_latents);
+                        vae_collapse_status =
+                            format!("POSTERIOR_RISK ({}/64): MITIGATING", active_latents);
                         active_beta_kl = (active_beta_kl * 0.75).max(1e-5);
                     }
 
@@ -907,9 +990,19 @@ pub fn run_candle_training_pipeline_with_steering(
                     let quant_penalty = (z_q.sqr()?.mean_all()? * 0.005)?;
 
                     // Direction-of-Arrival and Soundfield Diffuseness Regularization
-                    let (foa_loss, doa_err) = crate::stft_loss::compute_acoustic_intensity_and_doa_loss(&pred_foa, &batch.target_foa, 0.5)?;
-                    let diff_loss = crate::stft_loss::compute_soundfield_diffuseness_loss(&pred_foa, &batch.target_foa, 0.5)?;
-                    let spatial_loss = ((&foa_loss * config.lambda_doa)? + (&diff_loss * config.lambda_diff)?)?;
+                    let (foa_loss, doa_err) =
+                        crate::stft_loss::compute_acoustic_intensity_and_doa_loss(
+                            &pred_foa,
+                            &batch.target_foa,
+                            0.5,
+                        )?;
+                    let diff_loss = crate::stft_loss::compute_soundfield_diffuseness_loss(
+                        &pred_foa,
+                        &batch.target_foa,
+                        0.5,
+                    )?;
+                    let spatial_loss =
+                        ((&foa_loss * config.lambda_doa)? + (&diff_loss * config.lambda_diff)?)?;
 
                     // Evaluate frequency-domain Multi-Resolution STFT Loss
                     let stft_loss = stft_calculator.evaluate_loss(
@@ -929,12 +1022,20 @@ pub fn run_candle_training_pipeline_with_steering(
                     };
 
                     let affine_ortho = compute_orthogonality_loss(affine_align.weight())?;
-                    let raw_batch_loss = (((((&loss + &spatial_loss)? + &quant_penalty)? + (&stft_loss * active_stft_weight)?)? + (&affine_ortho * 0.001)?)? + (&latent_var_loss * config.lambda_latent_var)?)?;
+                    let raw_batch_loss = (((((&loss + &spatial_loss)? + &quant_penalty)?
+                        + (&stft_loss * active_stft_weight)?)?
+                        + (&affine_ortho * 0.001)?)?
+                        + (&latent_var_loss * config.lambda_latent_var)?)?;
                     let total_batch_loss = soft_cap_loss(&raw_batch_loss, 100.0)?;
 
                     let batch_loss_val = total_batch_loss.to_scalar::<f32>()?;
                     if !batch_loss_val.is_finite() {
-                        tracing::warn!("[!] Non-finite VAE batch loss encountered ({:?}) at epoch {} batch {}, skipping update", batch_loss_val, epoch, batch_idx);
+                        tracing::warn!(
+                            "[!] Non-finite VAE batch loss encountered ({:?}) at epoch {} batch {}, skipping update",
+                            batch_loss_val,
+                            epoch,
+                            batch_idx
+                        );
                         continue;
                     }
 
@@ -959,13 +1060,16 @@ pub fn run_candle_training_pipeline_with_steering(
                             if let Some(g) = batch_grads.get(t) {
                                 let is_finite = g.sqr()?.sum_all()?.to_scalar::<f32>()?.is_finite();
                                 if is_finite {
-                                    let entry = vae_accum_grads.entry(t.id()).or_insert_with(|| t.zeros_like().unwrap());
+                                    let entry = vae_accum_grads
+                                        .entry(t.id())
+                                        .or_insert_with(|| t.zeros_like().unwrap());
                                     *entry = (&*entry + g)?;
                                 }
                             }
                         }
 
-                        let is_step_boundary = batch_idx % config.accumulation_steps == 0 || batch_idx == config.max_batches;
+                        let is_step_boundary = batch_idx % config.accumulation_steps == 0
+                            || batch_idx == config.max_batches;
                         if is_step_boundary {
                             let mut aggregated_grads = candle_core::backprop::GradStore::default();
                             for var in vae_varmap.all_vars() {
@@ -974,26 +1078,35 @@ pub fn run_candle_training_pipeline_with_steering(
                                     aggregated_grads.insert(t, acc);
                                 }
                             }
-                            let norm = clip_grad_norm_varmap(&vae_varmap, &mut aggregated_grads, config.max_grad_norm)?;
+                            let norm = clip_grad_norm_varmap(
+                                &vae_varmap,
+                                &mut aggregated_grads,
+                                config.max_grad_norm,
+                            )?;
                             if norm > 1e-12 {
                                 vae_opt.step(&aggregated_grads)?;
                                 let current_lr = vae_scheduler.step();
                                 vae_opt.set_learning_rate(current_lr);
                                 vae_ema.update(&vae_varmap)?;
                             } else {
-                                tracing::warn!("[!] Skipping VAE optimizer step due to zero or sanitized gradient norm");
+                                tracing::warn!(
+                                    "[!] Skipping VAE optimizer step due to zero or sanitized gradient norm"
+                                );
                             }
                         }
                     } else {
                         let mut grads = total_batch_loss.backward()?;
-                        let norm = clip_grad_norm_varmap(&vae_varmap, &mut grads, config.max_grad_norm)?;
+                        let norm =
+                            clip_grad_norm_varmap(&vae_varmap, &mut grads, config.max_grad_norm)?;
                         if norm > 1e-12 {
                             vae_opt.step(&grads)?;
                             let current_lr = vae_scheduler.step();
                             vae_opt.set_learning_rate(current_lr);
                             vae_ema.update(&vae_varmap)?;
                         } else {
-                            tracing::warn!("[!] Skipping VAE optimizer step due to zero or sanitized gradient norm");
+                            tracing::warn!(
+                                "[!] Skipping VAE optimizer step due to zero or sanitized gradient norm"
+                            );
                         }
                     }
 
@@ -1003,7 +1116,8 @@ pub fn run_candle_training_pipeline_with_steering(
                     let total_expected_steps = config.vae_epochs * config.max_batches;
                     let current_step = (epoch - 1) * config.max_batches + batch_idx;
                     let remaining_steps = total_expected_steps.saturating_sub(current_step);
-                    let eta_seconds = (remaining_steps as f64 * config.batch_size as f64 / throughput.max(1.0)) as u64;
+                    let eta_seconds = (remaining_steps as f64 * config.batch_size as f64
+                        / throughput.max(1.0)) as u64;
 
                     if batch_idx % 5 == 0 || batch_idx == 1 || batch_idx == config.max_batches {
                         if let Some(ref p_tx) = steering.progress_tx {
@@ -1042,38 +1156,80 @@ pub fn run_candle_training_pipeline_with_steering(
                 let val_batches = 2;
                 for _ in 0..val_batches {
                     let vbatch = get_val_batch(config.batch_size)?;
-                    let (vpred_bands, vpred_foa, vmu, vlogvar) = vae_model.forward(&vbatch.audio_features, &vbatch.conditioning)?;
-                    let (vloss, _, _) = compute_beta_vae_loss(&vpred_bands, &vbatch.target_bands, &vmu, &vlogvar, config.beta_kl)?;
-                    let (vfoa, _) = crate::stft_loss::compute_acoustic_intensity_and_doa_loss(&vpred_foa, &vbatch.target_foa, 0.5)?;
-                    let vdiff = crate::stft_loss::compute_soundfield_diffuseness_loss(&vpred_foa, &vbatch.target_foa, 0.5)?;
-                    let vtotal = ((&vloss + (&vfoa * config.lambda_doa)?)? + (&vdiff * config.lambda_diff)?)?;
+                    let (vpred_bands, vpred_foa, vmu, vlogvar) =
+                        vae_model.forward(&vbatch.audio_features, &vbatch.conditioning)?;
+                    let (vloss, _, _) = compute_beta_vae_loss(
+                        &vpred_bands,
+                        &vbatch.target_bands,
+                        &vmu,
+                        &vlogvar,
+                        config.beta_kl,
+                    )?;
+                    let (vfoa, _) = crate::stft_loss::compute_acoustic_intensity_and_doa_loss(
+                        &vpred_foa,
+                        &vbatch.target_foa,
+                        0.5,
+                    )?;
+                    let vdiff = crate::stft_loss::compute_soundfield_diffuseness_loss(
+                        &vpred_foa,
+                        &vbatch.target_foa,
+                        0.5,
+                    )?;
+                    let vtotal = ((&vloss + (&vfoa * config.lambda_doa)?)?
+                        + (&vdiff * config.lambda_diff)?)?;
                     val_recon_sum += vtotal.to_scalar::<f32>()?;
                 }
                 let avg_val_loss = val_recon_sum / val_batches as f32;
 
                 log_msg(&format!(
                     "VAE Epoch [{}/{}] - Train Loss: {:.5} (Recon: {:.5}, KL: {:.6}, STFT: {:.5}, DOA Err: {:.4}, Diff: {:.4}) | Val Loss: {:.5}",
-                    epoch, config.vae_epochs, avg_loss, avg_recon, avg_kl, avg_stft, avg_doa, avg_diff, avg_val_loss
+                    epoch,
+                    config.vae_epochs,
+                    avg_loss,
+                    avg_recon,
+                    avg_kl,
+                    avg_stft,
+                    avg_doa,
+                    avg_diff,
+                    avg_val_loss
                 ));
 
                 session.current_epoch = epoch;
                 session.total_epochs = config.vae_epochs;
                 session.last_vae_loss = avg_loss;
                 session.last_stft_loss = avg_stft;
-                session.loss_history.push((avg_loss * 1000.0).max(0.0) as u64);
-                session.vae_loss_history.push((avg_recon * 1000.0).max(0.0) as u64);
-                session.stft_loss_history.push((avg_stft * 1000.0).max(0.0) as u64);
-                if session.loss_history.len() > 500 { session.loss_history.drain(..50); }
-                if session.vae_loss_history.len() > 500 { session.vae_loss_history.drain(..50); }
-                if session.stft_loss_history.len() > 500 { session.stft_loss_history.drain(..50); }
-                session.timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                session
+                    .loss_history
+                    .push((avg_loss * 1000.0).max(0.0) as u64);
+                session
+                    .vae_loss_history
+                    .push((avg_recon * 1000.0).max(0.0) as u64);
+                session
+                    .stft_loss_history
+                    .push((avg_stft * 1000.0).max(0.0) as u64);
+                if session.loss_history.len() > 500 {
+                    session.loss_history.drain(..50);
+                }
+                if session.vae_loss_history.len() > 500 {
+                    session.vae_loss_history.drain(..50);
+                }
+                if session.stft_loss_history.len() > 500 {
+                    session.stft_loss_history.drain(..50);
+                }
+                session.timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
 
                 if avg_val_loss < best_vae_val_loss {
                     best_vae_val_loss = avg_val_loss;
                     session.best_vae_loss = best_vae_val_loss;
                     let best_path = config.output_dir.join("spatial_vae_best.safetensors");
                     AtomicCheckpointManager::atomic_save_safetensors(&vae_varmap, &best_path)?;
-                    log_msg(&format!("[*] New best VAE checkpoint atomically saved -> {:?}", best_path));
+                    log_msg(&format!(
+                        "[*] New best VAE checkpoint atomically saved -> {:?}",
+                        best_path
+                    ));
                 }
                 let _ = AtomicCheckpointManager::atomic_save_json(&session, &session_path);
             }
@@ -1083,7 +1239,10 @@ pub fn run_candle_training_pipeline_with_steering(
             AtomicCheckpointManager::atomic_save_safetensors(&vae_varmap, &vae_path)?;
             session.completed_vae = true;
             let _ = AtomicCheckpointManager::atomic_save_json(&session, &session_path);
-            log_msg(&format!("[+] Verified and atomically saved final Spatial VAE weights -> {:?}", vae_path));
+            log_msg(&format!(
+                "[+] Verified and atomically saved final Spatial VAE weights -> {:?}",
+                vae_path
+            ));
         }
     }
 
@@ -1091,25 +1250,39 @@ pub fn run_candle_training_pipeline_with_steering(
     // Phase 3: Train Mamba-2 MoE + HWIL Meta-Controller + Iterative Thinking
     // ------------------------------------------------------------------------
     if execute_mamba {
-        if session.completed_mamba && !config.phases.contains(&TrainingPhase::Mamba) && !config.continuous_refinement {
+        if session.completed_mamba
+            && !config.phases.contains(&TrainingPhase::Mamba)
+            && !config.continuous_refinement
+        {
             log_msg(&format!(
                 "[*] Skipping Mamba-2 MoE (Phase 3): already marked completed in session (best loss: {:.5}).",
                 best_mamba_val_loss
             ));
         } else {
-            log_msg("\n[Stage 2/3] Training Mamba-2 MoE Recurrence, Router & Deliberation Dynamics (Phase 3)...");
+            log_msg(
+                "\n[Stage 2/3] Training Mamba-2 MoE Recurrence, Router & Deliberation Dynamics (Phase 3)...",
+            );
             let mut mamba_varmap = VarMap::new();
             let mamba_vs = VarBuilder::from_varmap(&mamba_varmap, DType::F32, &device);
             let mamba_model = CandleMamba2MoE::new(mamba_vs.pp("mamba"))?;
-            let thinking_block = CandleThinkingBlock::new(LATENT_DIM, CONDITION_DIM, mamba_vs.pp("thinking"))?;
-            let meta_controller = CandleInvasiveMetaController::new(NUM_EXPERTS, 16, mamba_vs.pp("meta"))?;
-            let consistency_head = CandleConsistencyHead::new(LATENT_DIM + CONDITION_DIM, LATENT_DIM, mamba_vs.pp("consistency_head"))?;
+            let thinking_block =
+                CandleThinkingBlock::new(LATENT_DIM, CONDITION_DIM, mamba_vs.pp("thinking"))?;
+            let meta_controller =
+                CandleInvasiveMetaController::new(NUM_EXPERTS, 16, mamba_vs.pp("meta"))?;
+            let consistency_head = CandleConsistencyHead::new(
+                LATENT_DIM + CONDITION_DIM,
+                LATENT_DIM,
+                mamba_vs.pp("consistency_head"),
+            )?;
 
             // Rehydrate weights if available for continuous training
             let mamba_path = config.output_dir.join("mamba2_moe.safetensors");
             if mamba_path.exists() {
                 if let Ok(()) = mamba_varmap.load(&mamba_path) {
-                    log_msg(&format!("[+] Rehydrated converged Mamba-2 MoE weights from {:?}", mamba_path));
+                    log_msg(&format!(
+                        "[+] Rehydrated converged Mamba-2 MoE weights from {:?}",
+                        mamba_path
+                    ));
                 }
             }
 
@@ -1141,10 +1314,15 @@ pub fn run_candle_training_pipeline_with_steering(
                 config.max_thinking_steps, config.eps_thinking_halt, config.stochastic_jitter_sigma
             ));
             if config.thinking_curriculum {
-                log_msg("[*] Progressive Thinking Curriculum enabled (Epoch-scaled budget warm-up)");
+                log_msg(
+                    "[*] Progressive Thinking Curriculum enabled (Epoch-scaled budget warm-up)",
+                );
             }
             if config.enable_distillation {
-                log_msg(&format!("[*] 1-Step Consistency Distillation Jump Head active (Weight: {:.2})", config.lambda_distill));
+                log_msg(&format!(
+                    "[*] 1-Step Consistency Distillation Jump Head active (Weight: {:.2})",
+                    config.lambda_distill
+                ));
             }
 
             use rand::Rng;
@@ -1181,14 +1359,22 @@ pub fn run_candle_training_pipeline_with_steering(
 
                     // Check stop
                     if steering.stop_signal.load(Ordering::Relaxed) {
-                        log_msg("[*] Stop signal detected during Mamba training. Saving atomic session state...");
+                        log_msg(
+                            "[*] Stop signal detected during Mamba training. Saving atomic session state...",
+                        );
                         session.current_epoch = epoch;
                         session.total_epochs = config.mamba_epochs;
                         session.current_batch = batch_idx;
                         session.total_batches = config.max_batches;
-                        session.timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                        session.timestamp = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
                         let _ = AtomicCheckpointManager::atomic_save_json(&session, &session_path);
-                        let _ = AtomicCheckpointManager::atomic_save_safetensors(&mamba_varmap, config.output_dir.join("mamba2_moe.safetensors"));
+                        let _ = AtomicCheckpointManager::atomic_save_safetensors(
+                            &mamba_varmap,
+                            config.output_dir.join("mamba2_moe.safetensors"),
+                        );
                         return Ok(());
                     }
 
@@ -1209,7 +1395,8 @@ pub fn run_candle_training_pipeline_with_steering(
 
                     let active_cfg_dropout = if config.stochastic_hparams {
                         use rand_distr::{Beta, Distribution};
-                        let beta = Beta::new(2.0, 8.0).unwrap_or_else(|_| Beta::new(1.0, 1.0).unwrap());
+                        let beta =
+                            Beta::new(2.0, 8.0).unwrap_or_else(|_| Beta::new(1.0, 1.0).unwrap());
                         beta.sample(&mut rng)
                     } else {
                         config.cfg_dropout
@@ -1243,15 +1430,16 @@ pub fn run_candle_training_pipeline_with_steering(
                     let active_gamma_tabu = env_sim.gamma_tabu;
                     let active_expert_dropout = env_sim.expert_dropout;
 
-                    let (z_pred, next_h, router_probs, _smooth_mask, mean_active, router_logits) = mamba_model.forward_smooth_tabu_with_dropout(
-                        &batch.z_prev,
-                        &batch.conditioning,
-                        &h_state,
-                        active_tau,
-                        None,
-                        0.0,
-                        active_expert_dropout,
-                    )?;
+                    let (z_pred, next_h, router_probs, _smooth_mask, mean_active, router_logits) =
+                        mamba_model.forward_smooth_tabu_with_dropout(
+                            &batch.z_prev,
+                            &batch.conditioning,
+                            &h_state,
+                            active_tau,
+                            None,
+                            0.0,
+                            active_expert_dropout,
+                        )?;
                     h_state = next_h.detach();
                     epoch_active_exp += mean_active.to_scalar::<f32>()?;
 
@@ -1269,15 +1457,16 @@ pub fn run_candle_training_pipeline_with_steering(
                     for iter in 1..m_batch {
                         // Dynamically scale tabu so subsequent iterations push into distinct expert subspaces
                         let dynamic_tabu = active_gamma_tabu * (1.0 + 0.25 * (iter as f64));
-                        let (step_z, _, step_probs, _, _, _) = mamba_model.forward_smooth_tabu_with_dropout(
-                            &z_delib,
-                            &batch.conditioning,
-                            &h_state,
-                            active_tau,
-                            Some(&tabu_sum),
-                            dynamic_tabu,
-                            active_expert_dropout,
-                        )?;
+                        let (step_z, _, step_probs, _, _, _) = mamba_model
+                            .forward_smooth_tabu_with_dropout(
+                                &z_delib,
+                                &batch.conditioning,
+                                &h_state,
+                                active_tau,
+                                Some(&tabu_sum),
+                                dynamic_tabu,
+                                active_expert_dropout,
+                            )?;
                         tabu_sum = (&tabu_sum + &step_probs)?;
                         prob_history.push(step_probs);
                         z_delib = step_z;
@@ -1287,20 +1476,22 @@ pub fn run_candle_training_pipeline_with_steering(
 
                     let (active_jitter_sigma, active_eps_halt) = if config.stochastic_hparams {
                         (
-                            config.stochastic_jitter_sigma * (10.0f32).powf(rng.gen_range(-0.8f32..0.3f32)),
+                            config.stochastic_jitter_sigma
+                                * (10.0f32).powf(rng.gen_range(-0.8f32..0.3f32)),
                             rng.gen_range(0.015f32..0.05f32),
                         )
                     } else {
                         (config.stochastic_jitter_sigma, config.eps_thinking_halt)
                     };
 
-                    let (z_refined, steps_taken, halting_probs) = thinking_block.forward_thinking_with_jitter(
-                        &z_pred,
-                        &batch.conditioning,
-                        m_batch,
-                        active_eps_halt,
-                        active_jitter_sigma,
-                    )?;
+                    let (z_refined, steps_taken, halting_probs) = thinking_block
+                        .forward_thinking_with_jitter(
+                            &z_pred,
+                            &batch.conditioning,
+                            m_batch,
+                            active_eps_halt,
+                            active_jitter_sigma,
+                        )?;
                     epoch_thinking_steps += steps_taken as f32;
 
                     let (traj_loss, _pos, _acc, _drag) = compute_physics_trajectory_loss_v2(
@@ -1316,13 +1507,18 @@ pub fn run_candle_training_pipeline_with_steering(
 
                     let aux_loss = compute_moe_load_balancing_loss(&router_probs)?;
                     let router_z_loss = compute_router_z_loss(&router_logits)?;
-                    let (router_entropy_loss, router_perp, dead_experts) = compute_router_entropy_loss(&router_probs)?;
+                    let (router_entropy_loss, router_perp, dead_experts) =
+                        compute_router_entropy_loss(&router_probs)?;
                     let traj_div_loss = compute_trajectory_diversity_loss(&z_refined, 0.20)?;
                     let traj_var_loss = compute_latent_variance_loss(&z_refined, 1.0)?;
 
                     let mut mamba_collapse_status = "OPTIMAL".to_string();
-                    if config.enable_collapse_mitigation && (dead_experts > 0 || router_perp < 3.5) {
-                        mamba_collapse_status = format!("ROUTER_STARVATION ({} dead, perp {:.2}): MITIGATING", dead_experts, router_perp);
+                    if config.enable_collapse_mitigation && (dead_experts > 0 || router_perp < 3.5)
+                    {
+                        mamba_collapse_status = format!(
+                            "ROUTER_STARVATION ({} dead, perp {:.2}): MITIGATING",
+                            dead_experts, router_perp
+                        );
                     }
 
                     let meta_out = meta_controller.forward(
@@ -1342,12 +1538,22 @@ pub fn run_candle_training_pipeline_with_steering(
                         active_exp_val,
                         env_sim.budget_experts,
                     );
-                    let hwil_penalty = ((&meta_out.stress.mean_all()? * 0.01)? + (hwil_scalar as f64 * 0.005))?;
+                    let hwil_penalty =
+                        ((&meta_out.stress.mean_all()? * 0.01)? + (hwil_scalar as f64 * 0.005))?;
 
                     let (flow_loss, _base_flow) = if config.use_flow_matching {
-                        compute_straight_flow_loss(&z_refined, &batch.z_target, &batch.z_prev, 1e-4, config.lambda_straight)?
+                        compute_straight_flow_loss(
+                            &z_refined,
+                            &batch.z_target,
+                            &batch.z_prev,
+                            1e-4,
+                            config.lambda_straight,
+                        )?
                     } else {
-                        (Tensor::zeros((), DType::F32, &device)?, Tensor::zeros((), DType::F32, &device)?)
+                        (
+                            Tensor::zeros((), DType::F32, &device)?,
+                            Tensor::zeros((), DType::F32, &device)?,
+                        )
                     };
 
                     let distill_loss = if config.enable_distillation {
@@ -1367,15 +1573,18 @@ pub fn run_candle_training_pipeline_with_steering(
                     let soup_alpha = mamba_model.router_to_soup_coefficients(&router_probs)?;
                     let comb_in = Tensor::cat(&[&batch.z_prev, &batch.conditioning], 1)?;
                     let h_comb = mamba_model.in_proj.forward(&comb_in)?.gelu_erf()?;
-                    let (soup_out, _) = mamba_model.compute_dense_soup(&h_comb, &h_state, &soup_alpha)?;
+                    let (soup_out, _) =
+                        mamba_model.compute_dense_soup(&h_comb, &h_state, &soup_alpha)?;
                     let soup_fused = mamba_model.fusion.forward(&soup_out)?.gelu_erf()?;
                     let z_soup_raw = mamba_model.traj_head.forward(&soup_fused)?;
                     let z_soup = mamba_model.out_affine.forward(&z_soup_raw)?;
                     // Huber-smoothed, soft-capped soup distillation loss: guarantees strictly bounded gradients
-                    let soup_deficit = compute_soup_deficit_loss(&z_soup, &z_pred.detach(), 0.5, 10.0)?;
+                    let soup_deficit =
+                        compute_soup_deficit_loss(&z_soup, &z_pred.detach(), 0.5, 10.0)?;
 
                     // Progressive Soup Distillation Curriculum: warm up lambda_soup as epochs advance
-                    let soup_curriculum = (epoch as f64 / config.mamba_epochs.max(1) as f64).powf(0.75);
+                    let soup_curriculum =
+                        (epoch as f64 / config.mamba_epochs.max(1) as f64).powf(0.75);
                     let active_lambda_soup = config.lambda_soup_deficit * soup_curriculum;
 
                     // Bounded Frobenius norm drift of residual expert weights relative to shared base
@@ -1387,52 +1596,76 @@ pub fn run_candle_training_pipeline_with_steering(
                     let z_t3_raw = mamba_model.traj_head_t3.forward(&soup_fused)?;
                     let z_t3 = mamba_model.out_affine.forward(&z_t3_raw)?;
 
-                    let mfp_loss = (((&z_t2 - &batch.z_target)?.sqr()?.mean_all()? * config.mfp_decay)?
-                        + ((&z_t3 - &batch.z_target)?.sqr()?.mean_all()? * (config.mfp_decay * config.mfp_decay))?)?;
+                    let mfp_loss = (((&z_t2 - &batch.z_target)?.sqr()?.mean_all()?
+                        * config.mfp_decay)?
+                        + ((&z_t3 - &batch.z_target)?.sqr()?.mean_all()?
+                            * (config.mfp_decay * config.mfp_decay))?)?;
 
                     // Dimension outlier spike suppression on trajectory prediction
                     let spike_loss = compute_dimension_outlier_spike_loss(&z_pred, 3.5)?;
                     // Orthogonality regularization on learned output affine transformation
                     let ortho_loss = compute_orthogonality_loss(mamba_model.out_affine.weight())?;
                     // Contractive loss for Lyapunov stability
-                    let contract_loss = compute_contractive_loss(&z_pred, &batch.z_prev, batch.z_prev2.as_ref(), 2.0)?;
+                    let contract_loss = compute_contractive_loss(
+                        &z_pred,
+                        &batch.z_prev,
+                        batch.z_prev2.as_ref(),
+                        2.0,
+                    )?;
 
                     // Multi-Task Random Loss Weighting (RLW)
-                    let (rlw_z, rlw_flow, rlw_div, rlw_distill, rlw_soup, rlw_mfp) = if config.stochastic_hparams {
-                        let r1 = (rng.gen_range(-0.15f64..0.15f64)).exp();
-                        let r2 = (rng.gen_range(-0.15f64..0.15f64)).exp();
-                        let r3 = (rng.gen_range(-0.15f64..0.15f64)).exp();
-                        let r4 = (rng.gen_range(-0.15f64..0.15f64)).exp();
-                        let r5 = (rng.gen_range(-0.15f64..0.15f64)).exp();
-                        let r6 = (rng.gen_range(-0.15f64..0.15f64)).exp();
-                        let mean_r = (r1 + r2 + r3 + r4 + r5 + r6) / 6.0;
-                        (r1 / mean_r, r2 / mean_r, r3 / mean_r, r4 / mean_r, r5 / mean_r, r6 / mean_r)
-                    } else {
-                        (1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
-                    };
+                    let (rlw_z, rlw_flow, rlw_div, rlw_distill, rlw_soup, rlw_mfp) =
+                        if config.stochastic_hparams {
+                            let r1 = (rng.gen_range(-0.15f64..0.15f64)).exp();
+                            let r2 = (rng.gen_range(-0.15f64..0.15f64)).exp();
+                            let r3 = (rng.gen_range(-0.15f64..0.15f64)).exp();
+                            let r4 = (rng.gen_range(-0.15f64..0.15f64)).exp();
+                            let r5 = (rng.gen_range(-0.15f64..0.15f64)).exp();
+                            let r6 = (rng.gen_range(-0.15f64..0.15f64)).exp();
+                            let mean_r = (r1 + r2 + r3 + r4 + r5 + r6) / 6.0;
+                            (
+                                r1 / mean_r,
+                                r2 / mean_r,
+                                r3 / mean_r,
+                                r4 / mean_r,
+                                r5 / mean_r,
+                                r6 / mean_r,
+                            )
+                        } else {
+                            (1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
+                        };
 
                     let loss_step1 = (&traj_loss + (&aux_loss * 0.02)?)?;
                     let loss_step2 = (&loss_step1 + (&router_z_loss * (config.lambda_z * rlw_z))?)?;
                     let loss_step3 = (&loss_step2 + (&flow_loss * (0.05 * rlw_flow))?)?;
                     let loss_step4 = (&loss_step3 + &hwil_penalty)?;
-                    let loss_step5 = (&loss_step4 + (&diversity_loss * (config.lambda_div * rlw_div))?)?;
-                    let loss_step6 = (&loss_step5 + (&distill_loss * (config.lambda_distill * rlw_distill))?)?;
-                    let loss_step7 = (&loss_step6 + (&soup_deficit * (active_lambda_soup * rlw_soup))?)?;
+                    let loss_step5 =
+                        (&loss_step4 + (&diversity_loss * (config.lambda_div * rlw_div))?)?;
+                    let loss_step6 =
+                        (&loss_step5 + (&distill_loss * (config.lambda_distill * rlw_distill))?)?;
+                    let loss_step7 =
+                        (&loss_step6 + (&soup_deficit * (active_lambda_soup * rlw_soup))?)?;
                     let loss_step8 = (&loss_step7 + (&mfp_loss * (0.05 * rlw_mfp))?)?;
                     let loss_step9 = (&loss_step8 + (&spike_loss * 0.01)?)?;
                     let loss_step10 = (&loss_step9 + (&ortho_loss * 0.001)?)?;
                     let loss_step11 = (&loss_step10 + (&contract_loss * 0.01)?)?;
-                    let loss_step12 = (&loss_step11 + (&router_entropy_loss * config.lambda_router_entropy)?)?;
+                    let loss_step12 =
+                        (&loss_step11 + (&router_entropy_loss * config.lambda_router_entropy)?)?;
                     let loss_step13 = (&loss_step12 + (&traj_div_loss * config.lambda_traj_div)?)?;
-                    let loss_step14 = (&loss_step13 + (&traj_var_loss * config.lambda_latent_var)?)?;
+                    let loss_step14 =
+                        (&loss_step13 + (&traj_var_loss * config.lambda_latent_var)?)?;
                     let loss_step15 = (&loss_step14 + (&drift_loss * 0.005)?)?;
                     let raw_total_loss = (&loss_step15 + &halt_penalty)?;
                     let total_loss = soft_cap_loss(&raw_total_loss, 50.0)?;
 
-
                     let total_loss_val = total_loss.to_scalar::<f32>()?;
                     if !total_loss_val.is_finite() {
-                        tracing::warn!("[!] Non-finite Mamba batch loss encountered ({:?}) at epoch {} batch {}, skipping update", total_loss_val, epoch, batch_idx);
+                        tracing::warn!(
+                            "[!] Non-finite Mamba batch loss encountered ({:?}) at epoch {} batch {}, skipping update",
+                            total_loss_val,
+                            epoch,
+                            batch_idx
+                        );
                         continue;
                     }
 
@@ -1461,42 +1694,56 @@ pub fn run_candle_training_pipeline_with_steering(
                                 if is_finite {
                                     match mamba_accum_grads.get_mut(&t.id()) {
                                         Some(acc) => *acc = (acc as &Tensor + g)?,
-                                        None => { mamba_accum_grads.insert(t.id(), g.clone()); }
+                                        None => {
+                                            mamba_accum_grads.insert(t.id(), g.clone());
+                                        }
                                     }
                                 } else {
-                                    tracing::warn!("[!] Non-finite gradient in accumulation for Mamba, skipping tensor");
+                                    tracing::warn!(
+                                        "[!] Non-finite gradient in accumulation for Mamba, skipping tensor"
+                                    );
                                 }
                             }
                         }
 
-                        if batch_idx % config.accumulation_steps == 0 || batch_idx == config.max_batches {
+                        if batch_idx % config.accumulation_steps == 0
+                            || batch_idx == config.max_batches
+                        {
                             let mut final_grads = candle_core::backprop::GradStore::default();
                             for var in mamba_varmap.all_vars() {
                                 let t = var.as_tensor();
                                 if let Some(g) = mamba_accum_grads.remove(&t.id()) {
                                     let shape = t.dims();
-                                    let scaled_g = if shape.len() == 2 && shape[0] == 128 && shape[1] == 16 {
-                                        (g * 0.1)?
-                                    } else {
-                                        g
-                                    };
+                                    let scaled_g =
+                                        if shape.len() == 2 && shape[0] == 128 && shape[1] == 16 {
+                                            (g * 0.1)?
+                                        } else {
+                                            g
+                                        };
                                     final_grads.insert(t, scaled_g);
                                 }
                             }
 
-                            let norm = clip_grad_norm_varmap(&mamba_varmap, &mut final_grads, config.max_grad_norm)?;
+                            let norm = clip_grad_norm_varmap(
+                                &mamba_varmap,
+                                &mut final_grads,
+                                config.max_grad_norm,
+                            )?;
                             if norm > 1e-12 {
                                 mamba_opt.step(&final_grads)?;
                                 let current_lr = mamba_scheduler.step();
                                 mamba_opt.set_learning_rate(current_lr);
                                 mamba_ema.update(&mamba_varmap)?;
                             } else {
-                                tracing::warn!("[!] Skipping Mamba optimizer step due to zero or sanitized gradient norm");
+                                tracing::warn!(
+                                    "[!] Skipping Mamba optimizer step due to zero or sanitized gradient norm"
+                                );
                             }
                         }
                     } else {
                         let mut grads = total_loss.backward()?;
-                        let norm = clip_grad_norm_varmap(&mamba_varmap, &mut grads, config.max_grad_norm)?;
+                        let norm =
+                            clip_grad_norm_varmap(&mamba_varmap, &mut grads, config.max_grad_norm)?;
 
                         if norm > 1e-12 {
                             for var in mamba_varmap.all_vars() {
@@ -1513,7 +1760,9 @@ pub fn run_candle_training_pipeline_with_steering(
                             mamba_opt.set_learning_rate(current_lr);
                             mamba_ema.update(&mamba_varmap)?;
                         } else {
-                            tracing::warn!("[!] Skipping Mamba optimizer step due to zero or sanitized gradient norm");
+                            tracing::warn!(
+                                "[!] Skipping Mamba optimizer step due to zero or sanitized gradient norm"
+                            );
                         }
                     }
 
@@ -1523,7 +1772,8 @@ pub fn run_candle_training_pipeline_with_steering(
                     let total_expected_steps = config.mamba_epochs * config.max_batches;
                     let current_step = (epoch - 1) * config.max_batches + batch_idx;
                     let remaining_steps = total_expected_steps.saturating_sub(current_step);
-                    let eta_seconds = (remaining_steps as f64 * config.batch_size as f64 / throughput.max(1.0)) as u64;
+                    let eta_seconds = (remaining_steps as f64 * config.batch_size as f64
+                        / throughput.max(1.0)) as u64;
 
                     if batch_idx % 5 == 0 || batch_idx == 1 || batch_idx == config.max_batches {
                         if let Some(ref p_tx) = steering.progress_tx {
@@ -1547,7 +1797,6 @@ pub fn run_candle_training_pipeline_with_steering(
                                 collapse_status: mamba_collapse_status,
                             });
                         }
-
                     }
                 }
 
@@ -1597,25 +1846,50 @@ pub fn run_candle_training_pipeline_with_steering(
 
                 log_msg(&format!(
                     "Mamba2-MoE Epoch [{}/{}] - Traj: {:.5} (Flow: {:.5}, Aux: {:.5}, Soup: {:.4}, Z: {:.4}, Div: {:.4}, Distill: {:.4}) | Exp: {:.1}/8, Think: {:.1} iters | Val Loss: {:.5}",
-                    epoch, config.mamba_epochs, avg_loss, avg_flow, avg_aux, avg_soup, avg_z, avg_div, avg_distill, avg_exp, avg_steps, avg_val_loss
+                    epoch,
+                    config.mamba_epochs,
+                    avg_loss,
+                    avg_flow,
+                    avg_aux,
+                    avg_soup,
+                    avg_z,
+                    avg_div,
+                    avg_distill,
+                    avg_exp,
+                    avg_steps,
+                    avg_val_loss
                 ));
 
                 session.current_epoch = epoch;
                 session.total_epochs = config.mamba_epochs;
                 session.last_mamba_loss = avg_loss;
                 session.last_soup_deficit = avg_soup;
-                session.loss_history.push((avg_loss * 1000.0).max(0.0) as u64);
-                if session.loss_history.len() > 500 { session.loss_history.drain(..50); }
-                session.soup_deficit_history.push((avg_soup * 1000.0).max(0.0) as u64);
-                if session.soup_deficit_history.len() > 500 { session.soup_deficit_history.drain(..50); }
-                session.timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                session
+                    .loss_history
+                    .push((avg_loss * 1000.0).max(0.0) as u64);
+                if session.loss_history.len() > 500 {
+                    session.loss_history.drain(..50);
+                }
+                session
+                    .soup_deficit_history
+                    .push((avg_soup * 1000.0).max(0.0) as u64);
+                if session.soup_deficit_history.len() > 500 {
+                    session.soup_deficit_history.drain(..50);
+                }
+                session.timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
 
                 if avg_val_loss < best_mamba_val_loss {
                     best_mamba_val_loss = avg_val_loss;
                     session.best_mamba_loss = best_mamba_val_loss;
                     let best_path = config.output_dir.join("mamba2_moe_best.safetensors");
                     AtomicCheckpointManager::atomic_save_safetensors(&mamba_varmap, &best_path)?;
-                    log_msg(&format!("[*] New best Mamba-2 MoE checkpoint atomically saved -> {:?}", best_path));
+                    log_msg(&format!(
+                        "[*] New best Mamba-2 MoE checkpoint atomically saved -> {:?}",
+                        best_path
+                    ));
                 }
                 let _ = AtomicCheckpointManager::atomic_save_json(&session, &session_path);
             }
@@ -1623,17 +1897,26 @@ pub fn run_candle_training_pipeline_with_steering(
             verify_varmap_integrity(&mamba_varmap, "Mamba-2 MoE")?;
             let mamba_path = config.output_dir.join("mamba2_moe.safetensors");
             AtomicCheckpointManager::atomic_save_safetensors(&mamba_varmap, &mamba_path)?;
-            log_msg(&format!("[+] Verified and atomically saved final Mamba-2 MoE weights -> {:?}", mamba_path));
+            log_msg(&format!(
+                "[+] Verified and atomically saved final Mamba-2 MoE weights -> {:?}",
+                mamba_path
+            ));
 
             if config.enable_distillation {
                 let fast_path = config.output_dir.join("mamba2_moe_fast.safetensors");
                 AtomicCheckpointManager::atomic_save_safetensors(&mamba_varmap, &fast_path)?;
-                log_msg(&format!("[+] Atomically saved 1-Step Edge / WebGPU Fast Mamba-2 MoE deployment package -> {:?}", fast_path));
+                log_msg(&format!(
+                    "[+] Atomically saved 1-Step Edge / WebGPU Fast Mamba-2 MoE deployment package -> {:?}",
+                    fast_path
+                ));
             }
 
             let soup_path = config.output_dir.join("mamba2_dense_soup.safetensors");
             AtomicCheckpointManager::atomic_save_safetensors(&mamba_varmap, &soup_path)?;
-            log_msg(&format!("[+] Atomically saved collapsed Dense Soup Mamba-2 deployment package -> {:?}", soup_path));
+            log_msg(&format!(
+                "[+] Atomically saved collapsed Dense Soup Mamba-2 deployment package -> {:?}",
+                soup_path
+            ));
 
             session.completed_mamba = true;
             let _ = AtomicCheckpointManager::atomic_save_json(&session, &session_path);
@@ -1710,7 +1993,10 @@ pub fn run_candle_training_pipeline_with_steering(
             "timestamp": "2026-09-17"
         });
         std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)?;
-        log_msg(&format!("[+] Created Candle deployment manifest -> {:?}", manifest_path));
+        log_msg(&format!(
+            "[+] Created Candle deployment manifest -> {:?}",
+            manifest_path
+        ));
     }
 
     log_msg("\n======================================================================");

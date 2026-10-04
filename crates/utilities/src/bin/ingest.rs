@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::sync::{atomic::AtomicBool, Arc};
+use std::sync::{Arc, atomic::AtomicBool};
 use tracing::info;
 use utilities::ingest::run_ingestion_pipeline_async;
 
@@ -10,6 +10,9 @@ async fn main() -> Result<()> {
 
     let stop_signal = Arc::new(AtomicBool::new(false));
     let downloaded = run_ingestion_pipeline_async(stop_signal, None).await?;
-    info!("Ingest pipeline completed: processed/verified {} audio assets.", downloaded);
+    info!(
+        "Ingest pipeline completed: processed/verified {} audio assets.",
+        downloaded
+    );
     Ok(())
 }

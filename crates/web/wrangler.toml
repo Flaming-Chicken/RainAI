@@ -1,34 +1,14 @@
 name = "rainai"
-main = "_worker.js"
 compatibility_date = "2026-08-18"
 pages_build_output_dir = "dist"
 
-[build]
-command = "trunk build --release"
-
-[assets]
-directory = "dist"
-binding = "ASSETS"
-
-# Unified R2 Bucket for accepting end-user data (Used by both staging and prod)
+# Unified R2 Bucket for accepting end-user data (Used by both dev/staging and prod)
 [[r2_buckets]]
 binding = "DATA_BUCKET"
 bucket_name = "rainai-submissions"
 
-# Unified D1 Database for metadata management (Used by both staging and prod)
+# Unified D1 Database for metadata management (Used by both dev/staging and prod)
 [[d1_databases]]
 binding = "DB"
 database_name = "rainai-db"
-database_id = "prod-db-uuid-placeholder"
-
-[env.staging]
-name = "rainai-staging"
-
-[env.staging.vars]
-ENVIRONMENT = "staging"
-
-[env.production]
-name = "rainai-production"
-
-[env.production.vars]
-ENVIRONMENT = "production"
+database_id = "4480b6da-9e49-4b2b-a739-a9fd33e7f075"

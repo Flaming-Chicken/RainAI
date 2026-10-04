@@ -3,7 +3,7 @@
 use anyhow::Result;
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
-use utilities::candle_train::{run_candle_training_pipeline, CandleTrainConfig, TrainingPhase};
+use utilities::candle_train::{CandleTrainConfig, TrainingPhase, run_candle_training_pipeline};
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -82,7 +82,8 @@ fn main() -> Result<()> {
             }
             "--accumulation-steps" => {
                 if i + 1 < args.len() {
-                    config.accumulation_steps = args[i + 1].parse().unwrap_or(config.accumulation_steps);
+                    config.accumulation_steps =
+                        args[i + 1].parse().unwrap_or(config.accumulation_steps);
                     i += 1;
                 }
             }
@@ -115,13 +116,15 @@ fn main() -> Result<()> {
             }
             "--thinking-steps" | "--max-thinking-steps" => {
                 if i + 1 < args.len() {
-                    config.max_thinking_steps = args[i + 1].parse().unwrap_or(config.max_thinking_steps);
+                    config.max_thinking_steps =
+                        args[i + 1].parse().unwrap_or(config.max_thinking_steps);
                     i += 1;
                 }
             }
             "--eps-thinking-halt" => {
                 if i + 1 < args.len() {
-                    config.eps_thinking_halt = args[i + 1].parse().unwrap_or(config.eps_thinking_halt);
+                    config.eps_thinking_halt =
+                        args[i + 1].parse().unwrap_or(config.eps_thinking_halt);
                     i += 1;
                 }
             }
@@ -146,10 +149,18 @@ fn main() -> Result<()> {
             "--stft-mode" => {
                 if i + 1 < args.len() {
                     match args[i + 1].to_lowercase().as_str() {
-                        "envelope" | "envelope16" => config.stft_mode = utilities::stft_loss::StftLossMode::Envelope16,
-                        "waveform" | "waveformfoa" => config.stft_mode = utilities::stft_loss::StftLossMode::WaveformFoa,
-                        "mel" | "melspectral" => config.stft_mode = utilities::stft_loss::StftLossMode::MelSpectral,
-                        "combined" => config.stft_mode = utilities::stft_loss::StftLossMode::Combined,
+                        "envelope" | "envelope16" => {
+                            config.stft_mode = utilities::stft_loss::StftLossMode::Envelope16
+                        }
+                        "waveform" | "waveformfoa" => {
+                            config.stft_mode = utilities::stft_loss::StftLossMode::WaveformFoa
+                        }
+                        "mel" | "melspectral" => {
+                            config.stft_mode = utilities::stft_loss::StftLossMode::MelSpectral
+                        }
+                        "combined" => {
+                            config.stft_mode = utilities::stft_loss::StftLossMode::Combined
+                        }
                         _ => {}
                     }
                     i += 1;
@@ -235,7 +246,8 @@ fn main() -> Result<()> {
             }
             "--surface-mixup-prob" => {
                 if i + 1 < args.len() {
-                    config.surface_mixup_prob = args[i + 1].parse().unwrap_or(config.surface_mixup_prob);
+                    config.surface_mixup_prob =
+                        args[i + 1].parse().unwrap_or(config.surface_mixup_prob);
                     i += 1;
                 }
             }
@@ -247,7 +259,9 @@ fn main() -> Result<()> {
             }
             "--stochastic-jitter-sigma" => {
                 if i + 1 < args.len() {
-                    config.stochastic_jitter_sigma = args[i + 1].parse().unwrap_or(config.stochastic_jitter_sigma);
+                    config.stochastic_jitter_sigma = args[i + 1]
+                        .parse()
+                        .unwrap_or(config.stochastic_jitter_sigma);
                     i += 1;
                 }
             }
@@ -262,15 +276,25 @@ fn main() -> Result<()> {
                 println!("Usage: rainai_train_candle [OPTIONS]");
                 println!();
                 println!("Options:");
-                println!("  --profile <name>                   Preset profile (smoke-test, balanced, production, export-only)");
-                println!("  --autopilot                        Run autonomous self-driving training mission");
+                println!(
+                    "  --profile <name>                   Preset profile (smoke-test, balanced, production, export-only)"
+                );
+                println!(
+                    "  --autopilot                        Run autonomous self-driving training mission"
+                );
                 println!("  --phases <vae|mamba|export|all...> Training phases to execute");
                 println!("  --epochs <N>                       Sets both VAE and Mamba epochs");
                 println!("  --batch-size <N>                   Batch size (default: 4)");
-                println!("  --max-batches <N>                  Max batches per epoch (default: 10)");
-                println!("  --device <cpu|cuda|metal|auto>     Compute accelerator device (default: auto)");
+                println!(
+                    "  --max-batches <N>                  Max batches per epoch (default: 10)"
+                );
+                println!(
+                    "  --device <cpu|cuda|metal|auto>     Compute accelerator device (default: auto)"
+                );
                 println!("  --lr <float>                       Base learning rate (default: 1e-3)");
-                println!("  --use-real-data / --no-real-data   Use real manifest data vs synthetic");
+                println!(
+                    "  --use-real-data / --no-real-data   Use real manifest data vs synthetic"
+                );
                 println!("  --stft-mode <combined|mel|...>     STFT loss function mode");
                 println!("  --output-dir <path>                Directory to save trained weights");
                 return Ok(());
@@ -324,8 +348,10 @@ fn apply_profile(config: &mut CandleTrainConfig, profile: &str) {
         }
         "custom" => {}
         other => {
-            tracing::warn!("Unrecognized profile '{}', falling back to defaults.", other);
+            tracing::warn!(
+                "Unrecognized profile '{}', falling back to defaults.",
+                other
+            );
         }
     }
 }
-
