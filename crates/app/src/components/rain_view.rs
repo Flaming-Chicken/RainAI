@@ -20,7 +20,7 @@ pub enum RainTab {
 }
 
 pub const DROPLET_PANNING_SHADER_WGSL: &str = include_str!("../shaders/droplet_panning.wgsl");
-pub const ATTRIBUTION_BYTES: &[u8] = include_bytes!("../../../../Data/rain/attributions.bin");
+pub const ATTRIBUTION_BYTES: &[u8] = include_bytes!("../../../../data/rain/attributions.bin");
 
 /// Uniform buffer payload matching droplet_panning.wgsl WebGPU shader pipeline
 #[repr(C)]
