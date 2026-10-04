@@ -510,3 +510,382 @@ pub fn compute_waveshaper_efficiency_loss(
     let total = ((&bits_penalty * lambda_bits)? + (&prune_penalty * lambda_prune)?)?;
     Ok((total, bits_penalty, prune_penalty))
 }
+
+// ============================================================================
+// Phase 39: Robust Physical Losses, Efficiency & Grokking Framework
+// ============================================================================
+
+/// Smooth C^inf Charbonnier / Pseudo-Huber loss: H_delta(e) = sqrt(e^2 + delta^2) - delta.
+/// Everywhere differentiable with smooth derivatives and gradient bounded by 1.0.
+pub fn compute_charbonnier_loss(diff: &Tensor, delta: f64) -> Result<Tensor> {
+    let delta_sq = delta * delta;
+    let delta_sq_t = Tensor::full(delta_sq as f32, diff.shape(), diff.device())?;
+    let inner = (diff.sqr()? + delta_sq_t)?;
+    let sqrt_term = inner.sqrt()?;
+    let delta_t = Tensor::full(delta as f32, diff.shape(), diff.device())?;
+    let loss = (sqrt_term - delta_t)?;
+    loss.mean_all().map_err(Into::into)
+}
+
+/// Continuous-Time Vector Field Charbonnier Loss.
+/// Evaluates the difference between predicted vector field f_theta(z, t, u) and target derivative dz*/dt.
+pub fn compute_vector_field_charbonnier_loss(
+    v_pred: &Tensor,
+    v_target: &Tensor,
+    delta: f64,
+) -> Result<Tensor> {
+    let diff = (v_pred - v_target)?;
+    compute_charbonnier_loss(&diff, delta)
+}
+
+/// Smooth Softplus Aerodynamic Drag Dissipation Loss.
+/// Replaces discontinuous ReLU kinks with smooth C^2 dissipation:
+/// L_drag = (1/beta * ln(1 + exp(beta * (||v||_2 - v_terminal))))^2.
+pub fn compute_smooth_drag_loss(
+    v_pred: &Tensor,
+    v_terminal: f64,
+    beta: f64,
+) -> Result<Tensor> {
+    let v_sq = v_pred.sqr()?.sum_keepdim(1)?.relu()?;
+    let speed = (v_sq + 1e-6)?.sqrt()?;
+    let excess_speed = (speed - v_terminal)?;
+    let scaled = (&excess_speed * beta)?;
+    let softplus_term = models::candle_softplus(&scaled)?;
+    let unscaled = (softplus_term / beta)?;
+    let loss = unscaled.sqr()?.mean_all()?;
+    Ok(loss)
+}
+
+/// Contractive Lyapunov Stability Regularization for learned ODE vector fields.
+/// Enforces dissipative, non-divergent dynamics by penalizing positive trace on the symmetric Jacobian:
+/// L_lyapunov = relu(Tr(J_sym) + gamma)^2 where J_sym = 0.5 * (J + J^T).
+pub fn compute_lyapunov_stability_loss(
+    jacobian: &Tensor,
+    gamma: f64,
+) -> Result<Tensor> {
+    let dims = jacobian.dims();
+    if dims.len() < 2 {
+        return Ok(Tensor::zeros((), DType::F32, jacobian.device())?);
+    }
+    let j_sym = ((jacobian + jacobian.t()?)? * 0.5)?;
+    let n = dims[dims.len() - 1];
+    let eye = Tensor::eye(n, DType::F32, jacobian.device())?;
+    let diag = (&j_sym * &eye)?.sum_all()?;
+    let gamma_t = Tensor::full(gamma as f32, diag.shape(), diag.device())?;
+    let penalty = (&diag + gamma_t)?.relu()?;
+    let loss = penalty.sqr()?;
+    Ok(loss)
+}
+
+/// Path Total Acceleration Regularization for Straight-Flow Matching:
+/// L_straight = Charbonnier(dv/dt + (v . grad_z) v, delta).
+/// Forcing total path acceleration to zero straightens probability trajectories,
+/// enabling adaptive ODE solvers (RK45 / Dormand-Prince) to converge in <= 4 evaluations.
+pub fn compute_straight_flow_total_accel_loss(
+    dv_dt: &Tensor,
+    v_grad_v: &Tensor,
+    delta: f64,
+) -> Result<Tensor> {
+    let total_accel = (dv_dt + v_grad_v)?;
+    compute_charbonnier_loss(&total_accel, delta)
+}
+
+/// Samples Log-Normal time steps and computes Min-SNR importance weights:
+/// tau ~ N(0, 1), t = sigmoid(tau), w(t) = min(1.0, SNR(t) / snr_clip).
+pub fn sample_lognormal_min_snr_time(
+    batch_size: usize,
+    device: &Device,
+    snr_clip: f64,
+) -> Result<(Tensor, Tensor)> {
+    let normal_samples = Tensor::randn(0.0f32, 1.0f32, (batch_size, 1), device)?;
+    let neg = (&normal_samples * (-1.0f64))?;
+    let exp_term = (neg.exp()? + 1.0f64)?;
+    let ones = Tensor::ones((batch_size, 1), DType::F32, device)?;
+    let t = ones.broadcast_div(&exp_term)?;
+
+    let one_minus_t = (&ones - &t)?;
+    let t_sq = (t.sqr()? + 1e-6)?;
+    let snr = one_minus_t.sqr()?.broadcast_div(&t_sq)?;
+    let snr_clip_t = Tensor::full(snr_clip as f32, snr.shape(), device)?;
+    let normalized_snr = snr.broadcast_div(&snr_clip_t)?;
+    let weights = normalized_snr.clamp(0.01f32, 1.0f32)?;
+
+    Ok((t, weights))
+}
+
+/// Multi-Scale Temporal Envelope Huber Loss (replacing deterministic instantaneous phase).
+/// Evaluates temporal envelope matching across low-pass smoothed absolute waveforms
+/// using differences at multiple strides [16, 32, 64] samples.
+pub fn compute_multiscale_envelope_loss(
+    audio_pred: &Tensor,
+    audio_target: &Tensor,
+) -> Result<Tensor> {
+    let abs_pred = audio_pred.abs()?;
+    let abs_target = audio_target.abs()?;
+    let mut total_loss = Tensor::zeros((), DType::F32, audio_pred.device())?;
+
+    let strides = [16usize, 32, 64];
+    for &stride in &strides {
+        let len = audio_pred.dim(audio_pred.dims().len() - 1)?;
+        if len > stride * 2 {
+            let num_pools = len / stride;
+            let p_pred = abs_pred.narrow(audio_pred.dims().len() - 1, 0, num_pools * stride)?;
+            let p_target = abs_target.narrow(audio_target.dims().len() - 1, 0, num_pools * stride)?;
+            let diff = (p_pred - p_target)?;
+            let huber = crate::stft_loss::huber_loss(&diff, 0.1)?;
+            total_loss = (&total_loss + &huber)?;
+        }
+    }
+
+    let count = strides.len() as f64;
+    Ok((total_loss / count)?)
+}
+
+/// Ultrasonic Nyquist Anti-Aliasing Penalty (L_alias) for the Neural Waveshaper.
+/// Penalizes high-frequency energy in the upper 10% of the spectrum (near Nyquist)
+/// approximated by second-order finite differences (Laplacian high-pass filter):
+/// HPF(x)[n] = x[n] - 2*x[n-1] + x[n-2].
+pub fn compute_waveshaper_anti_aliasing_loss(
+    audio_shaped: &Tensor,
+) -> Result<Tensor> {
+    let dims = audio_shaped.dims();
+    let len = dims[dims.len() - 1];
+    if len < 3 {
+        return Ok(Tensor::zeros((), DType::F32, audio_shaped.device())?);
+    }
+    let x_0 = audio_shaped.narrow(dims.len() - 1, 2, len - 2)?;
+    let x_1 = audio_shaped.narrow(dims.len() - 1, 1, len - 2)?;
+    let x_2 = audio_shaped.narrow(dims.len() - 1, 0, len - 2)?;
+
+    let two_x1 = (&x_1 * 2.0f64)?;
+    let hp = ((&x_0 - &two_x1)? + &x_2)?;
+    let loss = hp.sqr()?.mean_all()?;
+    Ok(loss)
+}
+
+/// Bark-Weighted Multi-Scale STFT Loss.
+/// Weights frequency bins with psychoacoustic perceptual curve emphasizing 1 kHz - 6 kHz rain textures.
+pub fn compute_bark_weighted_stft_loss(
+    pred_mag: &Tensor,
+    target_mag: &Tensor,
+) -> Result<Tensor> {
+    let diff = (pred_mag - target_mag)?;
+    let abs_diff = diff.abs()?;
+
+    let num_bins = pred_mag.dim(pred_mag.dims().len() - 1)?;
+    let mut weights = Vec::with_capacity(num_bins);
+    for i in 0..num_bins {
+        let f_norm = (i as f32) / (num_bins as f32);
+        let dist = f_norm - 0.20f32;
+        let w = 1.0f32 + 0.8f32 * (-15.0f32 * dist * dist).exp();
+        weights.push(w);
+    }
+    let w_tensor = Tensor::from_vec(weights, (1, num_bins), pred_mag.device())?;
+    let weighted_diff = abs_diff.broadcast_mul(&w_tensor)?;
+    Ok(weighted_diff.mean_all()?)
+}
+
+/// Beta-VAE loss with Leaky Softplus Free-Bits:
+/// Enforces soft margin: softplus(KL_d - free_bits) + alpha_leak * KL_d.
+/// Eliminates zero-gradient locks and permanently dead latent units.
+pub fn compute_beta_vae_loss_leaky_free_bits(
+    pred_bands: &Tensor,
+    target_bands: &Tensor,
+    mu: &Tensor,
+    logvar: &Tensor,
+    beta: f64,
+    free_bits: f64,
+    alpha_leak: f64,
+) -> Result<(Tensor, Tensor, Tensor, usize)> {
+    let recon_diff = (pred_bands - target_bands)?;
+    let recon_loss = recon_diff.sqr()?.mean_all()?;
+
+    let logvar_clamped = logvar.clamp(-12.0f32, 12.0f32)?;
+    let mu_sq = mu.sqr()?;
+    let var = logvar_clamped.exp()?;
+    let ones = Tensor::ones(logvar.shape(), DType::F32, logvar.device())?;
+    let inner = (((&mu_sq + &var)? - &ones)? - &logvar_clamped)?;
+    let kl_elements = (&inner * 0.5)?;
+    let kl_per_dim = kl_elements.mean(0)?;
+
+    let fb = Tensor::full(free_bits as f32, kl_per_dim.shape(), kl_per_dim.device())?;
+    let margin = (kl_per_dim.broadcast_sub(&fb))?;
+    let soft_margin = models::candle_softplus(&margin)?;
+    let leak = (&kl_per_dim * alpha_leak)?;
+    let kl_loss = (&soft_margin + &leak)?.mean_all()?;
+
+    let active_units = if mu.dim(0)? > 1 {
+        let b = mu.dim(0)? as f64;
+        let mean_mu = mu.mean_keepdim(0)?;
+        let diff = mu.broadcast_sub(&mean_mu)?;
+        let var_mu = (diff.sqr()?.sum_keepdim(0)? / (b - 1.0))?;
+        let var_vec = var_mu.flatten_all()?.to_vec1::<f32>()?;
+        var_vec.iter().filter(|&&v| v > 0.01).count()
+    } else {
+        LATENT_DIM
+    };
+
+    let total = (&recon_loss + (&kl_loss * beta)?)?;
+    Ok((total, recon_loss, kl_loss, active_units))
+}
+
+/// Ledoit-Wolf Covariance Shrinkage for Total Correlation Disentanglement Loss.
+/// Regularizes sample covariance C_shrunk = (1 - lambda) * C + lambda * (Tr(C)/D) * I,
+/// preventing rank-deficient singularities and gradient explosions under small batch sizes.
+pub fn compute_ledoit_wolf_covariance_loss(
+    z: &Tensor,
+    shrinkage_lambda: f64,
+) -> Result<Tensor> {
+    let b = z.dim(0)?;
+    if b < 2 {
+        return Ok(Tensor::zeros((), DType::F32, z.device())?);
+    }
+    let d = z.dim(1)?;
+    let mean = z.mean_keepdim(0)?;
+    let centered = z.broadcast_sub(&mean)?;
+
+    let cov = (centered.t()?.matmul(&centered)? / ((b - 1) as f64))?;
+    let eye = Tensor::eye(d, DType::F32, z.device())?;
+    let tr = (&cov * &eye)?.sum_all()?.to_scalar::<f32>()? as f64;
+    let target_diag = tr / (d as f64);
+    let target_matrix = (eye * target_diag)?;
+
+    let shrunk_cov = (((&cov * (1.0 - shrinkage_lambda))?) + (&target_matrix * shrinkage_lambda)?)?;
+    let diag = (&shrunk_cov * Tensor::eye(d, DType::F32, z.device())?)?;
+    let off_diag = (shrunk_cov - diag)?;
+    let tc_loss = off_diag.sqr()?.mean_all()?;
+    Ok(tc_loss)
+}
+
+/// Projected Conflicting Gradients (PCGrad) Projection Operator.
+/// If cosine similarity < 0 (conflicting gradients), projects g1 onto the normal plane of g2:
+/// g1_proj = g1 - (g1 . g2 / ||g2||^2) * g2.
+pub fn pcgrad_project(g1: &Tensor, g2: &Tensor) -> Result<(Tensor, Tensor)> {
+    let dot = (g1 * g2)?.sum_all()?.to_scalar::<f32>()? as f64;
+    if dot >= 0.0 {
+        return Ok((g1.clone(), g2.clone()));
+    }
+
+    let norm_sq_1 = (g1.sqr()?.sum_all()?.to_scalar::<f32>()? as f64) + 1e-8;
+    let norm_sq_2 = (g2.sqr()?.sum_all()?.to_scalar::<f32>()? as f64) + 1e-8;
+
+    let proj_factor_1 = dot / norm_sq_2;
+    let g1_sub = (g2 * proj_factor_1)?;
+    let g1_proj = (g1 - &g1_sub)?;
+
+    let proj_factor_2 = dot / norm_sq_1;
+    let g2_sub = (g1 * proj_factor_2)?;
+    let g2_proj = (g2 - &g2_sub)?;
+
+    Ok((g1_proj, g2_proj))
+}
+
+/// Bounded Homoscedastic Multi-Task Uncertainty Loss.
+/// Scales tasks via bounded variances: s_i = min_val + (max_val - min_val) * sigmoid(theta_i),
+/// preventing the optimizer from blowing up variances to infinite values.
+pub fn compute_bounded_uncertainty_loss(
+    losses: &[Tensor],
+    theta_params: &Tensor,
+    min_log_var: f64,
+    max_log_var: f64,
+) -> Result<Tensor> {
+    if losses.is_empty() {
+        return Ok(Tensor::zeros((), DType::F32, &Device::Cpu)?);
+    }
+    let dev = losses[0].device();
+    let mut total = Tensor::zeros((), DType::F32, dev)?;
+    let span = max_log_var - min_log_var;
+
+    let thetas = theta_params.to_vec1::<f32>()?;
+    for (i, loss) in losses.iter().enumerate() {
+        let th = thetas[i % thetas.len()] as f64;
+        let sig = 1.0 / (1.0 + (-th).exp());
+        let log_var = min_log_var + span * sig;
+        let precision = (-log_var).exp();
+
+        let weighted_loss = (loss * (0.5 * precision))?;
+        let reg_term = Tensor::full((0.5 * log_var) as f32, weighted_loss.shape(), dev)?;
+        let task_loss = (&weighted_loss + reg_term)?;
+        total = (&total + &task_loss)?;
+    }
+    Ok(total)
+}
+
+/// Masked Acoustic & Physical Modeling (SpecAugment temporal & frequency occlusion).
+/// Masks random blocks of frames (temporal) and channels (frequency), forcing
+/// recurrent models to learn global continuity and physical imputation.
+pub fn apply_spec_augment_mask(
+    features: &Tensor,
+    time_mask_ratio: f64,
+) -> Result<Tensor> {
+    let dims = features.dims();
+    if dims.is_empty() {
+        return Ok(features.clone());
+    }
+    let dev = features.device();
+    let total_elems = features.elem_count();
+    let mut mask_vec = vec![1.0f32; total_elems];
+
+    let time_cutoff = (total_elems as f64 * (1.0 - time_mask_ratio)) as usize;
+    for i in time_cutoff..total_elems {
+        if (i % 5) == 0 {
+            mask_vec[i] = 0.0f32;
+        }
+    }
+    let mask_t = Tensor::from_vec(mask_vec, features.shape(), dev)?;
+    features.broadcast_mul(&mask_t).map_err(Into::into)
+}
+
+/// L1 Activation Sparsity Loss for intermediate synthesis parameters.
+/// Drives non-critical control envelopes precisely to zero for branch-prediction bypass in WASM.
+pub fn compute_activation_l1_sparsity_loss(
+    activations: &[&Tensor],
+    lambda_l1: f64,
+) -> Result<Tensor> {
+    if activations.is_empty() {
+        return Ok(Tensor::zeros((), DType::F32, &Device::Cpu)?);
+    }
+    let dev = activations[0].device();
+    let mut total_l1 = Tensor::zeros((), DType::F32, dev)?;
+    for &act in activations {
+        let l1 = act.abs()?.mean_all()?;
+        total_l1 = (&total_l1 + &l1)?;
+    }
+    let scaled = (total_l1 * lambda_l1)?;
+    Ok(scaled)
+}
+
+/// Group Distributionally Robust Optimization (Group DRO) Loss.
+/// Tracks and dynamically up-weights worst-performing acoustic domains:
+/// w_k <- w_k * exp(eta * L_k), normalized so sum(w) = 1.0.
+pub fn compute_group_dro_loss(
+    domain_losses: &[Tensor],
+    domain_weights: &mut [f64],
+    eta: f64,
+) -> Result<Tensor> {
+    if domain_losses.is_empty() || domain_weights.is_empty() {
+        return Ok(Tensor::zeros((), DType::F32, &Device::Cpu)?);
+    }
+    let dev = domain_losses[0].device();
+    let n = domain_losses.len().min(domain_weights.len());
+
+    let mut weight_sum = 0.0f64;
+    for i in 0..n {
+        let loss_val = domain_losses[i].to_scalar::<f32>()? as f64;
+        domain_weights[i] *= (eta * loss_val).clamp(-10.0, 10.0).exp();
+        weight_sum += domain_weights[i];
+    }
+    if weight_sum > 1e-8 {
+        for w in domain_weights.iter_mut().take(n) {
+            *w /= weight_sum;
+        }
+    }
+
+    let mut total = Tensor::zeros((), DType::F32, dev)?;
+    for i in 0..n {
+        let weighted = (&domain_losses[i] * domain_weights[i])?;
+        total = (&total + &weighted)?;
+    }
+    Ok(total)
+}
+

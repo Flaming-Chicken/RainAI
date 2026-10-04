@@ -14,11 +14,13 @@ pub const FILTER_BANDS: usize = 16;
 pub const FOA_CHANNELS: usize = 4;
 
 pub mod dataset;
+pub mod lbfgs;
 pub mod losses;
 pub mod models;
 pub mod trainer;
 
 pub use dataset::*;
+pub use lbfgs::*;
 pub use losses::*;
 pub use models::*;
 pub use trainer::*;
