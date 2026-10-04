@@ -378,13 +378,13 @@ impl LearnedFlowController {
     /// Predicts optimal step size $h_t$ incorporating leading kinematic indicators (acceleration, jerk),
     /// the active weather latent, and hardware thermal telemetry.
     pub fn predict_step_size(
-        &self, 
-        v_current: &[f32], 
-        v_prev: Option<&[f32]>, 
-        v_prev_prev: Option<&[f32]>, 
-        weather_latent: Option<&[f32]>, 
+        &self,
+        v_current: &[f32],
+        v_prev: Option<&[f32]>,
+        v_prev_prev: Option<&[f32]>,
+        weather_latent: Option<&[f32]>,
         thermal_deficit: f32,
-        dt: f32
+        dt: f32,
     ) -> f32 {
         let v_norm =
             (v_current.iter().map(|&x| x * x).sum::<f32>() / v_current.len().max(1) as f32).sqrt();
@@ -423,12 +423,13 @@ impl LearnedFlowController {
         let thermal_factor = 1.0 - (thermal_deficit.clamp(0.0, 1.0) * 0.8);
 
         // Modulate base_h inversely with kinematics and weather, softened by thermal relaxation
-        let damping = (1.0 
-            + self.curvature_sensitivity * acceleration 
-            + self.jerk_sensitivity * jerk 
-            + self.velocity_sensitivity * v_norm 
-            + 0.5 * latent_turbulence) * thermal_factor;
-            
+        let damping = (1.0
+            + self.curvature_sensitivity * acceleration
+            + self.jerk_sensitivity * jerk
+            + self.velocity_sensitivity * v_norm
+            + 0.5 * latent_turbulence)
+            * thermal_factor;
+
         (self.base_h / damping).clamp(self.min_h, self.max_h)
     }
 }

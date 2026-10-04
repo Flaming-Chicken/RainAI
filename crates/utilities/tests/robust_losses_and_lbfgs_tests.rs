@@ -2,11 +2,11 @@
 
 use candle_core::{DType, Device, Tensor, Var};
 use utilities::candle::{
-    DynamicLbfgs, DynamicLbfgsConfig, apply_spec_augment_mask,
-    compute_activation_l1_sparsity_loss, compute_bark_weighted_stft_loss,
-    compute_beta_vae_loss_leaky_free_bits, compute_bounded_uncertainty_loss,
-    compute_charbonnier_loss, compute_group_dro_loss, compute_ledoit_wolf_covariance_loss,
-    compute_lyapunov_stability_loss, compute_multiscale_envelope_loss, compute_smooth_drag_loss,
+    DynamicLbfgs, DynamicLbfgsConfig, apply_spec_augment_mask, compute_activation_l1_sparsity_loss,
+    compute_bark_weighted_stft_loss, compute_beta_vae_loss_leaky_free_bits,
+    compute_bounded_uncertainty_loss, compute_charbonnier_loss, compute_group_dro_loss,
+    compute_ledoit_wolf_covariance_loss, compute_lyapunov_stability_loss,
+    compute_multiscale_envelope_loss, compute_smooth_drag_loss,
     compute_straight_flow_total_accel_loss, compute_vector_field_charbonnier_loss,
     compute_waveshaper_anti_aliasing_loss, pcgrad_project, sample_lognormal_min_snr_time,
 };
@@ -160,7 +160,8 @@ fn test_bounded_uncertainty_and_spec_augment_and_dro() {
     let l2 = Tensor::new(0.5f32, &dev).unwrap();
     let thetas = Tensor::new(&[0.0f32, 0.0f32], &dev).unwrap();
 
-    let bounded_loss = compute_bounded_uncertainty_loss(&[l1.clone(), l2.clone()], &thetas, -2.0, 2.0).unwrap();
+    let bounded_loss =
+        compute_bounded_uncertainty_loss(&[l1.clone(), l2.clone()], &thetas, -2.0, 2.0).unwrap();
     assert!(bounded_loss.to_scalar::<f32>().unwrap() > 0.0);
 
     // SpecAugment masking

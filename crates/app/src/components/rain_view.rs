@@ -2058,9 +2058,12 @@ impl RainView {
                         },
                     );
                 });
-                ui.add(egui::ProgressBar::new(self.simulated_thermal_level).text(
-                    format!("{:.0}% Throttle Level", self.simulated_thermal_level * 100.0),
-                ));
+                ui.add(
+                    egui::ProgressBar::new(self.simulated_thermal_level).text(format!(
+                        "{:.0}% Throttle Level",
+                        self.simulated_thermal_level * 100.0
+                    )),
+                );
 
                 ui.add_space(8.0);
                 ui.label(
@@ -2068,11 +2071,17 @@ impl RainView {
                         .strong(),
                 );
                 let accel_est = (rain.weather.intensity * 1.8 + rain.wind.gustiness * 1.2).min(3.0);
-                let jerk_est = (rain.wind.turbulence * 2.2 + rain.weather.pitch_angle * 0.8).min(3.0);
-                let latent_turb = ((rain.weather.intensity.powi(2) + rain.wind.speed.powi(2)).sqrt() * 1.4).min(2.0);
+                let jerk_est =
+                    (rain.wind.turbulence * 2.2 + rain.weather.pitch_angle * 0.8).min(3.0);
+                let latent_turb =
+                    ((rain.weather.intensity.powi(2) + rain.wind.speed.powi(2)).sqrt() * 1.4)
+                        .min(2.0);
 
                 ui.horizontal(|ui| {
-                    ui.label(format!("Trajectory Accel (Curvature $a_n$): {:.2}", accel_est));
+                    ui.label(format!(
+                        "Trajectory Accel (Curvature $a_n$): {:.2}",
+                        accel_est
+                    ));
                     ui.add(egui::ProgressBar::new((accel_est / 3.0).min(1.0)));
                 });
                 ui.horizontal(|ui| {

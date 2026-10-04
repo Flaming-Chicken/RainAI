@@ -503,7 +503,11 @@ pub fn compute_waveshaper_efficiency_loss(
     let bits_penalty = excess_bits.sqr()?.mean_all()?;
 
     // Sparsity pruning incentive (rewarding larger dead zones in delta_prune up to 0.25)
-    let prune_target = Tensor::full(0.25f32, quantizer.delta_prune.shape(), quantizer.delta_prune.device())?;
+    let prune_target = Tensor::full(
+        0.25f32,
+        quantizer.delta_prune.shape(),
+        quantizer.delta_prune.device(),
+    )?;
     let prune_margin = (&prune_target - &quantizer.delta_prune)?;
     let prune_penalty = prune_margin.relu()?.sqr()?.mean_all()?;
 
@@ -541,11 +545,7 @@ pub fn compute_vector_field_charbonnier_loss(
 /// Smooth Softplus Aerodynamic Drag Dissipation Loss.
 /// Replaces discontinuous ReLU kinks with smooth C^2 dissipation:
 /// L_drag = (1/beta * ln(1 + exp(beta * (||v||_2 - v_terminal))))^2.
-pub fn compute_smooth_drag_loss(
-    v_pred: &Tensor,
-    v_terminal: f64,
-    beta: f64,
-) -> Result<Tensor> {
+pub fn compute_smooth_drag_loss(v_pred: &Tensor, v_terminal: f64, beta: f64) -> Result<Tensor> {
     let v_sq = v_pred.sqr()?.sum_keepdim(1)?.relu()?;
     let speed = (v_sq + 1e-6)?.sqrt()?;
     let excess_speed = (speed - v_terminal)?;
@@ -559,10 +559,7 @@ pub fn compute_smooth_drag_loss(
 /// Contractive Lyapunov Stability Regularization for learned ODE vector fields.
 /// Enforces dissipative, non-divergent dynamics by penalizing positive trace on the symmetric Jacobian:
 /// L_lyapunov = relu(Tr(J_sym) + gamma)^2 where J_sym = 0.5 * (J + J^T).
-pub fn compute_lyapunov_stability_loss(
-    jacobian: &Tensor,
-    gamma: f64,
-) -> Result<Tensor> {
+pub fn compute_lyapunov_stability_loss(jacobian: &Tensor, gamma: f64) -> Result<Tensor> {
     let dims = jacobian.dims();
     if dims.len() < 2 {
         return Ok(Tensor::zeros((), DType::F32, jacobian.device())?);
@@ -630,7 +627,8 @@ pub fn compute_multiscale_envelope_loss(
         if len > stride * 2 {
             let num_pools = len / stride;
             let p_pred = abs_pred.narrow(audio_pred.dims().len() - 1, 0, num_pools * stride)?;
-            let p_target = abs_target.narrow(audio_target.dims().len() - 1, 0, num_pools * stride)?;
+            let p_target =
+                abs_target.narrow(audio_target.dims().len() - 1, 0, num_pools * stride)?;
             let diff = (p_pred - p_target)?;
             let huber = crate::stft_loss::huber_loss(&diff, 0.1)?;
             total_loss = (&total_loss + &huber)?;
@@ -645,9 +643,7 @@ pub fn compute_multiscale_envelope_loss(
 /// Penalizes high-frequency energy in the upper 10% of the spectrum (near Nyquist)
 /// approximated by second-order finite differences (Laplacian high-pass filter):
 /// HPF(x)[n] = x[n] - 2*x[n-1] + x[n-2].
-pub fn compute_waveshaper_anti_aliasing_loss(
-    audio_shaped: &Tensor,
-) -> Result<Tensor> {
+pub fn compute_waveshaper_anti_aliasing_loss(audio_shaped: &Tensor) -> Result<Tensor> {
     let dims = audio_shaped.dims();
     let len = dims[dims.len() - 1];
     if len < 3 {
@@ -665,10 +661,7 @@ pub fn compute_waveshaper_anti_aliasing_loss(
 
 /// Bark-Weighted Multi-Scale STFT Loss.
 /// Weights frequency bins with psychoacoustic perceptual curve emphasizing 1 kHz - 6 kHz rain textures.
-pub fn compute_bark_weighted_stft_loss(
-    pred_mag: &Tensor,
-    target_mag: &Tensor,
-) -> Result<Tensor> {
+pub fn compute_bark_weighted_stft_loss(pred_mag: &Tensor, target_mag: &Tensor) -> Result<Tensor> {
     let diff = (pred_mag - target_mag)?;
     let abs_diff = diff.abs()?;
 
@@ -732,10 +725,7 @@ pub fn compute_beta_vae_loss_leaky_free_bits(
 /// Ledoit-Wolf Covariance Shrinkage for Total Correlation Disentanglement Loss.
 /// Regularizes sample covariance C_shrunk = (1 - lambda) * C + lambda * (Tr(C)/D) * I,
 /// preventing rank-deficient singularities and gradient explosions under small batch sizes.
-pub fn compute_ledoit_wolf_covariance_loss(
-    z: &Tensor,
-    shrinkage_lambda: f64,
-) -> Result<Tensor> {
+pub fn compute_ledoit_wolf_covariance_loss(z: &Tensor, shrinkage_lambda: f64) -> Result<Tensor> {
     let b = z.dim(0)?;
     if b < 2 {
         return Ok(Tensor::zeros((), DType::F32, z.device())?);
@@ -814,10 +804,7 @@ pub fn compute_bounded_uncertainty_loss(
 /// Masked Acoustic & Physical Modeling (SpecAugment temporal & frequency occlusion).
 /// Masks random blocks of frames (temporal) and channels (frequency), forcing
 /// recurrent models to learn global continuity and physical imputation.
-pub fn apply_spec_augment_mask(
-    features: &Tensor,
-    time_mask_ratio: f64,
-) -> Result<Tensor> {
+pub fn apply_spec_augment_mask(features: &Tensor, time_mask_ratio: f64) -> Result<Tensor> {
     let dims = features.dims();
     if dims.is_empty() {
         return Ok(features.clone());
@@ -888,4 +875,3 @@ pub fn compute_group_dro_loss(
     }
     Ok(total)
 }
-
