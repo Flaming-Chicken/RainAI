@@ -128,6 +128,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Checkout spodeian-core dependency
+        uses: actions/checkout@v4
+        with:
+          repository: Flaming-Chicken/spodeian-core
+          ref: dev
+          path: spodeian-core
+
+      - name: Link spodeian-core to parent directory
+        shell: bash
+        run: |
+          if [ ! -d "../spodeian-core" ]; then
+            if [ "$RUNNER_OS" == "Windows" ]; then
+              cp -r spodeian-core ../spodeian-core
+            else
+              ln -s "$PWD/spodeian-core" "$PWD/../spodeian-core"
+            fi
+          fi
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -149,6 +167,24 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Checkout spodeian-core dependency
+        uses: actions/checkout@v4
+        with:
+          repository: Flaming-Chicken/spodeian-core
+          ref: dev
+          path: spodeian-core
+
+      - name: Link spodeian-core to parent directory
+        shell: bash
+        run: |
+          if [ ! -d "../spodeian-core" ]; then
+            if [ "$RUNNER_OS" == "Windows" ]; then
+              cp -r spodeian-core ../spodeian-core
+            else
+              ln -s "$PWD/spodeian-core" "$PWD/../spodeian-core"
+            fi
+          fi
 
       - name: Install Linux Audio & Windowing Dependencies
         run: |
@@ -180,6 +216,24 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Checkout spodeian-core dependency
+        uses: actions/checkout@v4
+        with:
+          repository: Flaming-Chicken/spodeian-core
+          ref: dev
+          path: spodeian-core
+
+      - name: Link spodeian-core to parent directory
+        shell: bash
+        run: |
+          if [ ! -d "../spodeian-core" ]; then
+            if [ "$RUNNER_OS" == "Windows" ]; then
+              cp -r spodeian-core ../spodeian-core
+            else
+              ln -s "$PWD/spodeian-core" "$PWD/../spodeian-core"
+            fi
+          fi
 
       - name: Setup Rust with WASM Target
         uses: dtolnay/rust-toolchain@stable
@@ -236,6 +290,24 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Checkout spodeian-core dependency
+        uses: actions/checkout@v4
+        with:
+          repository: Flaming-Chicken/spodeian-core
+          ref: dev
+          path: spodeian-core
+
+      - name: Link spodeian-core to parent directory
+        shell: bash
+        run: |
+          if [ ! -d "../spodeian-core" ]; then
+            if [ "$RUNNER_OS" == "Windows" ]; then
+              cp -r spodeian-core ../spodeian-core
+            else
+              ln -s "$PWD/spodeian-core" "$PWD/../spodeian-core"
+            fi
+          fi
 
       - name: Install Linux Audio & GUI Dependencies
         if: runner.os == 'Linux'
@@ -294,6 +366,24 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Checkout spodeian-core dependency
+        uses: actions/checkout@v4
+        with:
+          repository: Flaming-Chicken/spodeian-core
+          ref: dev
+          path: spodeian-core
+
+      - name: Link spodeian-core to parent directory
+        shell: bash
+        run: |
+          if [ ! -d "../spodeian-core" ]; then
+            if [ "$RUNNER_OS" == "Windows" ]; then
+              cp -r spodeian-core ../spodeian-core
+            else
+              ln -s "$PWD/spodeian-core" "$PWD/../spodeian-core"
+            fi
+          fi
 
       - name: Setup Rust with Mobile Targets
         uses: dtolnay/rust-toolchain@stable
