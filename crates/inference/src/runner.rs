@@ -460,7 +460,7 @@ impl InferenceRunner {
             Self::dispatch_projection(&foa_layer, &self.latent_state, None, &mut foa_out);
         } else {
             // Default physical spatial projection mapping latent components to FOA (W, X, Y, Z)
-            foa_out[0] = (self.latent_state[0] * 0.5 + 1.0).clamp(0.1, 2.5);
+            foa_out[0] = (self.latent_state[0] * 0.4).tanh() * 1.2 + 1.3;
             foa_out[1] = self.latent_state[1].tanh() * 0.6;
             foa_out[2] = self.latent_state[2].tanh() * 0.6;
             foa_out[3] = self.latent_state[3].tanh() * 0.4;

@@ -257,6 +257,7 @@ pub struct ProceduralSynthesizer {
     brown_filter: BrownNoiseFilter,
     filterbank: SubtractiveFilterbank16,
     last_drifts: [f32; 16],
+    smoothed_gains: [f32; 16],
     thunder_rumble: f32,
     thunder_decay: f32,
     insect_phase: f32,
@@ -281,6 +282,7 @@ impl ProceduralSynthesizer {
             brown_filter: BrownNoiseFilter::default(),
             filterbank: SubtractiveFilterbank16::new(sample_rate),
             last_drifts: [0.0; 16],
+            smoothed_gains: [1.0; 16],
             thunder_rumble: 0.0,
             thunder_decay: 0.9995,
             insect_phase: 0.0,
@@ -296,6 +298,7 @@ impl ProceduralSynthesizer {
         self.thunder_rumble = 0.0;
         self.insect_phase = 0.0;
         self.bird_chirp_counter = 0;
+        self.smoothed_gains = [1.0; 16];
         self.filterbank = SubtractiveFilterbank16::new(self.sample_rate);
     }
 
@@ -346,48 +349,54 @@ impl ProceduralSynthesizer {
                 ([1.0; 16], 1.0, 1.0, 1.0, 1.0)
             };
 
+        // Slew block-rate neural gains per sample (tau ~ 4.1ms @ 48kHz) to eliminate zipper clicks
+        let slew = 0.005f32;
+        for i in 0..16 {
+            self.smoothed_gains[i] += (mod_gains[i] - self.smoothed_gains[i]) * slew;
+        }
+
         // 12 Tied Physics Bands with Neural Gain Modulation
         let tin_sound = self.filterbank.filters[0].process(rain_drive)
             * state.surfaces.tin
             * 2.2
-            * mod_gains[0];
+            * self.smoothed_gains[0];
         let leaf_sound = self.filterbank.filters[1].process(rain_drive)
             * state.surfaces.leaves_broad
             * 1.5
-            * mod_gains[1];
+            * self.smoothed_gains[1];
         let pine_sound = self.filterbank.filters[2].process(rain_drive)
             * state.surfaces.pine_needles
             * 1.7
-            * mod_gains[2];
+            * self.smoothed_gains[2];
         let pavement_sound = self.filterbank.filters[3].process(rain_drive)
             * state.surfaces.pavement
             * 1.1
-            * mod_gains[3];
+            * self.smoothed_gains[3];
         let water_sound = self.filterbank.filters[4].process(rain_drive)
             * state.surfaces.water_deep
             * 1.6
-            * mod_gains[4];
+            * self.smoothed_gains[4];
         let puddle_sound = self.filterbank.filters[5].process(rain_drive)
             * state.surfaces.puddle_shallow
             * 1.8
-            * mod_gains[5];
+            * self.smoothed_gains[5];
         let canvas_sound = self.filterbank.filters[6].process(rain_drive)
             * state.surfaces.canvas_tent
             * 1.9
-            * mod_gains[6];
+            * self.smoothed_gains[6];
         let glass_sound = self.filterbank.filters[7].process(rain_drive)
             * state.surfaces.glass_window
             * 1.8
-            * mod_gains[7];
+            * self.smoothed_gains[7];
         let wood_sound = self.filterbank.filters[8].process(rain_drive)
             * state.surfaces.wood_deck
             * 1.6
-            * mod_gains[8];
+            * self.smoothed_gains[8];
 
         // Acoustic runoff & bubble chirps
         let runoff_drive =
             rain_drive * (state.surfaces.tin * 0.6 + state.surfaces.puddle_shallow * 0.4);
-        let downpipe_sound = self.filterbank.filters[9].process(runoff_drive) * 1.3 * mod_gains[9];
+        let downpipe_sound = self.filterbank.filters[9].process(runoff_drive) * 1.3 * self.smoothed_gains[9];
 
         // Discrete rain droplet Poisson impacts
         let droplet_prob = (state.weather.intensity * 0.04 * droplet_rate_scale).clamp(0.001, 0.4);
@@ -401,7 +410,7 @@ impl ProceduralSynthesizer {
         let bubble_sound = self.filterbank.filters[10].process(droplet_burst)
             * (state.surfaces.puddle_shallow + state.surfaces.water_deep)
             * 1.5
-            * mod_gains[10];
+            * self.smoothed_gains[10];
 
         // Wind drive & howl band
         let wind_drive = self.brown_filter.process(white) * state.wind.speed;
@@ -409,24 +418,24 @@ impl ProceduralSynthesizer {
             * state.wind.howl
             * 2.0
             * wind_howl_scale
-            * mod_gains[11];
+            * self.smoothed_gains[11];
 
         // 4 Untied Residual Texture Bands
         let mist_drive = white * (state.weather.intensity * 0.2 + state.wind.speed * 0.1);
-        let mist_sound = self.filterbank.filters[12].process(mist_drive) * 0.8 * mod_gains[12];
+        let mist_sound = self.filterbank.filters[12].process(mist_drive) * 0.8 * self.smoothed_gains[12];
 
         let turb_drive = wind_drive * (1.0 + state.wind.gustiness * 0.8) * 0.5;
         let turb_sound =
-            self.filterbank.filters[13].process(turb_drive) * 0.9 * wind_gust_scale * mod_gains[13];
+            self.filterbank.filters[13].process(turb_drive) * 0.9 * wind_gust_scale * self.smoothed_gains[13];
 
         let rattle_drive = rain_drive
             * (state.surfaces.leaves_broad + state.surfaces.pine_needles)
             * (state.wind.speed * 0.5 + 0.3);
-        let rattle_sound = self.filterbank.filters[14].process(rattle_drive) * 0.7 * mod_gains[14];
+        let rattle_sound = self.filterbank.filters[14].process(rattle_drive) * 0.7 * self.smoothed_gains[14];
 
         let transducer_drive = white * (state.weather.intensity * 0.05);
         let transducer_sound =
-            self.filterbank.filters[15].process(transducer_drive) * 0.6 * mod_gains[15];
+            self.filterbank.filters[15].process(transducer_drive) * 0.6 * self.smoothed_gains[15];
 
         let total_rain = tin_sound
             + leaf_sound
@@ -578,7 +587,8 @@ impl ProceduralSynthesizer {
         if let Some(ctrl) = modulation {
             let (sw, sx, sy, sz) = ctrl.spatial_vector;
             let spatial_blend = 0.35f32;
-            w = w * (1.0 - spatial_blend) + (w * sw.abs().clamp(0.2, 2.0)) * spatial_blend;
+            let sw_smooth = sw.abs().tanh() * 1.8 + 0.2;
+            w = w * (1.0 - spatial_blend) + (w * sw_smooth) * spatial_blend;
             x += sx * 0.20 * rain_master;
             y += sy * 0.20 * rain_master;
             z += sz * 0.20 * rain_master;

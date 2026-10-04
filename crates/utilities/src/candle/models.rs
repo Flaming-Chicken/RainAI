@@ -83,15 +83,17 @@ impl CandleSpatialVae {
         let h1 = self.dec_fc1.forward(&x)?.gelu_erf()?;
         let h2 = self.dec_fc2.forward(&h1)?.gelu_erf()?;
 
-        // Output Affine Alignment for bands: physically constrained non-negative band gains in [0, 20]
+        // Output Affine Alignment for bands: physically constrained C^inf smooth non-negative band gains in (0, 20]
         let raw_bands = self.dec_bands.forward(&h2)?;
-        let bands = (candle_softplus(&raw_bands)? + 1e-4f64)?.clamp(0.0f32, 20.0f32)?;
+        let sp_bands = candle_softplus(&raw_bands)?;
+        let bands = ((sp_bands.tanh()? * 20.0f64)? + 1e-4f64)?;
 
         // Output Affine Alignment for FOA: enforcing acoustic physical energy constraint W >= sqrt(X^2 + Y^2 + Z^2)
         let raw_foa = self.dec_foa.forward(&h2)?;
         let w_raw = raw_foa.narrow(1, 0, 1)?;
         let u_raw = raw_foa.narrow(1, 1, 3)?;
-        let w = (candle_softplus(&w_raw)? + 1e-4f64)?.clamp(1e-4f32, 10.0f32)?;
+        let sp_w = candle_softplus(&w_raw)?;
+        let w = ((sp_w.tanh()? * 10.0f64)? + 1e-4f64)?;
         let u_dir = u_raw.tanh()?;
         let xyz = u_dir.broadcast_mul(&w)?;
         let foa = Tensor::cat(&[&w, &xyz], 1)?;
