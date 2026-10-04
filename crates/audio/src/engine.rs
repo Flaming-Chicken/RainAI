@@ -644,7 +644,9 @@ impl WebAudioEngine {
 
         // Reuse existing window.__rainAudioContext if initialized by index.js, or create a new one
         let ctx = if let Some(win) = web_sys::window() {
-            if let Ok(existing) = js_sys::Reflect::get(&win, &wasm_bindgen::JsValue::from_str("__rainAudioContext")) {
+            if let Ok(existing) =
+                js_sys::Reflect::get(&win, &wasm_bindgen::JsValue::from_str("__rainAudioContext"))
+            {
                 if !existing.is_undefined() && !existing.is_null() {
                     match existing.dyn_into::<web_sys::AudioContext>() {
                         Ok(ctx) => ctx,
@@ -660,8 +662,7 @@ impl WebAudioEngine {
                     .map_err(|e| AudioError::WebAudioError(format!("{e:?}")))?
             }
         } else {
-            web_sys::AudioContext::new()
-                .map_err(|e| AudioError::WebAudioError(format!("{e:?}")))?
+            web_sys::AudioContext::new().map_err(|e| AudioError::WebAudioError(format!("{e:?}")))?
         };
 
         if let Some(win) = web_sys::window() {
@@ -673,7 +674,7 @@ impl WebAudioEngine {
         }
 
         let raw_sr = ctx.sample_rate();
-        let sample_rate = if raw_sr.is_finite() && raw_sr >= 8000.0 && raw_sr <= 192000.0 {
+        let sample_rate = if raw_sr.is_finite() && (8000.0..=192000.0).contains(&raw_sr) {
             raw_sr
         } else {
             48000.0
