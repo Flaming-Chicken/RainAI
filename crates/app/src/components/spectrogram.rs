@@ -26,20 +26,41 @@ impl SpectrogramHistory {
     }
 }
 
-pub fn render_spectrogram_panel(ui: &mut Ui, history: &SpectrogramHistory) {
+pub fn render_spectrogram_panel(
+    ui: &mut Ui,
+    history: &SpectrogramHistory,
+    show_spectrogram: &mut bool,
+) {
     egui::Frame::group(ui.style())
         .fill(Color32::from_rgb(15, 18, 24))
+        .inner_margin(egui::Margin::symmetric(8, 6))
         .show(ui, |ui| {
-            ui.set_min_height(130.0);
             ui.horizontal(|ui| {
-                ui.heading("Real-Time Neural Spectrogram / Waterfall");
+                ui.heading("📊 Real-Time Neural Spectrogram / Waterfall");
+                ui.label(
+                    egui::RichText::new("20Hz – 20kHz | 32 Sub-Bands")
+                        .size(11.0)
+                        .weak(),
+                );
+
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label("Frequency Range: 20Hz – 20kHz | Resolution: 32 Sub-Bands");
+                    if ui
+                        .button("✖ Close")
+                        .on_hover_text("Close / minimize the bottom spectrogram waterfall panel")
+                        .clicked()
+                    {
+                        *show_spectrogram = false;
+                    }
                 });
             });
 
-            let available_size = ui.available_size();
-            let (response, painter) = ui.allocate_painter(available_size, egui::Sense::hover());
+            ui.add_space(4.0);
+
+            // Bounded height allocation so it never expands to consume the whole window
+            let canvas_height = (ui.available_height() - 6.0).clamp(60.0, 180.0);
+            let available_w = ui.available_width();
+            let (response, painter) =
+                ui.allocate_painter(Vec2::new(available_w, canvas_height), egui::Sense::hover());
             let rect = response.rect;
 
             if history.columns.is_empty() {

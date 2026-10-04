@@ -123,6 +123,10 @@ pub const DEDICATED_STORAGE_KEY: &str = "serverless_template_app_state";
 pub const FIRST_LAUNCH_STORAGE_KEY: &str = "rainai_first_launch_done";
 pub const SESSION_STORAGE_KEY: &str = "rainai_persistent_session_state";
 
+fn default_true() -> bool {
+    true
+}
+
 /// Persistent session parameters surviving reboots and browser relaunches.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PersistentSessionState {
@@ -135,6 +139,8 @@ pub struct PersistentSessionState {
     pub hrtf_profile: String,
     pub webgpu_fp16_enabled: bool,
     pub show_advanced_inspector: bool,
+    #[serde(default = "default_true")]
+    pub show_spectrogram: bool,
     #[serde(default)]
     pub custom_ir_hash: Option<String>,
 }
@@ -154,6 +160,7 @@ impl Default for PersistentSessionState {
             hrtf_profile: "Kemar-Compact-Standard".to_string(),
             webgpu_fp16_enabled: true,
             show_advanced_inspector: false,
+            show_spectrogram: true,
             custom_ir_hash: None,
         }
     }
