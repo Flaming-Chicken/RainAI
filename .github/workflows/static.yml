@@ -30,6 +30,17 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Checkout spodeian-core dependency
+        uses: actions/checkout@v4
+        with:
+          repository: Flaming-Chicken/spodeian-core
+          ref: dev
+          path: spodeian-core
+
+      - name: Link spodeian-core to parent directory
+        shell: bash
+        run: ln -s "$PWD/spodeian-core" "$PWD/../spodeian-core"
+
       - name: Install Rust Stable Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
