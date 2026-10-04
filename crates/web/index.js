@@ -461,27 +461,88 @@ function hideLoadingOverlay() {
 // ============================================================================
 // Out-of-Memory (OOM) & Crash Resurrection Loop
 // ============================================================================
-window.__rainRecoveryAttempts = 0;
+function getRecoveryAttempts() {
+  try {
+    const val = parseInt(sessionStorage.getItem('rain_recovery_attempts') || '0', 10);
+    return isNaN(val) ? 0 : val;
+  } catch (_) {
+    return 0;
+  }
+}
+
+function setRecoveryAttempts(count) {
+  try {
+    sessionStorage.setItem('rain_recovery_attempts', String(count));
+  } catch (_) {}
+}
+
+function clearRecoveryAttempts() {
+  try {
+    sessionStorage.removeItem('rain_recovery_attempts');
+  } catch (_) {}
+}
+
+// Clear recovery attempts if running stably for 4 seconds
+setTimeout(clearRecoveryAttempts, 4000);
+
+function writeSafeRecoveryState() {
+  try {
+    const safeAppState = {
+      config: { theme: 'Dark' },
+      collection: { presets: [] },
+      rain: {
+        intensity: 0.35,
+        droplet_density: 0.25,
+        quality_tier: 'Ternary158',
+        is_playing: false,
+        master_volume: 0.50,
+        synthesis_mode: 'ProceduralFilterbank'
+      }
+    };
+    const safeSessionState = {
+      flow_solver: { AdaptiveRk45: { tol: 0.001, initial_h: 0.1 } },
+      active_preset_name: 'Gentle Summer Rain',
+      master_volume: 0.50,
+      decode_mode: 'BinauralHeadphones',
+      noise_masking_enabled: false,
+      noise_masking_threshold_db: -40.0,
+      hrtf_profile: 'Kemar-Compact-Standard',
+      webgpu_fp16_enabled: true,
+      show_advanced_inspector: false,
+      custom_ir_hash: null
+    };
+    localStorage.setItem('serverless_template_app_state', JSON.stringify(safeAppState));
+    localStorage.setItem('rainai_persistent_session_state', JSON.stringify(safeSessionState));
+    localStorage.setItem('rainai_first_launch_done', 'true');
+  } catch (_) {}
+}
 
 function setupOOMAndCrashRecovery() {
+  let hasHandledCrash = false;
+
   const handlePanicOrOOM = (err) => {
+    if (hasHandledCrash) return;
     const errStr = String(err || '').toLowerCase();
     const isOomOrPanic =
       errStr.includes('out of memory') ||
       errStr.includes('memory access out of bounds') ||
+      errStr.includes('capacity overflow') ||
       errStr.includes('oom') ||
       errStr.includes('unreachable') ||
       errStr.includes('panic') ||
       errStr.includes('allocation failed');
 
     if (isOomOrPanic) {
+      hasHandledCrash = true;
       console.warn('[RainAI] Intercepted runtime memory pressure or panic:', err);
-      if (window.__rainRecoveryAttempts < 3) {
-        window.__rainRecoveryAttempts++;
+      const attempts = getRecoveryAttempts();
+
+      if (attempts < 2) {
+        setRecoveryAttempts(attempts + 1);
         const banner = document.getElementById('recovery_banner');
         const overlay = document.getElementById('loading_overlay');
         if (banner) {
-          banner.textContent = `⚠ Memory limit reached. Gracefully recovering session with optimized preset (Attempt ${window.__rainRecoveryAttempts}/3)...`;
+          banner.textContent = `⚠ Initializing session recovery with safe defaults (Attempt ${attempts + 1}/2)...`;
           banner.classList.remove('hidden');
         }
         if (overlay) {
@@ -489,24 +550,58 @@ function setupOOMAndCrashRecovery() {
           overlay.classList.remove('fade_out');
         }
 
-        // Write safe lightweight recovery state to localStorage
-        try {
-          const safeState = {
-            rain: {
-              intensity: 0.35,
-              droplet_density: 0.25,
-              quality_tier: 0,
-              is_playing: true,
-              master_volume: 0.5
-            }
-          };
-          localStorage.setItem('rainai_app_state', JSON.stringify(safeState));
-        } catch (_) {}
+        writeSafeRecoveryState();
 
-        // Reload after a short delay to let the browser release garbage
         setTimeout(() => {
           window.location.reload();
         }, 1200);
+      } else {
+        // Stop reload loop and present interactive recovery UI
+        const overlay = document.getElementById('loading_overlay');
+        if (overlay) {
+          overlay.style.display = 'flex';
+          overlay.classList.remove('fade_out');
+          overlay.innerHTML = `
+            <div style="background:#161922; border:1px solid #e53e3e; border-radius:12px; padding:28px; color:#e2e8f0; max-width:520px; width:90%; text-align:center; box-shadow:0 12px 32px rgba(0,0,0,0.6);">
+              <div style="font-size:36px; margin-bottom:12px;">🌧 ⚠</div>
+              <h2 style="margin:0 0 8px 0; color:#fff; font-size:20px;">RainAI Recovery Console</h2>
+              <p style="font-size:14px; color:#a0aec0; margin:0 0 16px 0; line-height:1.5;">
+                The studio encountered a startup issue in WebAssembly linear memory.
+              </p>
+              <div style="font-family:monospace; font-size:12px; color:#feb2b2; background:#2d1515; padding:10px 14px; border-radius:6px; margin-bottom:20px; text-align:left; word-break:break-all; max-height:80px; overflow-y:auto;">
+                ${String(err || 'Runtime panic')}
+              </div>
+              <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap;">
+                <button id="rain_btn_reset_storage" style="background:#e53e3e; color:#fff; border:none; padding:10px 18px; border-radius:6px; cursor:pointer; font-weight:600; font-size:14px;">
+                  Reset & Clear Cache
+                </button>
+                <button id="rain_btn_safe_mode" style="background:#3182ce; color:#fff; border:none; padding:10px 18px; border-radius:6px; cursor:pointer; font-weight:600; font-size:14px;">
+                  Launch Muted Safe Mode
+                </button>
+              </div>
+            </div>
+          `;
+
+          const resetBtn = document.getElementById('rain_btn_reset_storage');
+          if (resetBtn) {
+            resetBtn.onclick = () => {
+              try {
+                localStorage.clear();
+                sessionStorage.clear();
+              } catch (_) {}
+              window.location.reload();
+            };
+          }
+
+          const safeBtn = document.getElementById('rain_btn_safe_mode');
+          if (safeBtn) {
+            safeBtn.onclick = () => {
+              clearRecoveryAttempts();
+              writeSafeRecoveryState();
+              window.location.reload();
+            };
+          }
+        }
       }
     }
   };

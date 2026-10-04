@@ -20,12 +20,31 @@ pub struct AcousticHistoryBuffer {
 }
 
 impl AcousticHistoryBuffer {
-    /// Allocate history buffer with given maximum duration (e.g. 30.0 seconds)
+    /// Allocate history buffer with given maximum duration (e.g. 30.0 seconds on native, 3.0 seconds on wasm)
     pub fn new(max_seconds: f32, sample_rate: f32) -> Self {
-        let capacity_frames = (max_seconds * sample_rate).round() as usize;
+        #[cfg(target_arch = "wasm32")]
+        let max_sec = if max_seconds.is_finite() && max_seconds > 0.0 {
+            max_seconds.min(3.0)
+        } else {
+            3.0
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let max_sec = if max_seconds.is_finite() && max_seconds > 0.0 {
+            max_seconds.min(30.0)
+        } else {
+            30.0
+        };
+
+        let safe_sr = if sample_rate.is_finite() && sample_rate >= 100.0 && sample_rate <= 192000.0 {
+            sample_rate
+        } else {
+            48000.0
+        };
+
+        let capacity_frames = ((max_sec * safe_sr).round() as usize).clamp(1024, 1_440_000);
         Self {
             capacity_frames,
-            sample_rate,
+            sample_rate: safe_sr,
             audio_history: vec![FoaFrame::default(); capacity_frames],
             cond_history: vec![[0.0f32; CONDITION_DIM]; capacity_frames],
             write_pos: 0,

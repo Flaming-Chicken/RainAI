@@ -73,7 +73,8 @@ impl AudioRingBuffer {
     /// Dynamically resizes the ring buffer capacity relative to target performance
     /// while preserving existing audio samples without clicks.
     pub fn resize_relative_to_performance(&mut self, new_capacity: usize) {
-        if new_capacity == self.capacity_frames || new_capacity == 0 {
+        let new_capacity = new_capacity.clamp(128, 96000);
+        if new_capacity == self.capacity_frames {
             return;
         }
         let mut new_buf = vec![0.0f32; new_capacity * 2];
@@ -641,8 +642,27 @@ impl WebAudioEngine {
         use wasm_bindgen::JsCast;
         use wasm_bindgen::closure::Closure;
 
-        let ctx = web_sys::AudioContext::new()
-            .map_err(|e| AudioError::WebAudioError(format!("{e:?}")))?;
+        // Reuse existing window.__rainAudioContext if initialized by index.js, or create a new one
+        let ctx = if let Some(win) = web_sys::window() {
+            if let Ok(existing) = js_sys::Reflect::get(&win, &wasm_bindgen::JsValue::from_str("__rainAudioContext")) {
+                if !existing.is_undefined() && !existing.is_null() {
+                    match existing.dyn_into::<web_sys::AudioContext>() {
+                        Ok(ctx) => ctx,
+                        Err(_) => web_sys::AudioContext::new()
+                            .map_err(|e| AudioError::WebAudioError(format!("{e:?}")))?,
+                    }
+                } else {
+                    web_sys::AudioContext::new()
+                        .map_err(|e| AudioError::WebAudioError(format!("{e:?}")))?
+                }
+            } else {
+                web_sys::AudioContext::new()
+                    .map_err(|e| AudioError::WebAudioError(format!("{e:?}")))?
+            }
+        } else {
+            web_sys::AudioContext::new()
+                .map_err(|e| AudioError::WebAudioError(format!("{e:?}")))?
+        };
 
         if let Some(win) = web_sys::window() {
             let _ = js_sys::Reflect::set(
@@ -652,7 +672,12 @@ impl WebAudioEngine {
             );
         }
 
-        let sample_rate = ctx.sample_rate();
+        let raw_sr = ctx.sample_rate();
+        let sample_rate = if raw_sr.is_finite() && raw_sr >= 8000.0 && raw_sr <= 192000.0 {
+            raw_sr
+        } else {
+            48000.0
+        };
         let quality_tier = initial_state.quality_tier;
         let cached_rain = initial_state.clone();
         let state = SharedAudioState::new(initial_state, mode);

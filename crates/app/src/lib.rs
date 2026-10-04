@@ -248,16 +248,19 @@ impl TemplateApp {
             }
         }
 
+        #[allow(unused_mut)]
         let mut app = Self {
             state,
             rain_view,
             ..Default::default()
         };
 
+        #[cfg(not(target_arch = "wasm32"))]
         if first_launch || app.state.rain.is_playing {
             app.ensure_audio_engine();
         }
 
+        info!("RainAI Studio ready.");
         app
     }
 
