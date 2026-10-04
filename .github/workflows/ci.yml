@@ -134,7 +134,7 @@ jobs:
           repository: Flaming-Chicken/spodeian-core
           ref: dev
           path: spodeian-core
-          token: ${{ secrets.SPODEIAN_CORE_TOKEN || secrets.GH_PAT || secrets.PAT || secrets.SPODEIAN_TOKEN || github.token }}
+          token: ${{ secrets.PRIVATE_READ_ACCESS || secrets.SPODEIAN_CORE_TOKEN || secrets.GH_PAT || secrets.PAT || secrets.SPODEIAN_TOKEN || github.token }}
 
       - name: Link spodeian-core to parent directory
         shell: bash
@@ -175,7 +175,7 @@ jobs:
           repository: Flaming-Chicken/spodeian-core
           ref: dev
           path: spodeian-core
-          token: ${{ secrets.SPODEIAN_CORE_TOKEN || secrets.GH_PAT || secrets.PAT || secrets.SPODEIAN_TOKEN || github.token }}
+          token: ${{ secrets.PRIVATE_READ_ACCESS || secrets.SPODEIAN_CORE_TOKEN || secrets.GH_PAT || secrets.PAT || secrets.SPODEIAN_TOKEN || github.token }}
 
       - name: Link spodeian-core to parent directory
         shell: bash
@@ -225,7 +225,7 @@ jobs:
           repository: Flaming-Chicken/spodeian-core
           ref: dev
           path: spodeian-core
-          token: ${{ secrets.SPODEIAN_CORE_TOKEN || secrets.GH_PAT || secrets.PAT || secrets.SPODEIAN_TOKEN || github.token }}
+          token: ${{ secrets.PRIVATE_READ_ACCESS || secrets.SPODEIAN_CORE_TOKEN || secrets.GH_PAT || secrets.PAT || secrets.SPODEIAN_TOKEN || github.token }}
 
       - name: Link spodeian-core to parent directory
         shell: bash
@@ -300,7 +300,7 @@ jobs:
           repository: Flaming-Chicken/spodeian-core
           ref: dev
           path: spodeian-core
-          token: ${{ secrets.SPODEIAN_CORE_TOKEN || secrets.GH_PAT || secrets.PAT || secrets.SPODEIAN_TOKEN || github.token }}
+          token: ${{ secrets.PRIVATE_READ_ACCESS || secrets.SPODEIAN_CORE_TOKEN || secrets.GH_PAT || secrets.PAT || secrets.SPODEIAN_TOKEN || github.token }}
 
       - name: Link spodeian-core to parent directory
         shell: bash
@@ -377,7 +377,7 @@ jobs:
           repository: Flaming-Chicken/spodeian-core
           ref: dev
           path: spodeian-core
-          token: ${{ secrets.SPODEIAN_CORE_TOKEN || secrets.GH_PAT || secrets.PAT || secrets.SPODEIAN_TOKEN || github.token }}
+          token: ${{ secrets.PRIVATE_READ_ACCESS || secrets.SPODEIAN_CORE_TOKEN || secrets.GH_PAT || secrets.PAT || secrets.SPODEIAN_TOKEN || github.token }}
 
       - name: Link spodeian-core to parent directory
         shell: bash
