@@ -7,12 +7,14 @@
 [![WebGPU / WASM](https://img.shields.io/badge/WebGPU-Enabled-blue.svg)](https://www.w3.org/TR/webgpu/)
 [![egui 0.36](https://img.shields.io/badge/egui-0.36-00bcd4.svg)](https://github.com/emilk/egui)
 
-**RainAI** is a production-grade, real-time neural spatial audio synthesis and physical simulation engine operating at 48 kHz with First-Order Ambisonics (FOA: $W, Y, Z, X$). It synthesizes physically authentic acoustic rain soundscapes by unifying micro-meteorological fluid dynamics, droplet impact mechanics, structural acoustics, and deep neural autoregressive trajectory modeling (Mamba-2 State Space Duality with Mixture-of-Experts) with continuous differentiable DSP (HOA-DDSP).
+**RainAI** is a production-grade, real-time neural spatial audio synthesis and physical simulation engine operating at 48 kHz with First-Order Ambisonics (FOA: $W, Y, Z, X$). It synthesizes physically authentic acoustic rain soundscapes by unifying micro-meteorological fluid dynamics, droplet impact mechanics, structural acoustics, and deep neural autoregressive trajectory modeling (Continuous-Time Mamba-2 & Liquid State Space architecture with adaptive RK45 integration) with continuous differentiable DSP (HOA-DDSP).
 
-The engine features a dual-stack architecture:
+The engine features a multi-tiered architecture:
 1. **Master Native Rust Candle Engine** (`crates/utilities`): Pure-Rust end-to-end training, dataset preprocessing, acoustic feature extraction, and SafeTensors model export without Python or CUDA runtime dependencies.
 2. **PyTorch Deep Learning & Research Suite** (`src/`): Automated hyperparameter profiling, physical loss formulation development, and multi-backend export pipeline (ONNX, SafeTensors, WASM).
 3. **Cross-Platform Studio & Edge Runtimes** (`crates/`): Zero-allocation audio callback loop with egui UI targeting native desktop (Windows, macOS, Linux), terminal TUI studio, and high-performance WebAssembly/WebGPU browser runtimes.
+4. **Continuous-Time Neural ODE Steering & Stochastic Driver**: Driven by a correlated leaky brown noise process ($-6\text{ dB/oct}$) so the latent state continuously evolves without fixed-point convergence, feeding 16-band real-time dynamic resonant frequency drifts (`apply_drifts`).
+5. **Zero-Copy Explainable AI (XAI)**: Binary attribution dictionary (`RATT` binary format) compiled into the client for instantaneous $O(\log N)$ offline resolution of dataset contributions, surface tags, and licensing terms (CC-BY/CC0/proprietary).
 
 ---
 
@@ -24,11 +26,11 @@ The engine features a dual-stack architecture:
                                         │
              ┌──────────────────────────┴──────────────────────────┐
              ▼                                                     ▼
- [ FLUID & STRUCTURAL DYNAMICS ]                      [ NEURAL LATENT TRAJECTORY ]
-  • Truncated Gamma DSD N(D)                           • Mamba-2 SSD State Space (MoE)
-  • Gunn-Kinzer Terminal Velocity vt(D)                • Threshold-Coverage Routing (τ_cov)
-  • Pumphrey & Crum Bubble Entrapment                  • Temporal Tabu Diversity (γ_tabu)
-  • van den Doel Minnaert Chirps                       • Iterative Latent Deliberation
+ [ FLUID & STRUCTURAL DYNAMICS ]                      [ NEURAL LATENT TRAJECTORY (ODE) ]
+  • Truncated Gamma DSD N(D)                           • Continuous Mamba-2 & Liquid SSM
+  • Gunn-Kinzer Terminal Velocity vt(D)                • Correlated Leaky Brown Driver (-6dB/oct)
+  • Pumphrey & Crum Bubble Entrapment                  • Adaptive Step Integrator (RK45 / DP5)
+  • van den Doel Minnaert Chirps                       • Dynamic Resonant Frequency Drifts (16 bands)
   • ISO 140-18 Roof Plate Modal Harmonics              • 1-Step Consistency Distillation Jump
   • AS/NZS 3500.3 Downpipe Resonances                  • Continuous HWIL Governor
              │                                                     │
@@ -129,6 +131,10 @@ graph TD
   - **Hardware Awareness**: Continuous HWIL Buffer Deficit and Active Expert Penalties.
   - **Effectiveness**: Transient Half-Wave Spectral Flux Loss and Bark-scale psychoacoustic filterbank weighting.
 - **Physics-Preserving Augmentations**: 3D SO(3) Ambisonic rotation matrix augmentation ($\mathbf{R} \in \text{SO}(3)$) conserving 100% of omnidirectional acoustic pressure $W$ while rotating directional gradients, paired with convex surface wetness mixup.
+- **Continuous-Time Neural ODE & Adaptive Solvers**: Integrates parametric trajectory control using Dormand-Prince (RK45) adaptive-step integration, Bogacki-Shampine, and Heun solvers, dynamically allocating computational budget based on acoustic turbulence.
+- **Correlated Stochastic Driver & Neural Micro-Drifts**: Employs a zero-allocation -6 dB/oct leaky brown noise process to eliminate fixed-point convergence, dynamically modulating the 16 subtractive filterbank center frequencies via `apply_drifts`.
+- **Zero-Copy Explainable AI (XAI) & Attribution HUD**: Integrated `BinaryAttributionDictionary` (`RATT` binary format) and live collapsible HUD resolving contributor provenance, surface tags, and open licensing metadata 100% offline.
+- **Sample Rate Policy & Anti-Aliasing**: Synthesizer defaults to 48 kHz on WebAudio; rates below the 32 kHz floor are safely supported with sub-Nyquist anti-aliasing filtering and console telemetry warnings.
 
 ---
 

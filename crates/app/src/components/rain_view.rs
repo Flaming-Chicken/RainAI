@@ -2046,16 +2046,16 @@ impl RainView {
                         .text(format!("{} Active Experts", rain.telemetry.active_experts)),
                 );
 
-                // Latent Diffusion Bypass Action
+                // Neural Waveshaper Bypass Action
                 if rain.telemetry.diffusion_bypassed {
                     ui.colored_label(
                         Color32::from_rgb(255, 120, 60),
-                        "⚡ Latent Diffusion Bypass: ACTIVE (Fast DSP Projection)",
+                        "⚡ Neural Waveshaper: Bypassed (Direct DSP Mode)",
                     );
                 } else {
                     ui.colored_label(
                         Color32::from_rgb(120, 220, 150),
-                        "✓ Latent Diffusion Bypass: Inactive (Full Recurrent Denoising)",
+                        "✓ Neural Waveshaper: Active (Full Acoustic Modulation)",
                     );
                 }
 
