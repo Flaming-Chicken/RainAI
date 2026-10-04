@@ -68,7 +68,7 @@ let dbInitialized = false;
 async function ensureDbSchema(db) {
   if (!db || dbInitialized) return;
   try {
-    await db.exec(`
+    await db.prepare(`
       CREATE TABLE IF NOT EXISTS records (
         sha256 TEXT PRIMARY KEY,
         filename TEXT NOT NULL,
@@ -87,9 +87,11 @@ async function ensureDbSchema(db) {
         quarantine_reason TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-      CREATE INDEX IF NOT EXISTS idx_records_status ON records(status);
-    `);
+      )
+    `).run();
+    await db.prepare(`
+      CREATE INDEX IF NOT EXISTS idx_records_status ON records(status)
+    `).run();
     dbInitialized = true;
   } catch (err) {
     console.error("D1 schema initialization error:", err);
