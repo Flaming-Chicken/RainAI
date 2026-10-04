@@ -350,7 +350,7 @@ impl HardwareComputeRouter {
                         h = 1.0 - t;
                     }
                     let v_curr = backend.evaluate_flow_velocity(&current_x, t)?;
-                    h = controller.predict_step_size(&v_curr, v_prev.as_deref(), h);
+                    h = controller.predict_step_size(&v_curr, v_prev.as_deref(), None, None, 0.0, h);
                     let result = crate::kernels::adaptive_flow_solver::BogackiShampine23::step(
                         &current_x,
                         t,
