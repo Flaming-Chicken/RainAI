@@ -44,7 +44,9 @@ jobs:
       - name: Build Web Application
         env:
           RUSTFLAGS: "-C target-feature=+bulk-memory,+mutable-globals"
-        run: trunk build --release
+        run: |
+          mkdir -p ../inference/data/wasm
+          trunk build --release
         working-directory: crates/web
 
       - name: Deploy to Cloudflare Dev (Preview)
