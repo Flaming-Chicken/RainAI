@@ -147,6 +147,11 @@ jobs:
             fi
           fi
 
+      - name: Install Linux Audio & Windowing Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -256,16 +261,17 @@ jobs:
 
       - name: Build Web Application via Trunk (SIMD enabled)
         env:
-          RUSTFLAGS: "-C target-feature=+simd128"
+          RUSTFLAGS: "-C target-feature=+bulk-memory,+mutable-globals"
         run: |
-          mkdir -p crates/inference/data/wasm
+          mkdir -p ../inference/data/wasm
           trunk build --release
-          for wasm_file in crates/web/dist/*.wasm; do
+          for wasm_file in dist/*.wasm; do
             if [ -f "$wasm_file" ]; then
-              echo "Optimizing $wasm_file with wasm-opt (SIMD enabled)"
-              wasm-opt -Oz --enable-simd "$wasm_file" -o "$wasm_file" || true
+              echo "Optimizing $wasm_file with wasm-opt"
+              wasm-opt -Oz --enable-simd --enable-bulk-memory --enable-mutable-globals "$wasm_file" -o "$wasm_file" || true
             fi
           done
+        working-directory: crates/web
 
       - name: Verify Cloudflare Pages Output Distribution
         run: |
