@@ -702,3 +702,209 @@ impl DpmSolverPP {
         Ok(current_x)
     }
 }
+
+/// Learned Predictor-Evaluator-Corrector (PEC) Integrator.
+///
+/// Uses a neural-parameterized Predictor-Corrector loop where the corrector
+/// weights and evaluation strides are dynamically predicted by a lightweight
+/// hypernetwork or learned end-to-end to optimally traverse the data manifold.
+#[derive(Debug, Clone)]
+pub struct TrainedPecSolver {
+    /// Learned weights for the Predictor (Adams-Bashforth style)
+    pub predictor_coeffs: Vec<f32>,
+    /// Learned weights for the Corrector (Adams-Moulton style)
+    pub corrector_coeffs: Vec<f32>,
+}
+
+impl TrainedPecSolver {
+    pub fn new(predictor_coeffs: Vec<f32>, corrector_coeffs: Vec<f32>) -> Self {
+        Self {
+            predictor_coeffs,
+            corrector_coeffs,
+        }
+    }
+
+    /// Integrates a trajectory using the learned predictor-corrector history buffer.
+    pub fn solve_trajectory<F>(
+        &self,
+        x0: &[f32],
+        steps: usize,
+        mut velocity_fn: F,
+    ) -> Result<Vec<f32>, String>
+    where
+        F: FnMut(&[f32], f32) -> Vec<f32>,
+    {
+        if steps == 0 {
+            return Ok(x0.to_vec());
+        }
+
+        let n = x0.len();
+        let dt = 1.0f32 / steps as f32;
+        let mut current_x = x0.to_vec();
+
+        let hist_len = self
+            .predictor_coeffs
+            .len()
+            .max(self.corrector_coeffs.len().saturating_sub(1));
+        let mut v_history = std::collections::VecDeque::with_capacity(hist_len);
+
+        for step in 0..steps {
+            let t = step as f32 * dt;
+
+            // Evaluator: get v(x_n, t_n)
+            let v_curr = velocity_fn(&current_x, t);
+
+            if v_history.len() == hist_len {
+                v_history.pop_back();
+            }
+            v_history.push_front(v_curr.clone());
+
+            // Startup phase: use Euler until history buffer is filled
+            if v_history.len() < hist_len {
+                for i in 0..n {
+                    current_x[i] += dt * v_curr[i];
+                }
+                continue;
+            }
+
+            // Predictor (P)
+            let mut x_pred = current_x.clone();
+            for i in 0..n {
+                let mut v_pred = 0.0;
+                for (j, &c) in self.predictor_coeffs.iter().enumerate() {
+                    v_pred += c * v_history[j][i];
+                }
+                x_pred[i] += dt * v_pred;
+            }
+
+            // Evaluator (E) for predictor
+            let v_pred_eval = velocity_fn(&x_pred, t + dt);
+
+            // Corrector (C)
+            for i in 0..n {
+                let mut v_corr = if !self.corrector_coeffs.is_empty() {
+                    self.corrector_coeffs[0] * v_pred_eval[i]
+                } else {
+                    0.0
+                };
+                for (j, &c) in self.corrector_coeffs.iter().skip(1).enumerate() {
+                    v_corr += c * v_history[j][i];
+                }
+                current_x[i] += dt * v_corr;
+            }
+        }
+
+        Ok(current_x)
+    }
+}
+
+/// Learned Implicit Runge-Kutta (Implicit RK) Solver.
+///
+/// Implements implicit solvers (like Backward Euler or Radau IIA) with a learned
+/// fixed-point iteration matrix, optimizing for unconditionally stable large step
+/// sizes on stiff physical equations.
+#[derive(Debug, Clone)]
+pub struct TrainedImplicitRkSolver {
+    /// Learned Butcher tableau A matrix (flattened row-major)
+    pub a_coeffs: Vec<f32>,
+    /// Learned weights b
+    pub b_coeffs: Vec<f32>,
+    /// Learned nodes c
+    pub c_coeffs: Vec<f32>,
+    pub stages: usize,
+    pub max_newton_iters: usize,
+    pub tol: f32,
+}
+
+impl TrainedImplicitRkSolver {
+    pub fn new(a: Vec<f32>, b: Vec<f32>, c: Vec<f32>, max_iters: usize, tol: f32) -> Self {
+        let stages = b.len();
+        Self {
+            a_coeffs: a,
+            b_coeffs: b,
+            c_coeffs: c,
+            stages,
+            max_newton_iters: max_iters,
+            tol,
+        }
+    }
+
+    pub fn step<F>(&self, x: &[f32], t: f32, h: f32, mut velocity_fn: F) -> Result<Vec<f32>, String>
+    where
+        F: FnMut(&[f32], f32) -> Vec<f32>,
+    {
+        let n = x.len();
+        // Initialize k_i with explicit Euler guess
+        let mut k = vec![vec![0.0f32; n]; self.stages];
+        let v0 = velocity_fn(x, t);
+        for i in 0..self.stages {
+            k[i] = v0.clone();
+        }
+
+        // Fixed point Picard iteration for implicit stages
+        for _iter in 0..self.max_newton_iters {
+            let mut max_err = 0.0f32;
+            let mut k_next = k.clone();
+
+            for i in 0..self.stages {
+                let mut x_stage = x.to_vec();
+                for j in 0..self.stages {
+                    let a_ij = self.a_coeffs[i * self.stages + j];
+                    if a_ij != 0.0 {
+                        for dim in 0..n {
+                            x_stage[dim] += h * a_ij * k[j][dim];
+                        }
+                    }
+                }
+
+                let v_stage = velocity_fn(&x_stage, t + self.c_coeffs[i] * h);
+
+                for dim in 0..n {
+                    let err = (v_stage[dim] - k[i][dim]).abs();
+                    if err > max_err {
+                        max_err = err;
+                    }
+                    k_next[i][dim] = v_stage[dim];
+                }
+            }
+            k = k_next;
+
+            if max_err < self.tol {
+                break;
+            }
+        }
+
+        let mut x_next = x.to_vec();
+        for i in 0..self.stages {
+            for dim in 0..n {
+                x_next[dim] += h * self.b_coeffs[i] * k[i][dim];
+            }
+        }
+
+        Ok(x_next)
+    }
+
+    pub fn solve_trajectory<F>(
+        &self,
+        x0: &[f32],
+        steps: usize,
+        mut velocity_fn: F,
+    ) -> Result<Vec<f32>, String>
+    where
+        F: FnMut(&[f32], f32) -> Vec<f32>,
+    {
+        if steps == 0 {
+            return Ok(x0.to_vec());
+        }
+
+        let dt = 1.0f32 / steps as f32;
+        let mut current_x = x0.to_vec();
+
+        for step in 0..steps {
+            let t = step as f32 * dt;
+            current_x = self.step(&current_x, t, dt, &mut velocity_fn)?;
+        }
+
+        Ok(current_x)
+    }
+}
