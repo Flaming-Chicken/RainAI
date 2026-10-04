@@ -258,7 +258,9 @@ impl RainView {
                     };
                     if ui
                         .button(spec_label)
-                        .on_hover_text("Toggle visibility of the bottom neural spectrogram waterfall")
+                        .on_hover_text(
+                            "Toggle visibility of the bottom neural spectrogram waterfall",
+                        )
                         .clicked()
                     {
                         self.show_spectrogram = !self.show_spectrogram;
