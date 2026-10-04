@@ -1357,7 +1357,7 @@ impl RainView {
 
                 let btn = egui::Button::new("📂 Import Custom IR File...");
                 if ui.add(btn).clicked() {
-                    #[cfg(not(target_arch = "wasm32"))]
+                    #[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))]
                     {
                         if let Some(path) = rfd::FileDialog::new()
                             .add_filter("Impulse Response (*.wav, *.sofa, *.json)", &["wav", "sofa", "json"])
@@ -1370,9 +1370,9 @@ impl RainView {
                             }
                         }
                     }
-                    #[cfg(target_arch = "wasm32")]
+                    #[cfg(any(target_arch = "wasm32", target_os = "android", target_os = "ios"))]
                     {
-                        self.custom_ir_status = Some("Web file picking supported via drag-and-drop or cache API tier".to_string());
+                        self.custom_ir_status = Some("Mobile/Web file picking supported via drag-and-drop or cache API tier".to_string());
                     }
                 }
             });
