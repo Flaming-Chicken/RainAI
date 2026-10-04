@@ -238,6 +238,14 @@ impl SubtractiveFilterbank16 {
 
         Self { filters }
     }
+
+    /// Dynamically applies neural-parametric frequency micro-drifts from Mamba2-MoE inference
+    pub fn apply_drifts(&mut self, drifts: &[f32; 16], sample_rate: f32) {
+        for (i, filter) in self.filters.iter_mut().enumerate().take(16) {
+            let tuned_freq = (NOMINAL_BAND_FREQS[i] * (1.0 + LEARNED_DRIFT[i] + drifts[i])).clamp(20.0, sample_rate * 0.48);
+            filter.update(tuned_freq, NOMINAL_BAND_Q[i], sample_rate);
+        }
+    }
 }
 
 /// Real-time Procedural DDSP Synthesis Engine
@@ -248,6 +256,7 @@ pub struct ProceduralSynthesizer {
     pink_filter: PinkNoiseFilter,
     brown_filter: BrownNoiseFilter,
     filterbank: SubtractiveFilterbank16,
+    last_drifts: [f32; 16],
     thunder_rumble: f32,
     thunder_decay: f32,
     insect_phase: f32,
@@ -271,6 +280,7 @@ impl ProceduralSynthesizer {
             pink_filter: PinkNoiseFilter::default(),
             brown_filter: BrownNoiseFilter::default(),
             filterbank: SubtractiveFilterbank16::new(sample_rate),
+            last_drifts: [0.0; 16],
             thunder_rumble: 0.0,
             thunder_decay: 0.9995,
             insect_phase: 0.0,
@@ -319,15 +329,22 @@ impl ProceduralSynthesizer {
         // 2. Continuous 16-band subtractive parametric resonance response
         let rain_drive = base_noise * state.weather.intensity;
 
-        let mod_gains = if let Some(ctrl) = modulation {
-            ctrl.band_gains
-        } else {
-            [1.0; 16]
-        };
-        let droplet_rate_scale = modulation.map(|c| c.droplet_rate_mod).unwrap_or(1.0);
-        let droplet_energy_scale = modulation.map(|c| c.droplet_energy_mod).unwrap_or(1.0);
-        let wind_howl_scale = modulation.map(|c| c.wind_howl_mod).unwrap_or(1.0);
-        let wind_gust_scale = modulation.map(|c| c.wind_gust_mod).unwrap_or(1.0);
+        let (mod_gains, droplet_rate_scale, droplet_energy_scale, wind_howl_scale, wind_gust_scale) =
+            if let Some(ctrl) = modulation {
+                if ctrl.band_freq_drifts != self.last_drifts {
+                    self.filterbank.apply_drifts(&ctrl.band_freq_drifts, self.sample_rate);
+                    self.last_drifts = ctrl.band_freq_drifts;
+                }
+                (
+                    ctrl.band_gains,
+                    ctrl.droplet_rate_mod,
+                    ctrl.droplet_energy_mod,
+                    ctrl.wind_howl_mod,
+                    ctrl.wind_gust_mod,
+                )
+            } else {
+                ([1.0; 16], 1.0, 1.0, 1.0, 1.0)
+            };
 
         // 12 Tied Physics Bands with Neural Gain Modulation
         let tin_sound = self.filterbank.filters[0].process(rain_drive)
