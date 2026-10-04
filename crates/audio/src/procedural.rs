@@ -584,6 +584,15 @@ impl ProceduralSynthesizer {
             z += sz * 0.20 * rain_master;
         }
 
+        // Audio-Rate Neural Waveshaper (L0 Exciter)
+        // Applies nonlinear air excitation and harmonic saturation when active
+        if !state.telemetry.diffusion_bypassed {
+            let drive = 1.25f32;
+            let wet = 0.18f32;
+            let w_sat = (w * drive).tanh();
+            w = w * (1.0 - wet) + w_sat * wet;
+        }
+
         FoaFrame::new(w, x, y, z)
     }
 

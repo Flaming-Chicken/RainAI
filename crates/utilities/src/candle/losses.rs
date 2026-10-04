@@ -487,3 +487,26 @@ pub fn compute_expert_drift_loss(
     let count = drift_pairs.len() as f64;
     Ok((total_penalty / count)?)
 }
+
+/// Quantization and Efficiency Optimization Loss for the Neural Waveshaper.
+/// Regularizes the continuous learned bit-width beta towards minimal viable precision
+/// and rewards parameter sparsity pruning to discover the Pareto-optimal default deployment tier.
+pub fn compute_waveshaper_efficiency_loss(
+    quantizer: &crate::candle::models::CandleLearnedQuantizer,
+    target_bits: f64,
+    lambda_bits: f64,
+    lambda_prune: f64,
+) -> Result<(Tensor, Tensor, Tensor)> {
+    let beta = &quantizer.beta;
+    let target = Tensor::full(target_bits as f32, beta.shape(), beta.device())?;
+    let excess_bits = (beta - &target)?.relu()?;
+    let bits_penalty = excess_bits.sqr()?.mean_all()?;
+
+    // Sparsity pruning incentive (rewarding larger dead zones in delta_prune up to 0.25)
+    let prune_target = Tensor::full(0.25f32, quantizer.delta_prune.shape(), quantizer.delta_prune.device())?;
+    let prune_margin = (&prune_target - &quantizer.delta_prune)?;
+    let prune_penalty = prune_margin.relu()?.sqr()?.mean_all()?;
+
+    let total = ((&bits_penalty * lambda_bits)? + (&prune_penalty * lambda_prune)?)?;
+    Ok((total, bits_penalty, prune_penalty))
+}
