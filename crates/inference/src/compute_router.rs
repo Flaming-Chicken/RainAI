@@ -358,7 +358,14 @@ impl HardwareComputeRouter {
                         h = 1.0 - t;
                     }
                     let v_curr = backend.evaluate_flow_velocity(&current_x, t)?;
-                    h = controller.predict_step_size(&v_curr, v_prev.as_deref(), None, None, 0.0, h);
+                    h = controller.predict_step_size(
+                        &v_curr,
+                        v_prev.as_deref(),
+                        None,
+                        None,
+                        0.0,
+                        h,
+                    );
                     let result = crate::kernels::adaptive_flow_solver::BogackiShampine23::step(
                         &current_x,
                         t,
@@ -383,22 +390,17 @@ impl HardwareComputeRouter {
                 Ok(current_x)
             }
             FlowSolverAlgorithm::TrainedPec { steps } => {
-                let solver = crate::kernels::TrainedPecSolver::new(
-                    vec![1.5, -0.5],
-                    vec![0.5, 0.5],
-                );
+                let solver = crate::kernels::TrainedPecSolver::new(vec![1.5, -0.5], vec![0.5, 0.5]);
                 let mut error_opt = None;
-                let final_x = solver.solve_trajectory(
-                    x0,
-                    steps,
-                    |x_c, t_c| match backend.evaluate_flow_velocity(x_c, t_c) {
+                let final_x = solver.solve_trajectory(x0, steps, |x_c, t_c| {
+                    match backend.evaluate_flow_velocity(x_c, t_c) {
                         Ok(v) => v,
                         Err(e) => {
                             error_opt = Some(e);
                             vec![0.0f32; x0.len()]
                         }
-                    },
-                )?;
+                    }
+                })?;
                 if let Some(err) = error_opt {
                     Err(err)
                 } else {
@@ -414,17 +416,15 @@ impl HardwareComputeRouter {
                     1e-4,
                 );
                 let mut error_opt = None;
-                let final_x = solver.solve_trajectory(
-                    x0,
-                    steps,
-                    |x_c, t_c| match backend.evaluate_flow_velocity(x_c, t_c) {
+                let final_x = solver.solve_trajectory(x0, steps, |x_c, t_c| {
+                    match backend.evaluate_flow_velocity(x_c, t_c) {
                         Ok(v) => v,
                         Err(e) => {
                             error_opt = Some(e);
                             vec![0.0f32; x0.len()]
                         }
-                    },
-                )?;
+                    }
+                })?;
                 if let Some(err) = error_opt {
                     Err(err)
                 } else {

@@ -100,6 +100,8 @@ pub fn export_to_compressed_bson<T: serde::Serialize>(data: &T) -> Result<Vec<u8
 }
 
 /// Imports and restores any entity from a compressed (or raw) BSON slice.
-pub fn import_from_compressed_bson<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
+pub fn import_from_compressed_bson<T: serde::de::DeserializeOwned>(
+    bytes: &[u8],
+) -> Result<T, String> {
     spodeian_export::import_from_compressed_bson(bytes).map_err(|e| e.to_string())
 }

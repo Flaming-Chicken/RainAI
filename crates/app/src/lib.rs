@@ -312,7 +312,9 @@ impl TemplateApp {
             }
         } else {
             self.export_text_buffer = match format {
-                ExportFormat::Json => serde_json::to_string_pretty(&self.state.rain).unwrap_or_default(),
+                ExportFormat::Json => {
+                    serde_json::to_string_pretty(&self.state.rain).unwrap_or_default()
+                }
                 ExportFormat::Csv => export_to_csv(&self.state.collection),
                 ExportFormat::Bson => unreachable!(),
             };

@@ -79,11 +79,13 @@ fn test_learned_flow_controller_curvature_damping() {
     let controller = LearnedFlowController::new(0.10, 0.01, 0.25);
 
     let v_straight = vec![0.5f32; 16];
-    let h_straight = controller.predict_step_size(&v_straight, Some(&v_straight), None, None, 0.0, 0.05);
+    let h_straight =
+        controller.predict_step_size(&v_straight, Some(&v_straight), None, None, 0.0, 0.05);
 
     // Highly curved trajectory: sharp change in velocity vector
     let v_curved = vec![-0.8f32; 16];
-    let h_curved = controller.predict_step_size(&v_curved, Some(&v_straight), None, None, 0.0, 0.05);
+    let h_curved =
+        controller.predict_step_size(&v_curved, Some(&v_straight), None, None, 0.0, 0.05);
 
     // Curvature must throttle step size down to preserve dynamic fidelity
     assert!(h_curved < h_straight);
@@ -94,20 +96,39 @@ fn test_learned_flow_controller_curvature_damping() {
     let v_prev_prev = vec![0.5f32; 16];
     let v_prev = vec![0.0f32; 16];
     let v_jerk = vec![-1.5f32; 16];
-    let h_jerk = controller.predict_step_size(&v_jerk, Some(&v_prev), Some(&v_prev_prev), None, 0.0, 0.05);
+    let h_jerk =
+        controller.predict_step_size(&v_jerk, Some(&v_prev), Some(&v_prev_prev), None, 0.0, 0.05);
     assert!(h_jerk < h_straight);
 
     // Test Weather Latent Turbulence Throttling
     let calm_weather = vec![0.05f32; 16];
     let storm_weather = vec![2.5f32; 16];
-    let h_calm = controller.predict_step_size(&v_straight, Some(&v_straight), None, Some(&calm_weather), 0.0, 0.05);
-    let h_storm = controller.predict_step_size(&v_straight, Some(&v_straight), None, Some(&storm_weather), 0.0, 0.05);
+    let h_calm = controller.predict_step_size(
+        &v_straight,
+        Some(&v_straight),
+        None,
+        Some(&calm_weather),
+        0.0,
+        0.05,
+    );
+    let h_storm = controller.predict_step_size(
+        &v_straight,
+        Some(&v_straight),
+        None,
+        Some(&storm_weather),
+        0.0,
+        0.05,
+    );
     assert!(h_storm < h_calm);
 
     // Test Hardware Thermal Relaxation Override
     let h_cold = controller.predict_step_size(&v_curved, Some(&v_straight), None, None, 0.0, 0.05);
-    let h_throttled = controller.predict_step_size(&v_curved, Some(&v_straight), None, None, 1.0, 0.05);
-    assert!(h_throttled > h_cold, "Throttled hardware must force larger step size to prevent underruns");
+    let h_throttled =
+        controller.predict_step_size(&v_curved, Some(&v_straight), None, None, 1.0, 0.05);
+    assert!(
+        h_throttled > h_cold,
+        "Throttled hardware must force larger step size to prevent underruns"
+    );
 }
 
 #[test]
@@ -134,13 +155,7 @@ fn test_trained_implicit_rk_solver_trajectory() {
 
     // 2-stage Gauss-Legendre or Lobatto implicit RK matrix
     // Backward Euler: A = [1.0], b = [1.0], c = [1.0]
-    let solver = TrainedImplicitRkSolver::new(
-        vec![1.0],
-        vec![1.0],
-        vec![1.0],
-        10,
-        1e-4,
-    );
+    let solver = TrainedImplicitRkSolver::new(vec![1.0], vec![1.0], vec![1.0], 10, 1e-4);
 
     let x0 = vec![2.0f32];
     // dx/dt = -0.5 * x => x(1.0) = 2.0 * e^(-0.5) ~ 1.21306

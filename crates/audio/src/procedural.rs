@@ -242,7 +242,8 @@ impl SubtractiveFilterbank16 {
     /// Dynamically applies neural-parametric frequency micro-drifts from Mamba2-MoE inference
     pub fn apply_drifts(&mut self, drifts: &[f32; 16], sample_rate: f32) {
         for (i, filter) in self.filters.iter_mut().enumerate().take(16) {
-            let tuned_freq = (NOMINAL_BAND_FREQS[i] * (1.0 + LEARNED_DRIFT[i] + drifts[i])).clamp(20.0, sample_rate * 0.48);
+            let tuned_freq = (NOMINAL_BAND_FREQS[i] * (1.0 + LEARNED_DRIFT[i] + drifts[i]))
+                .clamp(20.0, sample_rate * 0.48);
             filter.update(tuned_freq, NOMINAL_BAND_Q[i], sample_rate);
         }
     }
@@ -335,7 +336,8 @@ impl ProceduralSynthesizer {
         let (mod_gains, droplet_rate_scale, droplet_energy_scale, wind_howl_scale, wind_gust_scale) =
             if let Some(ctrl) = modulation {
                 if ctrl.band_freq_drifts != self.last_drifts {
-                    self.filterbank.apply_drifts(&ctrl.band_freq_drifts, self.sample_rate);
+                    self.filterbank
+                        .apply_drifts(&ctrl.band_freq_drifts, self.sample_rate);
                     self.last_drifts = ctrl.band_freq_drifts;
                 }
                 (
@@ -396,7 +398,8 @@ impl ProceduralSynthesizer {
         // Acoustic runoff & bubble chirps
         let runoff_drive =
             rain_drive * (state.surfaces.tin * 0.6 + state.surfaces.puddle_shallow * 0.4);
-        let downpipe_sound = self.filterbank.filters[9].process(runoff_drive) * 1.3 * self.smoothed_gains[9];
+        let downpipe_sound =
+            self.filterbank.filters[9].process(runoff_drive) * 1.3 * self.smoothed_gains[9];
 
         // Discrete rain droplet Poisson impacts
         let droplet_prob = (state.weather.intensity * 0.04 * droplet_rate_scale).clamp(0.001, 0.4);
@@ -422,16 +425,20 @@ impl ProceduralSynthesizer {
 
         // 4 Untied Residual Texture Bands
         let mist_drive = white * (state.weather.intensity * 0.2 + state.wind.speed * 0.1);
-        let mist_sound = self.filterbank.filters[12].process(mist_drive) * 0.8 * self.smoothed_gains[12];
+        let mist_sound =
+            self.filterbank.filters[12].process(mist_drive) * 0.8 * self.smoothed_gains[12];
 
         let turb_drive = wind_drive * (1.0 + state.wind.gustiness * 0.8) * 0.5;
-        let turb_sound =
-            self.filterbank.filters[13].process(turb_drive) * 0.9 * wind_gust_scale * self.smoothed_gains[13];
+        let turb_sound = self.filterbank.filters[13].process(turb_drive)
+            * 0.9
+            * wind_gust_scale
+            * self.smoothed_gains[13];
 
         let rattle_drive = rain_drive
             * (state.surfaces.leaves_broad + state.surfaces.pine_needles)
             * (state.wind.speed * 0.5 + 0.3);
-        let rattle_sound = self.filterbank.filters[14].process(rattle_drive) * 0.7 * self.smoothed_gains[14];
+        let rattle_sound =
+            self.filterbank.filters[14].process(rattle_drive) * 0.7 * self.smoothed_gains[14];
 
         let transducer_drive = white * (state.weather.intensity * 0.05);
         let transducer_sound =
