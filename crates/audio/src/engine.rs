@@ -12,6 +12,15 @@ use shared::rain::{EngineTelemetry, MetaControllerInterceptionMode, RainState, S
 use std::sync::{Arc, RwLock};
 use thiserror::Error;
 
+/// Hard floor for the synthesis/output sample rate. Below this the 8 kHz-and-up noise-shaped
+/// bands (rain "air", mist, transducer floor) alias or vanish, and the brown-noise corner
+/// frequencies drift far from their tuned values. Lowering it requires an anti-aliasing stage.
+pub const MIN_OUTPUT_SAMPLE_RATE: f32 = 32_000.0;
+/// Rate requested from the platform when the default device/context rate is unsuitable.
+pub const TARGET_OUTPUT_SAMPLE_RATE: f32 = 48_000.0;
+/// Upper sanity bound; anything above is treated as a misreport.
+pub const MAX_OUTPUT_SAMPLE_RATE: f32 = 192_000.0;
+
 #[derive(Error, Debug)]
 pub enum AudioError {
     #[error("No audio output device found")]
@@ -642,27 +651,29 @@ impl WebAudioEngine {
         use wasm_bindgen::JsCast;
         use wasm_bindgen::closure::Closure;
 
-        // Reuse existing window.__rainAudioContext if initialized by index.js, or create a new one
-        let ctx = if let Some(win) = web_sys::window() {
-            if let Ok(existing) =
+        // Reuse window.__rainAudioContext from index.js when it satisfies the output-rate floor;
+        // otherwise create a fresh context that explicitly requests TARGET_OUTPUT_SAMPLE_RATE
+        // (the browser resamples to the hardware rate, so the DSP never runs below the floor).
+        let existing_ctx = web_sys::window()
+            .and_then(|win| {
                 js_sys::Reflect::get(&win, &wasm_bindgen::JsValue::from_str("__rainAudioContext"))
-            {
-                if !existing.is_undefined() && !existing.is_null() {
-                    match existing.dyn_into::<web_sys::AudioContext>() {
-                        Ok(ctx) => ctx,
-                        Err(_) => web_sys::AudioContext::new()
-                            .map_err(|e| AudioError::WebAudioError(format!("{e:?}")))?,
-                    }
-                } else {
-                    web_sys::AudioContext::new()
-                        .map_err(|e| AudioError::WebAudioError(format!("{e:?}")))?
-                }
-            } else {
-                web_sys::AudioContext::new()
+                    .ok()
+            })
+            .and_then(|v| v.dyn_into::<web_sys::AudioContext>().ok())
+            .filter(|c| {
+                let sr = c.sample_rate();
+                sr.is_finite() && (MIN_OUTPUT_SAMPLE_RATE..=MAX_OUTPUT_SAMPLE_RATE).contains(&sr)
+            });
+
+        let ctx = match existing_ctx {
+            Some(ctx) => ctx,
+            None => {
+                let opts = web_sys::AudioContextOptions::new();
+                opts.set_sample_rate(TARGET_OUTPUT_SAMPLE_RATE);
+                web_sys::AudioContext::new_with_context_options(&opts)
+                    .or_else(|_| web_sys::AudioContext::new())
                     .map_err(|e| AudioError::WebAudioError(format!("{e:?}")))?
             }
-        } else {
-            web_sys::AudioContext::new().map_err(|e| AudioError::WebAudioError(format!("{e:?}")))?
         };
 
         if let Some(win) = web_sys::window() {
@@ -674,10 +685,20 @@ impl WebAudioEngine {
         }
 
         let raw_sr = ctx.sample_rate();
-        let sample_rate = if raw_sr.is_finite() && (8000.0..=192000.0).contains(&raw_sr) {
+        let sample_rate = if raw_sr.is_finite()
+            && (MIN_OUTPUT_SAMPLE_RATE..=MAX_OUTPUT_SAMPLE_RATE).contains(&raw_sr)
+        {
+            raw_sr
+        } else if raw_sr.is_finite() && raw_sr >= 8000.0 {
+            web_sys::console::warn_1(&wasm_bindgen::JsValue::from_str(&format!(
+                "AudioContext sample rate {raw_sr} Hz is below the {MIN_OUTPUT_SAMPLE_RATE} Hz floor. Synthesis running with sub-Nyquist anti-aliasing / safe clamping."
+            )));
             raw_sr
         } else {
-            48000.0
+            web_sys::console::warn_1(&wasm_bindgen::JsValue::from_str(&format!(
+                "AudioContext sample rate {raw_sr} Hz is invalid. Defaulting to {TARGET_OUTPUT_SAMPLE_RATE} Hz."
+            )));
+            TARGET_OUTPUT_SAMPLE_RATE
         };
         let quality_tier = initial_state.quality_tier;
         let cached_rain = initial_state.clone();

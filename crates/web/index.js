@@ -1,7 +1,15 @@
 // ============================================================================
 // RainAI Neural Audio Engine Initialization & Autoplay Unlocking
 // ============================================================================
-window.__rainAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+window.__rainAudioContext = (function () {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  try {
+    // Explicit 48 kHz: the browser resamples to hardware, so synthesis never runs below the 32 kHz floor.
+    return new Ctx({ sampleRate: 48000, latencyHint: 'interactive' });
+  } catch (_) {
+    return new Ctx();
+  }
+})();
 window.__rainEngine = null;
 
 // ============================================================================
