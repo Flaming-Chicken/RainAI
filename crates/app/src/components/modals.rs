@@ -3,7 +3,7 @@
 use crate::{ExportFormat, TemplateApp, storage_manager::*};
 use eframe::egui;
 use shared::{
-    ItemCollection, export_to_compressed_bson, import_from_compressed_bson, import_from_csv,
+    export_to_compressed_bson, import_from_compressed_bson, import_from_csv,
     import_from_json,
 };
 
@@ -58,10 +58,10 @@ pub fn render_warning_banners(app: &mut TemplateApp, ctx: &egui::Context) {
                                 |ui| {
                                     if ui.button("Save .bson Backup").clicked() {
                                         if let Ok(bytes) =
-                                            export_to_compressed_bson(&app.state.collection)
+                                            export_to_compressed_bson(&app.state.rain)
                                         {
                                             trigger_binary_download(
-                                                "data_backup.bson",
+                                                "rain_preset_backup.bson",
                                                 &bytes,
                                                 "application/octet-stream",
                                             );
@@ -104,7 +104,7 @@ pub fn render_dialogs(app: &mut TemplateApp, ui: &mut egui::Ui) {
             .show(ui.ctx(), |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.heading("Serverless & Desktop Template");
+                        ui.heading("🌧️ RainAI Neural & Physical Audio Studio");
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 egui::RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
@@ -117,33 +117,45 @@ pub fn render_dialogs(app: &mut TemplateApp, ui: &mut egui::Ui) {
                     ui.separator();
                     ui.add_space(6.0);
 
-                    ui.heading("Serverless & Desktop Architecture");
+                    ui.heading("1. Physical Acoustics & Fluid Simulation");
                     ui.add_space(4.0);
-                    ui.label("This template demonstrates a production-grade, offline-first application architecture compiling to both WebAssembly (via eframe / Trunk / Cloudflare Pages) and Native Desktop (via eframe / Winit).");
+                    ui.label("• 9 Continuous Surface Materials: Corrugated tin roof modal ringing (ISO 140-18), deep water bubble cavitation (Pumphrey & Crum / Minnaert chirps), asphalt splash shockwaves, canvas tent membrane resonance, and glass window pinging.");
+                    ui.label("• Drop Aerodynamics: Ulbrich Gamma Drop Size Distribution (D in [0.2, 5.5] mm) and Gunn-Kinzer terminal velocity aerodynamics ($v_t \\in [0.5, 9.65]$ m/s) coupled with Erpul wind vectors.");
 
                     ui.add_space(8.0);
                     ui.separator();
                     ui.add_space(6.0);
 
-                    ui.heading("Multi-Tier Storage Engine");
+                    ui.heading("2. Continuous-Time Neural ODE & Mamba-2 MoE");
                     ui.add_space(4.0);
-                    ui.label("• Tier 1: Fast synchronous local storage.");
-                    ui.label("• Tier 2: Asynchronous IndexedDB extended quota fallback.");
-                    ui.label("• Persistence: StorageManager persistence bridge prevents browser data eviction.");
-                    ui.label("• Formats: Dual-format JSON and RON deserialization ensures seamless backwards and forward compatibility.");
+                    ui.label("• Continuous State Space: Mamba-2 SSD with 8 specialized trajectory experts, dynamic threshold-coverage routing, and brown noise stochastic driving (-6 dB/oct).");
+                    ui.label("• Advanced Flow Solvers: Supports Dormand-Prince (RK45), Bogacki-Shampine (RK23), Tsitouras 5(4), Heun2, DPM-Solver++, Trained PEC (1-NFE), and Trained Implicit RK (Surrogate 1-NFE).");
+                    ui.label("• 1-Step Consistency Distillation Jump: Instantaneous sub-millisecond Euler inference for battery-constrained mobile and WebGPU devices.");
 
                     ui.add_space(8.0);
                     ui.separator();
                     ui.add_space(6.0);
 
-                    ui.heading("Local Privacy & Security");
+                    ui.heading("3. 3D Spatial Audio & Ambisonic Decoders");
                     ui.add_space(4.0);
+                    ui.label("• 4-Channel First-Order Ambisonics (FOA): W (Omni pressure), Y (Side dipole), Z (Elevation dome), X (Front-back gradient).");
+                    ui.label("• Decoders: Headphones (Binaural HRTF via Google Resonance Audio FIR), Stereo Speakers (Phase-Correct), 7.1 Surround, or custom HRIR (.wav, .sofa) impulse responses.");
+
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+
+                    ui.heading("4. Studio Controls & Navigation");
+                    ui.add_space(4.0);
+                    ui.label("• Play / Pause: Start or pause the live Ambisonic soundscape.");
+                    ui.label("• 🌱 Evolve: Enables non-repeating procedural acoustic drift.");
+                    ui.label("• ⚡ Governor: Autonomous real-time buffer, quantization, and thermal adaptation.");
+                    ui.label("• Export: Lossless faster-than-realtime streaming WAV export (32-bit float / 48 kHz).");
                     ui.label(
-                        egui::RichText::new("100% Client-Side: No telemetry or server database calls.")
-                            .color(egui::Color32::from_rgb(80, 160, 90))
+                        egui::RichText::new("100% Client-Side Privacy: Runs offline in local browser WASM/WebAudio or native desktop with zero cloud telemetry.")
+                            .color(egui::Color32::from_rgb(80, 180, 100))
                             .strong(),
                     );
-                    ui.label("Your data is stored strictly in your local browser or desktop application storage.");
                 });
             });
         if !open {
@@ -152,16 +164,21 @@ pub fn render_dialogs(app: &mut TemplateApp, ui: &mut egui::Ui) {
     }
 
     if app.show_reset_dialog {
-        egui::Window::new("Reset Data?")
+        egui::Window::new("Reset Soundscape Parameters?")
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ui.ctx(), |ui| {
-                ui.label("Are you sure you want to reset all items to default sample data?");
+                ui.label("Are you sure you want to reset all soundscape parameters to default factory preset?");
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Yes, Reset").clicked() {
-                        app.state.collection = ItemCollection::default();
+                    if ui.button("Yes, Reset Soundscape").clicked() {
+                        app.state.rain = shared::RainState::default();
+                        app.rain_view.flow_solver = inference::compute_router::FlowSolverAlgorithm::AdaptiveRk45 {
+                            tol: 1e-3,
+                            initial_h: 0.1,
+                        };
+                        app.rain_view.simulated_thermal_level = 0.22;
                         app.show_reset_dialog = false;
                         app.persist_state();
                     }
@@ -198,7 +215,7 @@ pub fn render_dialogs(app: &mut TemplateApp, ui: &mut egui::Ui) {
                         match format {
                             ExportFormat::Json => {
                                 trigger_text_download(
-                                    "data_export.json",
+                                    "rain_preset.json",
                                     &app.export_text_buffer,
                                     "application/json;charset=utf-8",
                                 );
@@ -211,10 +228,10 @@ pub fn render_dialogs(app: &mut TemplateApp, ui: &mut egui::Ui) {
                                 );
                             }
                             ExportFormat::Bson => {
-                                if let Ok(bytes) = export_to_compressed_bson(&app.state.collection)
+                                if let Ok(bytes) = export_to_compressed_bson(&app.state.rain)
                                 {
                                     trigger_binary_download(
-                                        "data_backup.bson",
+                                        "rain_preset.bson",
                                         &bytes,
                                         "application/octet-stream",
                                     );
@@ -244,13 +261,13 @@ pub fn render_dialogs(app: &mut TemplateApp, ui: &mut egui::Ui) {
 
     if app.show_import_dialog {
         let mut open = true;
-        egui::Window::new("Import Data")
+        egui::Window::new("Import Soundscape Preset")
             .open(&mut open)
             .default_size(egui::vec2(500.0, 360.0))
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ui.ctx(), |ui| {
                 ui.label(
-                    "Paste JSON, CSV or Base64 BSON data below to import into your collection:",
+                    "Paste JSON or Base64 BSON soundscape configuration below to import preset:",
                 );
                 ui.add_space(8.0);
 
@@ -258,7 +275,7 @@ pub fn render_dialogs(app: &mut TemplateApp, ui: &mut egui::Ui) {
                     ui.add(
                         egui::TextEdit::multiline(&mut app.import_text_buffer)
                             .font(egui::TextStyle::Monospace)
-                            .hint_text("Paste JSON, CSV, or Base64 BSON content here...")
+                            .hint_text("Paste JSON or Base64 BSON content here...")
                             .desired_width(f32::INFINITY)
                             .desired_rows(8),
                     );
@@ -271,37 +288,49 @@ pub fn render_dialogs(app: &mut TemplateApp, ui: &mut egui::Ui) {
                         if input.is_empty() {
                             app.import_result_message = Some(Err("Input is empty.".to_string()));
                         } else if input.starts_with('{') {
-                            match import_from_json(input) {
-                                Ok(col) => {
-                                    let count = col.total_count();
-                                    app.state.collection = col;
-                                    app.import_result_message = Some(Ok(format!(
-                                        "Successfully imported {} items from JSON!",
-                                        count
-                                    )));
-                                    app.persist_state();
-                                }
-                                Err(e) => {
-                                    app.import_result_message = Some(Err(e.to_string()));
+                            if let Ok(rain) = serde_json::from_str::<shared::RainState>(input) {
+                                app.state.rain = rain;
+                                app.import_result_message = Some(Ok("Successfully imported Rain Soundscape preset from JSON!".to_string()));
+                                app.persist_state();
+                            } else {
+                                match import_from_json(input) {
+                                    Ok(col) => {
+                                        let count = col.total_count();
+                                        app.state.collection = col;
+                                        app.import_result_message = Some(Ok(format!(
+                                            "Successfully imported {} items from JSON!",
+                                            count
+                                        )));
+                                        app.persist_state();
+                                    }
+                                    Err(e) => {
+                                        app.import_result_message = Some(Err(format!("JSON import failed: {e}")));
+                                    }
                                 }
                             }
                         } else if let Ok(decoded_bytes) = base64::Engine::decode(
                             &base64::engine::general_purpose::STANDARD,
                             input,
                         ) {
-                            match import_from_compressed_bson(&decoded_bytes) {
-                                Ok(col) => {
-                                    let count = col.total_count();
-                                    app.state.collection = col;
-                                    app.import_result_message = Some(Ok(format!(
-                                        "Successfully imported {} items from compressed BSON!",
-                                        count
-                                    )));
-                                    app.persist_state();
-                                }
-                                Err(e) => {
-                                    app.import_result_message =
-                                        Some(Err(format!("BSON import failed: {}", e)));
+                            if let Ok(rain) = import_from_compressed_bson::<shared::RainState>(&decoded_bytes) {
+                                app.state.rain = rain;
+                                app.import_result_message = Some(Ok("Successfully imported Rain Soundscape preset from compressed BSON!".to_string()));
+                                app.persist_state();
+                            } else {
+                                match import_from_compressed_bson::<shared::ItemCollection>(&decoded_bytes) {
+                                    Ok(col) => {
+                                        let count = col.total_count();
+                                        app.state.collection = col;
+                                        app.import_result_message = Some(Ok(format!(
+                                            "Successfully imported {} items from compressed BSON!",
+                                            count
+                                        )));
+                                        app.persist_state();
+                                    }
+                                    Err(e) => {
+                                        app.import_result_message =
+                                            Some(Err(format!("BSON import failed: {}", e)));
+                                    }
                                 }
                             }
                         } else {

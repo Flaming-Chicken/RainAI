@@ -116,7 +116,7 @@ pub fn render_navbar(app: &mut TemplateApp, ui: &mut egui::Ui, constraints: &Scr
 
                 if ui
                     .button("Import")
-                    .on_hover_text("Import JSON, CSV or BSON data")
+                    .on_hover_text("Import soundscape preset from JSON or BSON")
                     .clicked()
                 {
                     app.show_import_dialog = true;
@@ -126,7 +126,7 @@ pub fn render_navbar(app: &mut TemplateApp, ui: &mut egui::Ui, constraints: &Scr
 
                 if ui
                     .button("Reset")
-                    .on_hover_text("Reset to sample items")
+                    .on_hover_text("Reset soundscape parameters to factory default")
                     .clicked()
                 {
                     app.show_reset_dialog = true;
@@ -134,7 +134,7 @@ pub fn render_navbar(app: &mut TemplateApp, ui: &mut egui::Ui, constraints: &Scr
 
                 if ui
                     .button("Export")
-                    .on_hover_text("Export data to JSON / CSV / BSON")
+                    .on_hover_text("Export soundscape preset to JSON or BSON")
                     .clicked()
                 {
                     let format = app.selected_export_format;
