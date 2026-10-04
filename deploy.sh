@@ -84,7 +84,13 @@ rm -rf "$DIST_DIR" dist
 # Dependency check for sibling crates
 if [ ! -d "../spodeian-core" ]; then
     echo "[*] Cloning spodeian-core dependency into parent directory..."
-    git clone --depth 1 --branch dev https://github.com/Flaming-Chicken/spodeian-core.git ../spodeian-core
+    SPODEIAN_REPO="https://github.com/Flaming-Chicken/spodeian-core.git"
+    if [ -n "${SPODEIAN_CORE_TOKEN:-}" ]; then
+        SPODEIAN_REPO="https://x-access-token:${SPODEIAN_CORE_TOKEN}@github.com/Flaming-Chicken/spodeian-core.git"
+    elif [ -n "${GH_PAT:-}" ]; then
+        SPODEIAN_REPO="https://x-access-token:${GH_PAT}@github.com/Flaming-Chicken/spodeian-core.git"
+    fi
+    git clone --depth 1 --branch dev "$SPODEIAN_REPO" ../spodeian-core
 fi
 
 export RUSTFLAGS="-C target-feature=+simd128,+bulk-memory,+mutable-globals,+nontrapping-fptoint,+sign-ext,+reference-types,+multivalue -C link-arg=-zstack-size=2097152 ${RUSTFLAGS:-}"
