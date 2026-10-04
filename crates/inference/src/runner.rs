@@ -347,7 +347,9 @@ impl InferenceRunner {
             self.rng_state ^= self.rng_state >> 12;
             self.rng_state ^= self.rng_state << 25;
             self.rng_state ^= self.rng_state >> 27;
-            let white = (self.rng_state.wrapping_mul(0x2545F4914F6CDD1D) >> 32) as f32 / 4_294_967_296.0 - 0.5;
+            let white = (self.rng_state.wrapping_mul(0x2545F4914F6CDD1D) >> 32) as f32
+                / 4_294_967_296.0
+                - 0.5;
             *val = *val * 0.96 + white * 0.04;
         }
     }
@@ -373,7 +375,11 @@ impl InferenceRunner {
         // 1. Advance the stochastic brown noise driver and inject into conditioning projection
         self.step_brown_driver();
         self.ensure_conditioning_projection(conditioning);
-        for (u, &b) in self.u_t_buffer.iter_mut().zip(self.stochastic_brown_driver.iter()) {
+        for (u, &b) in self
+            .u_t_buffer
+            .iter_mut()
+            .zip(self.stochastic_brown_driver.iter())
+        {
             *u += b * 0.08;
         }
 

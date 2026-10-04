@@ -20,7 +20,7 @@
 ---
 
 ## Phase 3: Continuous-Time Edge Architecture & Version 1.0.0 [CURRENT]
-- [x] Continuous-Time Neural ODE adaptive trajectory solvers (**Dormand-Prince RK45**, Bogacki-Shampine, Heun, DPM-Solver++).
+- [x] Continuous-Time Neural ODE adaptive trajectory solvers (**Dormand-Prince RK45**, Bogacki-Shampine, Heun, DPM-Solver++, **Learned Solvers (Implicit RK, PEC)**).
 - [x] Correlated stochastic brown noise driver ($-6\text{ dB/oct}$) to guarantee non-convergent, living latent trajectories.
 - [x] Real-time neural-parametric frequency micro-drifts (`apply_drifts`) dynamically modulating 16-band biquad filterbanks.
 - [x] Standardized 48 kHz WebAudio synthesis target with sub-32 kHz safe rate clamping and telemetry warnings.
