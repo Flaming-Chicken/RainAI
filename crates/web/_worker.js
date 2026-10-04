@@ -128,6 +128,35 @@ export default {
       // 2. Submit Contribution Metadata Record (D1 Transaction / R2 Sidecar)
       if (url.pathname === "/api/contribute/submit-record" && request.method === "POST") {
         const body = await request.json();
+
+        // Turnstile Verification
+        const turnstileToken = body.cf_turnstile_response || request.headers.get("X-Turnstile-Token");
+        if (!turnstileToken) {
+          return new Response(JSON.stringify({ error: "Missing Turnstile verification token" }), {
+            status: 403,
+            headers: { ...corsHeaders, "Content-Type": "application/json" }
+          });
+        }
+
+        const secretKey = env.TURNSTILE_SECRET_KEY || "1x0000000000000000000000000000000AA";
+        const formData = new FormData();
+        formData.append("secret", secretKey);
+        formData.append("response", turnstileToken);
+        formData.append("remoteip", request.headers.get("CF-Connecting-IP") || "");
+
+        const turnstileReq = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+          method: "POST",
+          body: formData,
+        });
+        const turnstileRes = await turnstileReq.json();
+
+        if (!turnstileRes.success) {
+          return new Response(JSON.stringify({ error: "Turnstile verification failed", details: turnstileRes["error-codes"] }), {
+            status: 403,
+            headers: { ...corsHeaders, "Content-Type": "application/json" }
+          });
+        }
+
         const sha256 = body.sha256 || `url_${Date.now()}`;
         const isUrlOnly = !!body.is_url_only;
 

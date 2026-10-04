@@ -82,3 +82,248 @@ canvas {
   }
 }
 
+// ============================================================================
+// Transparent Studio Loading Skeleton & ETA Progress Bar
+// ============================================================================
+.loading_overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background-color: #121212;
+  display: flex;
+  flex-direction: column;
+  transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.5s;
+  pointer-events: auto;
+
+  &.fade_out {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+}
+
+// Background Layout Skeleton
+.skeleton_navbar {
+  height: 48px;
+  background: #181818;
+  border-bottom: 1px solid #282828;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+
+  .skeleton_brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    .skeleton_icon {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      background: #252525;
+    }
+    .skeleton_title {
+      width: 140px;
+      height: 16px;
+      border-radius: 4px;
+      background: #252525;
+    }
+  }
+
+  .skeleton_nav_buttons {
+    display: flex;
+    gap: 8px;
+    .skeleton_btn {
+      width: 64px;
+      height: 26px;
+      border-radius: 6px;
+      background: #222;
+    }
+  }
+}
+
+.skeleton_studio {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 16px;
+  padding: 16px;
+  opacity: 0.35;
+
+  @media (max-width: 768px) {
+    grid-template-columns: 1fr;
+  }
+
+  .skeleton_panel {
+    background: #161616;
+    border: 1px solid #222;
+    border-radius: 10px;
+    padding: 20px;
+  }
+
+  .skeleton_visualizer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+
+    .skeleton_radar_circle {
+      width: 180px;
+      height: 180px;
+      border-radius: 50%;
+      border: 2px dashed #2a2a2a;
+    }
+    .skeleton_radar_wave {
+      width: 80%;
+      height: 40px;
+      border-radius: 6px;
+      background: #1f1f1f;
+    }
+  }
+
+  .skeleton_controls {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+
+    .skeleton_slider_row {
+      height: 28px;
+      border-radius: 6px;
+      background: #1c1c1c;
+    }
+  }
+}
+
+// Center Dynamic Progress Card
+.loading_center_card {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(90vw, 440px);
+  background: rgba(22, 22, 22, 0.94);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid #333;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.7);
+  border-radius: 14px;
+  padding: 24px;
+  text-align: center;
+  z-index: 10000;
+
+  .loading_title_row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 8px;
+
+    .pulse_dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #4ade80;
+      box-shadow: 0 0 10px #4ade80;
+      animation: pulse_anim 1.5s infinite ease-in-out;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 1.15rem;
+      font-weight: 600;
+      color: #f3f4f6;
+    }
+  }
+
+  .hw_badge_row {
+    margin-bottom: 20px;
+    .badge {
+      display: inline-block;
+      font-size: 0.75rem;
+      font-weight: 500;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      background: #262626;
+      color: #9ca3af;
+      border: 1px solid #383838;
+
+      &.badge-gpu {
+        background: rgba(16, 185, 129, 0.15);
+        color: #34d399;
+        border-color: rgba(16, 185, 129, 0.35);
+      }
+      &.badge-cpu {
+        background: rgba(245, 158, 11, 0.15);
+        color: #fbbf24;
+        border-color: rgba(245, 158, 11, 0.35);
+      }
+    }
+  }
+
+  .progress_container {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+
+    .progress_track {
+      width: 100%;
+      height: 8px;
+      background: #242424;
+      border-radius: 9999px;
+      overflow: hidden;
+
+      .progress_fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #38bdf8, #818cf8);
+        border-radius: 9999px;
+        transition: width 0.15s ease-out;
+      }
+    }
+
+    .progress_status {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.8rem;
+      color: #e5e7eb;
+      font-weight: 500;
+    }
+
+    .progress_metrics {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.72rem;
+      color: #9ca3af;
+      font-family: var(--font-mono);
+    }
+  }
+
+  .recovery_banner {
+    margin-top: 16px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: rgba(239, 68, 68, 0.18);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    text-align: left;
+  }
+}
+
+.hidden {
+  display: none !important;
+}
+
+@keyframes pulse_anim {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.8);
+  }
+}
+

@@ -4,6 +4,91 @@
 window.__rainAudioContext = new (window.AudioContext || window.webkitAudioContext)();
 window.__rainEngine = null;
 
+// ============================================================================
+// Chunked Fetch API & Live ETA Progress Bar Engine
+// ============================================================================
+async function fetchWithChunkedProgress(url, estimatedTotalBytes = 15500000, stepLabel = "Downloading Engine...") {
+  const stepEl = document.getElementById('progress_step');
+  const fillEl = document.getElementById('progress_fill');
+  const pctEl = document.getElementById('progress_pct');
+  const bytesEl = document.getElementById('progress_bytes');
+  const speedEl = document.getElementById('progress_speed');
+  const etaEl = document.getElementById('progress_eta');
+
+  if (stepEl) stepEl.textContent = stepLabel;
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${url}: HTTP ${response.status}`);
+  }
+
+  const contentLength = response.headers.get('content-length');
+  const totalBytes = contentLength ? parseInt(contentLength, 10) : estimatedTotalBytes;
+
+  if (!response.body) {
+    const buf = await response.arrayBuffer();
+    return buf;
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let receivedBytes = 0;
+  const startTime = performance.now();
+  let lastSpeedUpdate = startTime;
+  let lastSpeedBytes = 0;
+  let rollingSpeedBps = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    chunks.push(value);
+    receivedBytes += value.length;
+
+    const now = performance.now();
+    const elapsedSecSinceUpdate = (now - lastSpeedUpdate) / 1000.0;
+
+    if (elapsedSecSinceUpdate >= 0.25 || receivedBytes === totalBytes) {
+      const bytesSinceLast = receivedBytes - lastSpeedBytes;
+      const currentSpeed = bytesSinceLast / Math.max(0.001, elapsedSecSinceUpdate);
+      rollingSpeedBps = rollingSpeedBps === 0 ? currentSpeed : (rollingSpeedBps * 0.7 + currentSpeed * 0.3);
+
+      lastSpeedUpdate = now;
+      lastSpeedBytes = receivedBytes;
+
+      const pct = Math.min(100, Math.round((receivedBytes / totalBytes) * 100));
+      const remainingBytes = Math.max(0, totalBytes - receivedBytes);
+      const etaSeconds = rollingSpeedBps > 1000 ? Math.ceil(remainingBytes / rollingSpeedBps) : 0;
+
+      if (fillEl) fillEl.style.width = `${pct}%`;
+      if (pctEl) pctEl.textContent = `${pct}%`;
+      if (bytesEl) {
+        bytesEl.textContent = `${(receivedBytes / 1048576).toFixed(1)} MB / ${(totalBytes / 1048576).toFixed(1)} MB`;
+      }
+      if (speedEl) {
+        speedEl.textContent = `Speed: ${(rollingSpeedBps / 1048576).toFixed(2)} MB/s`;
+      }
+      if (etaEl) {
+        etaEl.textContent = etaSeconds > 0 ? `ETA: ~${etaSeconds}s` : 'ETA: finalizing...';
+      }
+    }
+  }
+
+  // Concatenate all chunks into a unified Uint8Array
+  const combined = new Uint8Array(receivedBytes);
+  let position = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, position);
+    position += chunk.length;
+  }
+
+  if (fillEl) fillEl.style.width = '100%';
+  if (pctEl) pctEl.textContent = '100%';
+  if (stepEl) stepEl.textContent = 'Engine Ready!';
+
+  return combined.buffer;
+}
+
 async function initializeAudioEngine() {
   if (window.__rainEngine) return window.__rainEngine;
 
@@ -12,9 +97,8 @@ async function initializeAudioEngine() {
   // 1. Load the AudioWorklet module
   await audioCtx.audioWorklet.addModule('inference_worklet.js');
   
-  // 2. Fetch and compile the WebAssembly binary dynamically
-  const response = await fetch('./pkg/web_bg.wasm');
-  const wasmBytes = await response.arrayBuffer();
+  // 2. Fetch and compile the WebAssembly binary dynamically using chunked progress tracking
+  const wasmBytes = await fetchWithChunkedProgress('./pkg/web_bg.wasm', 15500000, "Downloading Neural WASM Engine...");
   const wasmModule = await WebAssembly.compile(wasmBytes);
   
   // 3. Create the Inference Node (0 inputs, 1 output with 4 channels)
@@ -37,6 +121,9 @@ async function initializeAudioEngine() {
   
   window.__rainEngine = { audioCtx, inferenceNode, telemetryArray };
   console.log("RainAI Audio Engine Initialized");
+
+  // Dismiss loading overlay smoothly
+  hideLoadingOverlay();
   
   return window.__rainEngine;
 }
@@ -295,5 +382,176 @@ document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState === 'visible' && window.__wakeLockDesired) {
     await window.__setWakeLock(true);
   }
+});
+
+// ============================================================================
+// Hardware WebGPU vs CPU Acceleration Detection
+// ============================================================================
+window.__webgpuAvailable = false;
+
+async function detectGpuAcceleration() {
+  const badge = document.getElementById('hw_badge');
+  if (!navigator.gpu) {
+    if (badge) {
+      badge.textContent = "⚡ CPU Mode (WebGPU unavailable)";
+      badge.className = "badge badge-cpu";
+    }
+    window.__webgpuAvailable = false;
+    return false;
+  }
+  try {
+    const adapter = await navigator.gpu.requestAdapter();
+    if (!adapter) {
+      if (badge) {
+        badge.textContent = "⚡ CPU Mode (No GPU adapter)";
+        badge.className = "badge badge-cpu";
+      }
+      window.__webgpuAvailable = false;
+      return false;
+    }
+    if (badge) {
+      badge.textContent = "🚀 WebGPU Accelerated";
+      badge.className = "badge badge-gpu";
+    }
+    window.__webgpuAvailable = true;
+    return true;
+  } catch (e) {
+    if (badge) {
+      badge.textContent = "⚡ CPU Mode (Fallback)";
+      badge.className = "badge badge-cpu";
+    }
+    window.__webgpuAvailable = false;
+    return false;
+  }
+}
+
+// ============================================================================
+// Loading Overlay Auto-Dismissal Engine
+// ============================================================================
+function hideLoadingOverlay() {
+  const overlay = document.getElementById('loading_overlay');
+  if (overlay && !overlay.classList.contains('fade_out')) {
+    overlay.classList.add('fade_out');
+    setTimeout(() => {
+      overlay.style.display = 'none';
+    }, 600);
+  }
+}
+
+// Watch canvas render activity to automatically dismiss overlay
+(function watchCanvasReady() {
+  const canvas = document.getElementById('egui_canvas');
+  if (!canvas) return;
+
+  let checks = 0;
+  const poll = setInterval(() => {
+    checks++;
+    if (canvas.width > 0 && canvas.height > 0) {
+      // Allow egui one frame to paint
+      setTimeout(hideLoadingOverlay, 300);
+      clearInterval(poll);
+    }
+    if (checks > 120) {
+      clearInterval(poll);
+      hideLoadingOverlay();
+    }
+  }, 100);
+})();
+
+// ============================================================================
+// Out-of-Memory (OOM) & Crash Resurrection Loop
+// ============================================================================
+window.__rainRecoveryAttempts = 0;
+
+function setupOOMAndCrashRecovery() {
+  const handlePanicOrOOM = (err) => {
+    const errStr = String(err || '').toLowerCase();
+    const isOomOrPanic =
+      errStr.includes('out of memory') ||
+      errStr.includes('memory access out of bounds') ||
+      errStr.includes('oom') ||
+      errStr.includes('unreachable') ||
+      errStr.includes('panic') ||
+      errStr.includes('allocation failed');
+
+    if (isOomOrPanic) {
+      console.warn('[RainAI] Intercepted runtime memory pressure or panic:', err);
+      if (window.__rainRecoveryAttempts < 3) {
+        window.__rainRecoveryAttempts++;
+        const banner = document.getElementById('recovery_banner');
+        const overlay = document.getElementById('loading_overlay');
+        if (banner) {
+          banner.textContent = `⚠ Memory limit reached. Gracefully recovering session with optimized preset (Attempt ${window.__rainRecoveryAttempts}/3)...`;
+          banner.classList.remove('hidden');
+        }
+        if (overlay) {
+          overlay.style.display = 'flex';
+          overlay.classList.remove('fade_out');
+        }
+
+        // Write safe lightweight recovery state to localStorage
+        try {
+          const safeState = {
+            rain: {
+              intensity: 0.35,
+              droplet_density: 0.25,
+              quality_tier: 0,
+              is_playing: true,
+              master_volume: 0.5
+            }
+          };
+          localStorage.setItem('rainai_app_state', JSON.stringify(safeState));
+        } catch (_) {}
+
+        // Reload after a short delay to let the browser release garbage
+        setTimeout(() => {
+          window.location.reload();
+        }, 1200);
+      }
+    }
+  };
+
+  window.addEventListener('error', (e) => handlePanicOrOOM(e.error || e.message));
+  window.addEventListener('unhandledrejection', (e) => handlePanicOrOOM(e.reason));
+}
+
+// ============================================================================
+// Cloudflare Turnstile Helper Bridge
+// ============================================================================
+window.__turnstileWidgetId = null;
+
+window.__getTurnstileToken = async function (sitekey = "1x00000000000000000000AA") {
+  if (!window.turnstile) {
+    console.warn('[RainAI] Turnstile API not loaded, checking ad-blockers');
+    return null;
+  }
+
+  const container = document.getElementById('cf-turnstile-container');
+  if (!container) return null;
+
+  return new Promise((resolve) => {
+    try {
+      container.innerHTML = '';
+      window.__turnstileWidgetId = window.turnstile.render('#cf-turnstile-container', {
+        sitekey: sitekey,
+        callback: (token) => {
+          resolve(token);
+        },
+        'error-callback': () => {
+          console.warn('[RainAI] Turnstile challenge execution deferred');
+          resolve(null);
+        },
+      });
+    } catch (e) {
+      console.warn('[RainAI] Turnstile render exception:', e);
+      resolve(null);
+    }
+  });
+};
+
+// Initial triggers on page load
+window.addEventListener('DOMContentLoaded', () => {
+  detectGpuAcceleration();
+  setupOOMAndCrashRecovery();
 });
 

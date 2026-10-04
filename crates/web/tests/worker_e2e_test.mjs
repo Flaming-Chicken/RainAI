@@ -206,6 +206,7 @@ async function runE2ETests() {
     const payload = {
       sha256: testSha,
       filename: "remote_tin_roof.flac",
+      cf_turnstile_response: '1x00000000000000000000AA',
       license: "Unknown", // Ineligible / unverified license
       license_approved: false,
       dsp_passed: true,
@@ -260,6 +261,7 @@ async function runE2ETests() {
     const payload = {
       sha256: testSha,
       filename: "remote_tin_roof.flac",
+      cf_turnstile_response: '1x00000000000000000000AA',
       license: "RainAI-FC-Proprietary-License", // Project Proprietary License (Rank 6)
       license_approved: true,
       dsp_passed: true,
@@ -356,6 +358,7 @@ async function runE2ETests() {
     const payload = {
       sha256: d1Sha,
       filename: "quarantine_sample.wav",
+      cf_turnstile_response: '1x00000000000000000000AA',
       license: "Unknown",
       license_approved: false,
       dsp_passed: true,
@@ -395,6 +398,7 @@ async function runE2ETests() {
     const payload = {
       sha256: d1Sha,
       filename: "quarantine_sample.wav",
+      cf_turnstile_response: '1x00000000000000000000AA',
       license: "CC-BY-4.0",
       license_approved: true,
       dsp_passed: true,

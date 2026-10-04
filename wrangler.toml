@@ -12,7 +12,7 @@ bucket_name = "rainai-submissions"
 [[d1_databases]]
 binding = "DB"
 database_name = "rainai-db"
-database_id = "prod-db-uuid-placeholder"
+database_id = "4480b6da-9e49-4b2b-a739-a9fd33e7f075"
 
 [vars]
 ENVIRONMENT = "production"
