@@ -89,6 +89,7 @@ jobs:
           RUSTFLAGS: "-C target-feature=+simd128"
         run: |
           echo "Active wasm-opt version: $(wasm-opt --version)"
+          mkdir -p crates/inference/data/wasm
           trunk build --release --public-url "/"
           for wasm_file in crates/web/dist/*.wasm; do
             if [ -f "$wasm_file" ]; then

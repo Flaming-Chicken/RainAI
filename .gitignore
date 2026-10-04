@@ -29,7 +29,8 @@ htmlcov/
 # ------------------------------------------------------------------------------
 checkpoints/
 ai/checkpoints/
-crates/inference/data/wasm/
+crates/inference/data/wasm/*
+!crates/inference/data/wasm/.gitkeep
 training_session.json
 
 # ------------------------------------------------------------------------------
