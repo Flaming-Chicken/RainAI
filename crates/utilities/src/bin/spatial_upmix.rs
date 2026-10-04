@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use rayon::prelude::*;
 use std::fs;
@@ -6,40 +6,51 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use tracing::{error, info};
-use utilities::spatial_upmix::{stereo_or_mono_to_foa, CHUNK_SAMPLES, TARGET_SAMPLE_RATE};
-
+use utilities::spatial_upmix::{CHUNK_SAMPLES, TARGET_SAMPLE_RATE, stereo_or_mono_to_foa};
 
 /// Invokes `ffmpeg` to decode arbitrary audio files directly to a f32 memory buffer, completely bypassing disk I/O.
 fn decode_to_memory(input: &Path) -> Result<Vec<f32>> {
     let mut child = Command::new("ffmpeg")
         .args(["-i"])
         .arg(input)
-        .args(["-ar", &TARGET_SAMPLE_RATE.to_string(), "-ac", "2", "-f", "f32le", "-"])
+        .args([
+            "-ar",
+            &TARGET_SAMPLE_RATE.to_string(),
+            "-ac",
+            "2",
+            "-f",
+            "f32le",
+            "-",
+        ])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()?;
-        
+
     let mut raw_bytes = Vec::new();
     if let Some(mut stdout) = child.stdout.take() {
         stdout.read_to_end(&mut raw_bytes)?;
     }
-    
+
     let status = child.wait()?;
     if !status.success() {
         bail!("FFmpeg stream decoding failed.");
     }
-    
+
     let mut samples = Vec::with_capacity(raw_bytes.len() / 4);
     for chunk in raw_bytes.as_chunks::<4>().0.iter() {
         samples.push(f32::from_le_bytes(*chunk));
     }
-    
+
     Ok(samples)
 }
 
 fn process_audio_file(input_path: &Path, output_dir: &Path) -> Result<usize> {
-    let ext = input_path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
-    
+    let ext = input_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
     let (left, right) = if ext == "wav" {
         // Use Hound for fast native WAV parsing
         let mut reader = WavReader::open(input_path)?;
@@ -48,7 +59,10 @@ fn process_audio_file(input_path: &Path, output_dir: &Path) -> Result<usize> {
             SampleFormat::Float => reader.samples::<f32>().collect::<Result<_, _>>()?,
             SampleFormat::Int => {
                 let scale = 1.0 / (1i32 << (spec.bits_per_sample - 1)) as f32;
-                reader.samples::<i32>().map(|s| s.map(|v| v as f32 * scale)).collect::<Result<_, _>>()?
+                reader
+                    .samples::<i32>()
+                    .map(|s| s.map(|v| v as f32 * scale))
+                    .collect::<Result<_, _>>()?
             }
         };
 
@@ -99,16 +113,16 @@ fn process_audio_file(input_path: &Path, output_dir: &Path) -> Result<usize> {
         let mut writer = WavWriter::create(&chunk_out, out_spec)?;
 
         for i in start..start + CHUNK_SAMPLES {
-            writer.write_sample(foa[0][i])?; 
-            writer.write_sample(foa[1][i])?; 
-            writer.write_sample(foa[2][i])?; 
-            writer.write_sample(foa[3][i])?; 
+            writer.write_sample(foa[0][i])?;
+            writer.write_sample(foa[1][i])?;
+            writer.write_sample(foa[2][i])?;
+            writer.write_sample(foa[3][i])?;
         }
         writer.finalize()?;
         chunks_written += 1;
         start += step;
     }
-    
+
     Ok(chunks_written)
 }
 
@@ -120,7 +134,11 @@ fn visit_dirs(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
             if path.is_dir() {
                 visit_dirs(&path, files)?;
             } else {
-                let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+                let ext = path
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
                 if ["wav", "mp3", "ogg", "flac"].contains(&ext.as_str()) {
                     files.push(path);
                 }
@@ -143,7 +161,11 @@ fn main() -> Result<()> {
         error!("Error reading directory tree: {}", e);
     }
 
-    info!("Discovered {} audio candidates in {:?}", entries.len(), raw_dir);
+    info!(
+        "Discovered {} audio candidates in {:?}",
+        entries.len(),
+        raw_dir
+    );
 
     let total_chunks: usize = entries
         .par_iter()
@@ -156,6 +178,9 @@ fn main() -> Result<()> {
         })
         .sum();
 
-    info!("Finished upmixing! Total 5.0s FOA chunks created: {}", total_chunks);
+    info!(
+        "Finished upmixing! Total 5.0s FOA chunks created: {}",
+        total_chunks
+    );
     Ok(())
 }

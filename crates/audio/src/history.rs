@@ -58,8 +58,8 @@ impl AcousticHistoryBuffer {
 
     /// Extracts past seconds of conditioning trajectory and original FOA audio linearly ordered from oldest to newest.
     pub fn extract_window(&self, seconds: f32) -> (Vec<[f32; CONDITION_DIM]>, Vec<FoaFrame>) {
-        let frames_wanted = ((seconds * self.sample_rate).round() as usize)
-            .min(self.available_frames());
+        let frames_wanted =
+            ((seconds * self.sample_rate).round() as usize).min(self.available_frames());
         if frames_wanted == 0 {
             return (Vec::new(), Vec::new());
         }
@@ -139,7 +139,8 @@ impl AcousticHistoryBuffer {
 
     /// Exports past seconds of audio upgraded to Studio Master into a standard 32-bit float WAV buffer.
     pub fn retro_upgrade_to_wav_buffer(&self, seconds: f32) -> Result<Vec<u8>, std::io::Error> {
-        let weight_cache = inference::weight_loader::WeightLoader::load_embedded_ternary().unwrap_or_default();
+        let weight_cache =
+            inference::weight_loader::WeightLoader::load_embedded_ternary().unwrap_or_default();
         let mut runner = InferenceRunner::new(shared::rain::QualityTier::StudioFp32, weight_cache);
         let mut decoder = AmbisonicDecoder::new(crate::decoder::DecodeMode::BinauralHeadphones);
         let stereo = self.retro_upgrade_window(seconds, &mut runner, &mut decoder);

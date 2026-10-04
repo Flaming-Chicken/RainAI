@@ -1,26 +1,29 @@
 use shared::attribution::{
-    compile_binary_attribution_dictionary, AttributionRecordInput, BinaryAttributionDictionary,
+    AttributionRecordInput, BinaryAttributionDictionary, compile_binary_attribution_dictionary,
 };
 
 #[test]
 fn test_binary_attribution_roundtrip() {
     let records = vec![
         AttributionRecordInput {
-            sha256_hex: "33d42b8fdf937be8447280852779b790898fb575bb49cc00233f6eafce8d9235".to_string(),
+            sha256_hex: "33d42b8fdf937be8447280852779b790898fb575bb49cc00233f6eafce8d9235"
+                .to_string(),
             contributor: "Alice Recordist".to_string(),
             license: "CC-BY-4.0".to_string(),
             license_tier: 4,
             surface: "canvas_tent".to_string(),
         },
         AttributionRecordInput {
-            sha256_hex: "78522c77fe791a2aed8221cb387699ae4c4c9acc1361d89b82cad1e99fd0ec52".to_string(),
+            sha256_hex: "78522c77fe791a2aed8221cb387699ae4c4c9acc1361d89b82cad1e99fd0ec52"
+                .to_string(),
             contributor: "Bob Engineer".to_string(),
             license: "RainAI-FC-Proprietary-License".to_string(),
             license_tier: 6,
             surface: "tin_roof".to_string(),
         },
         AttributionRecordInput {
-            sha256_hex: "111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000".to_string(),
+            sha256_hex: "111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000"
+                .to_string(),
             contributor: "Charlie Field".to_string(),
             license: "CC0 1.0".to_string(),
             license_tier: 5,
@@ -54,9 +57,10 @@ fn test_binary_attribution_roundtrip() {
     assert_eq!(bob.surface, "tin_roof");
 
     // 3. Test lookup of non-existent
-    assert!(dict
-        .lookup_by_hex("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
-        .is_none());
+    assert!(
+        dict.lookup_by_hex("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+            .is_none()
+    );
 
     // 4. Test iterator
     let items: Vec<_> = dict.iter().collect();

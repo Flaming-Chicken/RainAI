@@ -168,14 +168,15 @@ pub fn run_simulation() -> GoldenVectorsPayload {
         }
 
         // Top-2 expert selection
-        let mut indexed_logits: Vec<(usize, f32)> = router_logits
-            .iter()
-            .copied()
-            .enumerate()
-            .collect();
+        let mut indexed_logits: Vec<(usize, f32)> =
+            router_logits.iter().copied().enumerate().collect();
         indexed_logits.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
 
-        let top_2_indices: Vec<usize> = indexed_logits.iter().take(EXPERTS_TOP_K).map(|x| x.0).collect();
+        let top_2_indices: Vec<usize> = indexed_logits
+            .iter()
+            .take(EXPERTS_TOP_K)
+            .map(|x| x.0)
+            .collect();
         let max_logit = indexed_logits[0].1;
         let exp0 = (indexed_logits[0].1 - max_logit).exp();
         let exp1 = (indexed_logits[1].1 - max_logit).exp();
@@ -200,7 +201,11 @@ pub fn run_simulation() -> GoldenVectorsPayload {
         }
 
         let cond_sum: f64 = conditioning.iter().map(|&x| x as f64).sum();
-        let state_norm: f64 = latent_state.iter().map(|&x| (x * x) as f64).sum::<f64>().sqrt();
+        let state_norm: f64 = latent_state
+            .iter()
+            .map(|&x| (x * x) as f64)
+            .sum::<f64>()
+            .sqrt();
 
         trace.push(TraceStep {
             step: t,
@@ -218,7 +223,9 @@ pub fn run_simulation() -> GoldenVectorsPayload {
     }
 
     GoldenVectorsPayload {
-        description: "Deterministic SymPy & NumPy Golden Reference Trace for RainAI Inference Runtime".to_string(),
+        description:
+            "Deterministic SymPy & NumPy Golden Reference Trace for RainAI Inference Runtime"
+                .to_string(),
         latent_dim: LATENT_DIM,
         condition_dim: CONDITION_DIM,
         num_experts: NUM_EXPERTS,
@@ -251,6 +258,9 @@ pub fn run_golden_vectors_pipeline(log_tx: Option<Sender<String>>) -> Result<usi
     serde_json::to_writer_pretty(file, &payload).context("Failed serializing JSON payload")?;
 
     let count = payload.trace.len();
-    emit_log(format!("[+] Successfully generated {} golden steps to {:?}", count, target_file));
+    emit_log(format!(
+        "[+] Successfully generated {} golden steps to {:?}",
+        count, target_file
+    ));
     Ok(count)
 }

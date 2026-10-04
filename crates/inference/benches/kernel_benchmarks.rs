@@ -1,6 +1,6 @@
 //! Centralized benchmarking suite for RainAI inference kernels.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use inference::kernels::{dense_projection, step_recurrence_f32, ternary_matmul_simd_f32};
 
 fn bench_workspace_kernels(c: &mut Criterion) {
@@ -30,7 +30,7 @@ fn bench_workspace_kernels(c: &mut Criterion) {
         })
     });
 
-    let packed_weights = vec![0x55u8; (out_dim * in_dim).div_ceil(4)];
+    let packed_weights = vec![0x55u8; out_dim * in_dim.div_ceil(4)];
     let mut ternary_output = vec![0.0f32; out_dim];
     group.bench_function("ternary_matmul_simd_f32", |b| {
         b.iter(|| {

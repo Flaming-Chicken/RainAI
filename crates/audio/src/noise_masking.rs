@@ -80,7 +80,6 @@ impl AmbientNoiseMasker {
         };
     }
 
-
     /// Analyzes an incoming mono buffer of microphone / ambient room samples.
     pub fn analyze_buffer(samples: &[f32]) -> NoiseSpectrum {
         if samples.is_empty() {
@@ -148,4 +147,3 @@ impl AmbientNoiseMasker {
         self.current_recommendation
     }
 }
-

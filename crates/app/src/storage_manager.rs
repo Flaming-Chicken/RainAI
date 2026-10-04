@@ -1,14 +1,14 @@
 //! Unified multi-tiered storage engine, persistence manager, PWA install bridge, and diagnostics for template app.
 
+use audio::decoder::DecodeMode;
+use inference::compute_router::FlowSolverAlgorithm;
 use serde::{Deserialize, Serialize};
-#[allow(unused_imports)]
-use spodeian_cache::{ContentAddressedStorage, PreferentialRouter};
 #[allow(unused_imports)]
 use spodeian_cache::StorageTier;
 #[allow(unused_imports)]
+use spodeian_cache::{ContentAddressedStorage, PreferentialRouter};
+#[allow(unused_imports)]
 use tracing::{error, info, warn};
-use audio::decoder::DecodeMode;
-use inference::compute_router::FlowSolverAlgorithm;
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast;
@@ -142,7 +142,10 @@ pub struct PersistentSessionState {
 impl Default for PersistentSessionState {
     fn default() -> Self {
         Self {
-            flow_solver: FlowSolverAlgorithm::AdaptiveRk45 { tol: 1e-3, initial_h: 0.1 },
+            flow_solver: FlowSolverAlgorithm::AdaptiveRk45 {
+                tol: 1e-3,
+                initial_h: 0.1,
+            },
             active_preset_name: "Gentle Summer Rain".to_string(),
             master_volume: 0.60,
             decode_mode: DecodeMode::BinauralHeadphones,
@@ -155,7 +158,6 @@ impl Default for PersistentSessionState {
         }
     }
 }
-
 
 pub fn is_first_launch(storage: Option<&dyn eframe::Storage>) -> bool {
     #[cfg(target_arch = "wasm32")]
@@ -242,7 +244,10 @@ pub fn load_session_state(storage: Option<&dyn eframe::Storage>) -> PersistentSe
     PersistentSessionState::default()
 }
 
-pub fn save_session_state(storage: Option<&mut dyn eframe::Storage>, session: &PersistentSessionState) {
+pub fn save_session_state(
+    storage: Option<&mut dyn eframe::Storage>,
+    session: &PersistentSessionState,
+) {
     if let Ok(json_str) = serde_json::to_string(session) {
         #[cfg(target_arch = "wasm32")]
         {
@@ -397,7 +402,8 @@ pub fn load_state_multi_tier(storage: Option<&dyn eframe::Storage>) -> Option<sh
 pub fn save_state_multi_tier(key: &str, json_str: &str) -> Result<StorageBackend, String> {
     let size = json_str.len();
     let is_large_or_binary = size > 512 * 1024;
-    let recommended_tier = PreferentialRouter::determine_tier(size, "application/json", is_large_or_binary);
+    let recommended_tier =
+        PreferentialRouter::determine_tier(size, "application/json", is_large_or_binary);
     let _ = (key, &recommended_tier);
 
     #[cfg(target_arch = "wasm32")]
@@ -494,7 +500,11 @@ pub fn trigger_binary_download(filename: &str, bytes: &[u8], mime_type: &str) {
         let path = resolve_desktop_export_path(filename);
         match std::fs::write(&path, bytes) {
             Ok(()) => info!("Successfully exported binary file: {}", path.display()),
-            Err(e) => error!("Failed to write binary export file '{}': {}", path.display(), e),
+            Err(e) => error!(
+                "Failed to write binary export file '{}': {}",
+                path.display(),
+                e
+            ),
         }
     }
 }
@@ -504,10 +514,9 @@ pub fn set_screen_wake_lock(active: bool) {
     #[cfg(target_arch = "wasm32")]
     {
         if let Some(window) = web_sys::window() {
-            if let Ok(func) = js_sys::Reflect::get(
-                &window,
-                &wasm_bindgen::JsValue::from_str("__setWakeLock"),
-            ) {
+            if let Ok(func) =
+                js_sys::Reflect::get(&window, &wasm_bindgen::JsValue::from_str("__setWakeLock"))
+            {
                 if let Some(func) = func.dyn_ref::<js_sys::Function>() {
                     let arg = wasm_bindgen::JsValue::from_bool(active);
                     let _ = func.call1(&window, &arg);
@@ -520,4 +529,3 @@ pub fn set_screen_wake_lock(active: bool) {
         let _ = active;
     }
 }
-

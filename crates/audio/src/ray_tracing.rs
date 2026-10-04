@@ -151,12 +151,12 @@ impl Default for ImageSourceModel {
         Self {
             room: RoomDimensions::default(),
             materials: [
-                AcousticMaterial::PineTimber,  // Floor
+                AcousticMaterial::PineTimber,   // Floor
                 AcousticMaterial::Plasterboard, // Ceiling
                 AcousticMaterial::Plasterboard, // Left wall
                 AcousticMaterial::Plasterboard, // Right wall
-                AcousticMaterial::Glass,       // Front wall (window)
-                AcousticMaterial::Brick,       // Back wall
+                AcousticMaterial::Glass,        // Front wall (window)
+                AcousticMaterial::Brick,        // Back wall
             ],
             max_order: 3,
         }
@@ -165,11 +165,7 @@ impl Default for ImageSourceModel {
 
 impl ImageSourceModel {
     /// Create a new image source model with given room dimensions and boundary materials.
-    pub fn new(
-        room: RoomDimensions,
-        materials: [AcousticMaterial; 6],
-        max_order: u32,
-    ) -> Self {
+    pub fn new(room: RoomDimensions, materials: [AcousticMaterial; 6], max_order: u32) -> Self {
         Self {
             room,
             materials,
@@ -203,9 +199,12 @@ impl ImageSourceModel {
                     for &px in &[0, 1] {
                         for &py in &[0, 1] {
                             for &pz in &[0, 1] {
-                                let img_x = 2.0 * (nx as f32) * w + if px == 0 { source.x } else { -source.x };
-                                let img_y = 2.0 * (ny as f32) * l + if py == 0 { source.y } else { -source.y };
-                                let img_z = 2.0 * (nz as f32) * h + if pz == 0 { source.z } else { -source.z };
+                                let img_x = 2.0 * (nx as f32) * w
+                                    + if px == 0 { source.x } else { -source.x };
+                                let img_y = 2.0 * (ny as f32) * l
+                                    + if py == 0 { source.y } else { -source.y };
+                                let img_z = 2.0 * (nz as f32) * h
+                                    + if pz == 0 { source.z } else { -source.z };
 
                                 let img_pos = Vec3::new(img_x, img_y, img_z);
                                 let dist = listener.distance(&img_pos);
@@ -217,8 +216,14 @@ impl ImageSourceModel {
                                 let delay_seconds = dist / SPEED_OF_SOUND;
 
                                 // Surface absorption product: (1 - alpha)^(order/2)
-                                let avg_alpha = self.materials.iter().map(|m| m.mean_absorption()).sum::<f32>() / 6.0;
-                                let reflection_gain = (1.0 - avg_alpha).max(0.0).powf((order as f32) * 0.5);
+                                let avg_alpha = self
+                                    .materials
+                                    .iter()
+                                    .map(|m| m.mean_absorption())
+                                    .sum::<f32>()
+                                    / 6.0;
+                                let reflection_gain =
+                                    (1.0 - avg_alpha).max(0.0).powf((order as f32) * 0.5);
 
                                 // Geometric spherical spreading loss 1 / d
                                 let geom_loss = 1.0 / dist.max(1.0);
@@ -245,7 +250,11 @@ impl ImageSourceModel {
         }
 
         // Sort reflections by arrival time
-        reflections.sort_by(|a, b| a.delay_seconds.partial_cmp(&b.delay_seconds).unwrap_or(std::cmp::Ordering::Equal));
+        reflections.sort_by(|a, b| {
+            a.delay_seconds
+                .partial_cmp(&b.delay_seconds)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         reflections
     }
 

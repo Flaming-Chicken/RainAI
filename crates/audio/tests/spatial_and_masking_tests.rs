@@ -23,7 +23,8 @@ fn test_sofa_hrtf_binaural_spatialization() {
     let input_signal = vec![0.5, -0.5, 0.2];
 
     // Spatialize at 90 deg azimuth
-    let (left, right) = spatializer.spatialize_mono(&input_signal, SphericalPosition::new(90.0, 0.0, 1.0));
+    let (left, right) =
+        spatializer.spatialize_mono(&input_signal, SphericalPosition::new(90.0, 0.0, 1.0));
 
     assert_eq!(left.len(), input_signal.len() + 2);
     assert_eq!(right.len(), input_signal.len() + 2);
@@ -31,7 +32,12 @@ fn test_sofa_hrtf_binaural_spatialization() {
     // Right ear must receive more immediate energy than left ear
     let right_energy: f32 = right.iter().map(|s| s * s).sum();
     let left_energy: f32 = left.iter().map(|s| s * s).sum();
-    assert!(right_energy > left_energy, "Right ear energy ({}) must exceed left ({}) for sound at 90 deg", right_energy, left_energy);
+    assert!(
+        right_energy > left_energy,
+        "Right ear energy ({}) must exceed left ({}) for sound at 90 deg",
+        right_energy,
+        left_energy
+    );
 }
 
 #[test]
@@ -74,7 +80,10 @@ fn test_custom_ir_wav_and_sofa_loading_with_cas_cache() {
     let mut spatializer = SofaSpatializer::new(48000);
     let temp_dir = std::env::temp_dir().join(format!(
         "rainai_cas_test_{}",
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
 
     // 1. Synthesize a 48kHz stereo WAV impulse response in memory

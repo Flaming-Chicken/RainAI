@@ -185,15 +185,16 @@ impl HardwareComputeRouter {
             .ok_or_else(|| "No operational compute backend available for RK4 flow".to_string())?;
 
         let mut error_opt: Option<String> = None;
-        let final_x = Rk4FlowSolver::solve_trajectory(x0, num_steps, |x_curr, t_curr| {
-            match backend.evaluate_flow_velocity(x_curr, t_curr) {
-                Ok(v) => v,
-                Err(e) => {
-                    error_opt = Some(e);
-                    vec![0.0f32; x_curr.len()]
+        let final_x =
+            Rk4FlowSolver::solve_trajectory(x0, num_steps, |x_curr, t_curr| {
+                match backend.evaluate_flow_velocity(x_curr, t_curr) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        error_opt = Some(e);
+                        vec![0.0f32; x_curr.len()]
+                    }
                 }
-            }
-        });
+            });
 
         if let Some(err) = error_opt {
             Err(err)
@@ -208,9 +209,9 @@ impl HardwareComputeRouter {
         x0: &[f32],
         solver: FlowSolverAlgorithm,
     ) -> Result<Vec<f32>, String> {
-        let backend = self
-            .select_backend()
-            .ok_or_else(|| "No operational compute backend available for flow solver".to_string())?;
+        let backend = self.select_backend().ok_or_else(|| {
+            "No operational compute backend available for flow solver".to_string()
+        })?;
 
         match solver {
             FlowSolverAlgorithm::FixedRk4 { steps } => self.solve_trajectory(x0, steps),
@@ -262,21 +263,22 @@ impl HardwareComputeRouter {
             }
             FlowSolverAlgorithm::AdaptiveTsit5 { tol, initial_h } => {
                 let mut error_opt = None;
-                let (final_x, _) = crate::kernels::adaptive_flow_solver::Tsitouras54::solve_adaptive_trajectory(
-                    x0,
-                    initial_h,
-                    1e-4,
-                    0.25,
-                    tol,
-                    500,
-                    |x_curr, t_curr| match backend.evaluate_flow_velocity(x_curr, t_curr) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            error_opt = Some(e);
-                            vec![0.0f32; x_curr.len()]
-                        }
-                    },
-                )?;
+                let (final_x, _) =
+                    crate::kernels::adaptive_flow_solver::Tsitouras54::solve_adaptive_trajectory(
+                        x0,
+                        initial_h,
+                        1e-4,
+                        0.25,
+                        tol,
+                        500,
+                        |x_curr, t_curr| match backend.evaluate_flow_velocity(x_curr, t_curr) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                error_opt = Some(e);
+                                vec![0.0f32; x_curr.len()]
+                            }
+                        },
+                    )?;
                 if let Some(err) = error_opt {
                     Err(err)
                 } else {
@@ -285,21 +287,22 @@ impl HardwareComputeRouter {
             }
             FlowSolverAlgorithm::AdaptiveHeun2 { tol, initial_h } => {
                 let mut error_opt = None;
-                let (final_x, _) = crate::kernels::adaptive_flow_solver::HeunAdaptive2::solve_adaptive_trajectory(
-                    x0,
-                    initial_h,
-                    1e-4,
-                    0.25,
-                    tol,
-                    500,
-                    |x_curr, t_curr| match backend.evaluate_flow_velocity(x_curr, t_curr) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            error_opt = Some(e);
-                            vec![0.0f32; x_curr.len()]
-                        }
-                    },
-                )?;
+                let (final_x, _) =
+                    crate::kernels::adaptive_flow_solver::HeunAdaptive2::solve_adaptive_trajectory(
+                        x0,
+                        initial_h,
+                        1e-4,
+                        0.25,
+                        tol,
+                        500,
+                        |x_curr, t_curr| match backend.evaluate_flow_velocity(x_curr, t_curr) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                error_opt = Some(e);
+                                vec![0.0f32; x_curr.len()]
+                            }
+                        },
+                    )?;
                 if let Some(err) = error_opt {
                     Err(err)
                 } else {
@@ -308,17 +311,18 @@ impl HardwareComputeRouter {
             }
             FlowSolverAlgorithm::DpmSolverPP { steps } => {
                 let mut error_opt = None;
-                let final_x = crate::kernels::adaptive_flow_solver::DpmSolverPP::solve_fast_trajectory(
-                    x0,
-                    steps,
-                    |x_curr, t_curr| match backend.evaluate_flow_velocity(x_curr, t_curr) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            error_opt = Some(e);
-                            vec![0.0f32; x_curr.len()]
-                        }
-                    },
-                )?;
+                let final_x =
+                    crate::kernels::adaptive_flow_solver::DpmSolverPP::solve_fast_trajectory(
+                        x0,
+                        steps,
+                        |x_curr, t_curr| match backend.evaluate_flow_velocity(x_curr, t_curr) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                error_opt = Some(e);
+                                vec![0.0f32; x_curr.len()]
+                            }
+                        },
+                    )?;
                 if let Some(err) = error_opt {
                     Err(err)
                 } else {
@@ -326,7 +330,9 @@ impl HardwareComputeRouter {
                 }
             }
             FlowSolverAlgorithm::LearnedCurvature { tol, initial_h } => {
-                let controller = crate::kernels::adaptive_flow_solver::LearnedFlowController::new(initial_h, 0.005, 0.25);
+                let controller = crate::kernels::adaptive_flow_solver::LearnedFlowController::new(
+                    initial_h, 0.005, 0.25,
+                );
                 let mut current_x = x0.to_vec();
                 let mut t = 0.0f32;
                 let mut h = initial_h;
@@ -336,22 +342,28 @@ impl HardwareComputeRouter {
 
                 while t < 1.0 - 1e-6 {
                     if steps >= 500 {
-                        return Err(format!("Learned controller exceeded 500 iterations at t = {t:.4}"));
+                        return Err(format!(
+                            "Learned controller exceeded 500 iterations at t = {t:.4}"
+                        ));
                     }
                     if t + h > 1.0 {
                         h = 1.0 - t;
                     }
                     let v_curr = backend.evaluate_flow_velocity(&current_x, t)?;
                     h = controller.predict_step_size(&v_curr, v_prev.as_deref(), h);
-                    let result = crate::kernels::adaptive_flow_solver::BogackiShampine23::step(&current_x, t, h, tol, |x_c, t_c| {
-                        match backend.evaluate_flow_velocity(x_c, t_c) {
+                    let result = crate::kernels::adaptive_flow_solver::BogackiShampine23::step(
+                        &current_x,
+                        t,
+                        h,
+                        tol,
+                        |x_c, t_c| match backend.evaluate_flow_velocity(x_c, t_c) {
                             Ok(v) => v,
                             Err(e) => {
                                 error_opt = Some(e);
                                 vec![0.0f32; x0.len()]
                             }
-                        }
-                    });
+                        },
+                    );
                     if let Some(err) = error_opt {
                         return Err(err);
                     }

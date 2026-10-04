@@ -15,7 +15,10 @@ fn test_binaural_symmetry() {
     let mut conv = BinauralConvolver::new();
     for _ in 0..10 {
         let out = conv.process_frame(FoaFrame::new(0.5, 0.5, 0.0, 0.0));
-        assert!((out.left - out.right).abs() < 1e-5, "Front sound should be symmetric in ears");
+        assert!(
+            (out.left - out.right).abs() < 1e-5,
+            "Front sound should be symmetric in ears"
+        );
     }
 }
 
@@ -23,10 +26,16 @@ fn test_binaural_symmetry() {
 fn test_speaker_stereo_panning() {
     let mut decoder = AmbisonicDecoder::new(DecodeMode::StereoSpeakers);
     let out_left = decoder.decode_stereo(FoaFrame::new(0.5, 0.0, 1.0, 0.0));
-    assert!(out_left.left > out_left.right, "Left channel should be louder for left sound");
+    assert!(
+        out_left.left > out_left.right,
+        "Left channel should be louder for left sound"
+    );
 
     let out_right = decoder.decode_stereo(FoaFrame::new(0.5, 0.0, -1.0, 0.0));
-    assert!(out_right.right > out_right.left, "Right channel should be louder for right sound");
+    assert!(
+        out_right.right > out_right.left,
+        "Right channel should be louder for right sound"
+    );
 }
 
 #[test]

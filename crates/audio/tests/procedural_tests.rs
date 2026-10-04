@@ -1,5 +1,8 @@
-use audio::{ProceduralSynthesizer, SubtractiveFilterbank16, NOMINAL_BAND_FREQS, NOMINAL_BAND_Q, LEARNED_DRIFT};
 use audio::decoder::FoaFrame;
+use audio::{
+    LEARNED_DRIFT, NOMINAL_BAND_FREQS, NOMINAL_BAND_Q, ProceduralSynthesizer,
+    SubtractiveFilterbank16,
+};
 use shared::RainState;
 
 #[test]
@@ -30,7 +33,10 @@ fn test_procedural_audio_generation() {
             nonzero_count += 1;
         }
     }
-    assert!(nonzero_count > 90, "Procedural synthesizer should generate continuous audio");
+    assert!(
+        nonzero_count > 90,
+        "Procedural synthesizer should generate continuous audio"
+    );
 }
 
 #[test]
@@ -87,7 +93,10 @@ fn test_neural_parametric_modulation_procedural() {
             modulated_frames += 1;
         }
     }
-    assert!(modulated_frames > 115, "Modulated procedural synthesis should generate audio frames");
+    assert!(
+        modulated_frames > 115,
+        "Modulated procedural synthesis should generate audio frames"
+    );
 }
 
 #[test]
@@ -102,16 +111,20 @@ fn test_neural_parametric_modulation_physical() {
         ..Default::default()
     };
 
-    let mut ctrl = NeuralParametricControl::default();
-    ctrl.droplet_rate_mod = 1.5;
-    ctrl.droplet_energy_mod = 1.2;
-    ctrl.spatial_vector = (1.2, 0.4, 0.2, -0.3);
+    let ctrl = NeuralParametricControl {
+        droplet_rate_mod: 1.5,
+        droplet_energy_mod: 1.2,
+        spatial_vector: (1.2, 0.4, 0.2, -0.3),
+        ..Default::default()
+    };
 
     let mut energy_sum = 0.0f32;
     for _ in 0..512 {
         let frame = physical.process_frame_modulated(&state, Some(&ctrl));
         energy_sum += frame.w.abs();
     }
-    assert!(energy_sum > 0.01, "Modulated physical synthesizer should generate active droplet acoustics");
+    assert!(
+        energy_sum > 0.01,
+        "Modulated physical synthesizer should generate active droplet acoustics"
+    );
 }
-

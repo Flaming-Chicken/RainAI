@@ -2,12 +2,7 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 #[inline]
-pub fn int8_matmul_simd_f32(
-    weights: &[i8],
-    activations: &[f32],
-    output: &mut [f32],
-    scale: f32,
-) {
+pub fn int8_matmul_simd_f32(weights: &[i8], activations: &[f32], output: &mut [f32], scale: f32) {
     let in_dim = activations.len();
     assert!(
         weights.len() >= output.len() * in_dim,
@@ -39,12 +34,7 @@ pub fn int8_matmul_simd_f32(
 
 #[cfg(target_arch = "wasm32")]
 #[inline]
-pub fn int8_matmul_simd_f32(
-    weights: &[i8],
-    activations: &[f32],
-    output: &mut [f32],
-    scale: f32,
-) {
+pub fn int8_matmul_simd_f32(weights: &[i8], activations: &[f32], output: &mut [f32], scale: f32) {
     use std::arch::wasm32::*;
 
     let in_dim = activations.len();

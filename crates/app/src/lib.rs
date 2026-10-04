@@ -19,19 +19,17 @@ pub mod storage_manager;
 pub use components::*;
 pub use storage_manager::*;
 
-use components::spectrogram::{SpectrogramHistory, render_spectrogram_panel};
-use audio::SharedAudioState;
 #[cfg(not(target_arch = "wasm32"))]
 use audio::DesktopAudioEngine;
+use audio::SharedAudioState;
 #[cfg(target_arch = "wasm32")]
 use audio::WebAudioEngine;
+use components::spectrogram::{SpectrogramHistory, render_spectrogram_panel};
 use eframe::egui;
-use shared::{
-    AppState, ThemeMode, export_to_compressed_bson, export_to_csv, export_to_json,
-};
+use shared::{AppState, ThemeMode, export_to_compressed_bson, export_to_csv, export_to_json};
+pub use spodeian_ui::ScreenConstraints;
 #[allow(unused_imports)]
 use tracing::{error, info, warn};
-pub use spodeian_ui::ScreenConstraints;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum ExportFormat {
@@ -153,7 +151,9 @@ impl TemplateApp {
         let first_launch = is_first_launch(cc.storage);
         #[allow(unused_variables, unused_mut)]
         let (mut state, loaded_from_storage) = if first_launch {
-            info!("First launch detected! Auto-starting Gentle Summer Rain default soundscape at 60% volume.");
+            info!(
+                "First launch detected! Auto-starting Gentle Summer Rain default soundscape at 60% volume."
+            );
             let mut rain_state = shared::preset::WeatherPreset::gentle_summer_rain().state;
             rain_state.is_playing = true;
             rain_state.master_volume = 0.60;
@@ -194,7 +194,11 @@ impl TemplateApp {
                 let cache_dir = std::path::Path::new("data/cache/ir");
                 if let Ok(cas) = spodeian_cache::ContentAddressedStorage::new(cache_dir) {
                     if let Ok(bytes) = cas.get(ir_hash) {
-                        let _ = rain_view.load_custom_ir_bytes("cached_ir.wav", &bytes, Some(cache_dir));
+                        let _ = rain_view.load_custom_ir_bytes(
+                            "cached_ir.wav",
+                            &bytes,
+                            Some(cache_dir),
+                        );
                     }
                 }
             }
@@ -204,10 +208,18 @@ impl TemplateApp {
         {
             if !loaded_from_storage && !first_launch {
                 if let Some(win) = web_sys::window() {
-                    let inner_w = win.inner_width().ok().and_then(|v| v.as_f64()).unwrap_or(1024.0);
+                    let inner_w = win
+                        .inner_width()
+                        .ok()
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(1024.0);
                     if inner_w < 650.0 {
-                        info!("Detected mobile viewport ({:.0}px), defaulting fresh session to EcoBatterySaver profile", inner_w);
-                        state.rain.optimization_profile = shared::GovernorOptimizationProfile::EcoBatterySaver;
+                        info!(
+                            "Detected mobile viewport ({:.0}px), defaulting fresh session to EcoBatterySaver profile",
+                            inner_w
+                        );
+                        state.rain.optimization_profile =
+                            shared::GovernorOptimizationProfile::EcoBatterySaver;
                         state.rain.thinking_steps = 1;
                         state.rain.use_consistency_jump = true;
                     }
@@ -225,7 +237,9 @@ impl TemplateApp {
                         hash
                     };
                     if !token.is_empty() {
-                        if let Ok(preset) = shared::preset::WeatherPreset::from_shareable_url_hash(token) {
+                        if let Ok(preset) =
+                            shared::preset::WeatherPreset::from_shareable_url_hash(token)
+                        {
                             info!("Restored shared preset '{}' from URL hash", preset.name);
                             state.rain = preset.state;
                         }
@@ -258,7 +272,11 @@ impl TemplateApp {
             hrtf_profile: self.rain_view.hrtf_profile.clone(),
             webgpu_fp16_enabled: self.rain_view.webgpu_fp16,
             show_advanced_inspector: self.rain_view.show_advanced_inspector,
-            custom_ir_hash: self.rain_view.custom_ir_meta.as_ref().map(|m| m.sha256_hash.clone()),
+            custom_ir_hash: self
+                .rain_view
+                .custom_ir_meta
+                .as_ref()
+                .map(|m| m.sha256_hash.clone()),
         };
         save_session_state(None, &session);
 
@@ -334,17 +352,21 @@ impl TemplateApp {
             self.rain_view.audio_status_label = "Initializing Audio Engine...".to_string();
             #[cfg(not(target_arch = "wasm32"))]
             {
-                match DesktopAudioEngine::start(self.state.rain.clone(), self.rain_view.decode_mode) {
+                match DesktopAudioEngine::start(self.state.rain.clone(), self.rain_view.decode_mode)
+                {
                     Ok(engine) => {
                         self.audio_state = Some(engine.state.clone());
                         self.desktop_audio = Some(engine);
-                        self.rain_view.audio_status_label = "Ready (48kHz Desktop Audio)".to_string();
+                        self.rain_view.audio_status_label =
+                            "Ready (48kHz Desktop Audio)".to_string();
                     }
                     Err(e) => {
                         error!("Failed to initialize DesktopAudioEngine: {e}");
                         self.rain_view.audio_status_label = "Audio Fallback Active".to_string();
                         self.rain_view.toast_notification = Some((
-                            format!("Audio engine init error: {e}. Running in visual/procedural fallback mode."),
+                            format!(
+                                "Audio engine init error: {e}. Running in visual/procedural fallback mode."
+                            ),
                             15.0,
                         ));
                     }
@@ -356,7 +378,8 @@ impl TemplateApp {
                     Ok(engine) => {
                         self.audio_state = Some(engine.state.clone());
                         self.web_audio = Some(engine);
-                        self.rain_view.audio_status_label = "Ready (48kHz WebAudio Spatial)".to_string();
+                        self.rain_view.audio_status_label =
+                            "Ready (48kHz WebAudio Spatial)".to_string();
                     }
                     Err(e) => {
                         error!("Failed to initialize WebAudioEngine: {e}");
@@ -382,7 +405,7 @@ impl TemplateApp {
 
             let mut current_bins = [0.0f32; 32];
             for (i, bin) in current_bins.iter_mut().enumerate() {
-                let intensity = (self.state.rain.weather.intensity * 0.7 
+                let intensity = (self.state.rain.weather.intensity * 0.7
                     + (i as f32 * 0.25).sin().abs() * 0.3)
                     .clamp(0.0, 1.0);
                 *bin = intensity;
@@ -416,7 +439,11 @@ impl eframe::App for TemplateApp {
             hrtf_profile: self.rain_view.hrtf_profile.clone(),
             webgpu_fp16_enabled: self.rain_view.webgpu_fp16,
             show_advanced_inspector: self.rain_view.show_advanced_inspector,
-            custom_ir_hash: self.rain_view.custom_ir_meta.as_ref().map(|m| m.sha256_hash.clone()),
+            custom_ir_hash: self
+                .rain_view
+                .custom_ir_meta
+                .as_ref()
+                .map(|m| m.sha256_hash.clone()),
         };
         save_session_state(Some(storage), &session);
         mark_first_launch_done(Some(storage));
@@ -432,7 +459,7 @@ impl eframe::App for TemplateApp {
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.apply_theme(ctx);
-        
+
         let egui_theme = match self.state.config.theme {
             ThemeMode::Light | ThemeMode::HighContrastLight => egui::Theme::Light,
             ThemeMode::Dark | ThemeMode::HighContrastDark => egui::Theme::Dark,
@@ -502,7 +529,8 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
         "RainAI",
         options,
         Box::new(|cc| Ok(Box::new(TemplateApp::new(cc)))),
-    ).unwrap();
+    )
+    .unwrap();
 }
 
 #[cfg(target_os = "ios")]
@@ -517,4 +545,3 @@ pub extern "C" fn ios_main() {
         Box::new(|cc| Ok(Box::new(TemplateApp::new(cc)))),
     );
 }
-

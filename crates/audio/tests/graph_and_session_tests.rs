@@ -15,14 +15,23 @@ use std::sync::atomic::Ordering;
 #[test]
 fn test_binaural_decoder_mode_atomic() {
     let atomic_mode = AtomicBinauralDecoderMode::new(BinauralDecoderMode::ResonanceAudio32Tap);
-    assert_eq!(atomic_mode.load(Ordering::Relaxed), BinauralDecoderMode::ResonanceAudio32Tap);
+    assert_eq!(
+        atomic_mode.load(Ordering::Relaxed),
+        BinauralDecoderMode::ResonanceAudio32Tap
+    );
 
     atomic_mode.store(BinauralDecoderMode::SofaCustomIr, Ordering::Relaxed);
-    assert_eq!(atomic_mode.load(Ordering::Relaxed), BinauralDecoderMode::SofaCustomIr);
+    assert_eq!(
+        atomic_mode.load(Ordering::Relaxed),
+        BinauralDecoderMode::SofaCustomIr
+    );
 
     let old = atomic_mode.swap(BinauralDecoderMode::StereoDownmix, Ordering::Relaxed);
     assert_eq!(old, BinauralDecoderMode::SofaCustomIr);
-    assert_eq!(atomic_mode.load(Ordering::Relaxed), BinauralDecoderMode::StereoDownmix);
+    assert_eq!(
+        atomic_mode.load(Ordering::Relaxed),
+        BinauralDecoderMode::StereoDownmix
+    );
 }
 
 #[test]
@@ -76,7 +85,9 @@ fn test_audio_graph_physical_to_ambisonic_decoder() {
 
     // Connect 4 B-format channels (W, Y, Z, X) to decoder
     for ch in 0..4 {
-        graph.connect(n0, ch, n1, ch).expect("B-format connect failed");
+        graph
+            .connect(n0, ch, n1, ch)
+            .expect("B-format connect failed");
     }
 
     let mut out_l = vec![0.0f32; 64];
@@ -86,7 +97,10 @@ fn test_audio_graph_physical_to_ambisonic_decoder() {
     graph.process(&mut stereo_ptrs, 64);
 
     let sum_energy: f32 = out_l.iter().chain(out_r.iter()).map(|s| s.abs()).sum();
-    assert!(sum_energy > 0.0, "Ambisonic physical output should produce signal");
+    assert!(
+        sum_energy > 0.0,
+        "Ambisonic physical output should produce signal"
+    );
 }
 
 #[test]
@@ -135,7 +149,9 @@ fn test_session_mediator_and_queues() {
 
     // Render quantum 1
     mediator.render_quantum(&mut [&mut out_l, &mut out_r], 64);
-    let snap1 = telemetry_rx.poll_latest().expect("Expected telemetry snapshot");
+    let snap1 = telemetry_rx
+        .poll_latest()
+        .expect("Expected telemetry snapshot");
     assert!(snap1.frames_rendered >= 64);
     assert!(!snap1.is_muted);
 
@@ -153,6 +169,8 @@ fn test_session_mediator_and_queues() {
 
     // Render quantum 3
     mediator.render_quantum(&mut [&mut out_l, &mut out_r], 64);
-    let snap3 = telemetry_rx.poll_latest().expect("Expected telemetry snapshot");
+    let snap3 = telemetry_rx
+        .poll_latest()
+        .expect("Expected telemetry snapshot");
     assert!(snap3.frames_rendered >= 192);
 }

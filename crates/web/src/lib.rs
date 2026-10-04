@@ -10,14 +10,12 @@ use wasm_bindgen::{JsCast, prelude::*};
 
 #[cfg(target_arch = "wasm32")]
 use audio::{
-    engine::soft_limit,
-    physical::PhysicalRainSynthesizer,
-    procedural::ProceduralSynthesizer,
+    engine::soft_limit, physical::PhysicalRainSynthesizer, procedural::ProceduralSynthesizer,
 };
 #[cfg(target_arch = "wasm32")]
 use inference::{runner::InferenceRunner, weight_loader::WeightLoader};
 #[cfg(target_arch = "wasm32")]
-use shared::rain::{QualityTier, RainState, CONDITION_DIM};
+use shared::rain::{CONDITION_DIM, QualityTier, RainState};
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(start)]
@@ -76,7 +74,7 @@ impl WasmInferenceNode {
     pub fn new() -> Result<WasmInferenceNode, JsValue> {
         let cache = WeightLoader::load_embedded_ternary()
             .map_err(|e| JsValue::from_str(&format!("Failed to load embedded weights: {}", e)))?;
-            
+
         let runner = InferenceRunner::new(QualityTier::Ternary158, cache);
         let sample_rate = 48000.0;
         let synth = ProceduralSynthesizer::new(sample_rate);
@@ -107,10 +105,10 @@ impl WasmInferenceNode {
                 CONDITION_DIM
             )));
         }
-        
+
         let mut cond_array = [0.0f32; CONDITION_DIM];
         cond_array.copy_from_slice(conditioning);
-        
+
         let (w, x, y, z) = self.runner.step(&cond_array);
         Ok(vec![w, x, y, z])
     }
@@ -132,7 +130,11 @@ impl WasmInferenceNode {
     ///
     /// Rendered data is available in WASM linear memory at `planar_buffer_ptr()`.
     /// Returns total samples rendered (`frames * 4`).
-    pub fn render_block_planar(&mut self, conditioning: &[f32], frames: usize) -> Result<usize, JsValue> {
+    pub fn render_block_planar(
+        &mut self,
+        conditioning: &[f32],
+        frames: usize,
+    ) -> Result<usize, JsValue> {
         if conditioning.len() != CONDITION_DIM {
             return Err(JsValue::from_str(&format!(
                 "Conditioning vector must be exactly {} elements",
@@ -159,9 +161,11 @@ impl WasmInferenceNode {
 
         for i in 0..frames {
             let foa = if self.use_physical {
-                self.physical_synth.process_frame_modulated(&self.state, modulation.as_ref())
+                self.physical_synth
+                    .process_frame_modulated(&self.state, modulation.as_ref())
             } else {
-                self.synth.process_frame_modulated(&self.state, modulation.as_ref())
+                self.synth
+                    .process_frame_modulated(&self.state, modulation.as_ref())
             };
 
             w_slice[i] = soft_limit(foa.w);
@@ -180,7 +184,11 @@ impl WasmInferenceNode {
     ///
     /// Rendered data is available in WASM linear memory at `stereo_buffer_ptr()`.
     /// Returns total samples rendered (`frames * 2`).
-    pub fn render_block_stereo(&mut self, conditioning: &[f32], frames: usize) -> Result<usize, JsValue> {
+    pub fn render_block_stereo(
+        &mut self,
+        conditioning: &[f32],
+        frames: usize,
+    ) -> Result<usize, JsValue> {
         if conditioning.len() != CONDITION_DIM {
             return Err(JsValue::from_str(&format!(
                 "Conditioning vector must be exactly {} elements",
@@ -205,9 +213,11 @@ impl WasmInferenceNode {
 
         for i in 0..frames {
             let foa = if self.use_physical {
-                self.physical_synth.process_frame_modulated(&self.state, modulation.as_ref())
+                self.physical_synth
+                    .process_frame_modulated(&self.state, modulation.as_ref())
             } else {
-                self.synth.process_frame_modulated(&self.state, modulation.as_ref())
+                self.synth
+                    .process_frame_modulated(&self.state, modulation.as_ref())
             };
 
             let left = foa.w * 0.707 + foa.y * 0.5;
@@ -221,13 +231,21 @@ impl WasmInferenceNode {
     }
 
     /// Backwards-compatible block rendering returning a copied Vec<f32>.
-    pub fn step_block_planar(&mut self, conditioning: &[f32], frames: usize) -> Result<Vec<f32>, JsValue> {
+    pub fn step_block_planar(
+        &mut self,
+        conditioning: &[f32],
+        frames: usize,
+    ) -> Result<Vec<f32>, JsValue> {
         let total = self.render_block_planar(conditioning, frames)?;
         Ok(self.planar_buffer[..total].to_vec())
     }
 
     /// Backwards-compatible block rendering returning a copied Vec<f32>.
-    pub fn step_block_stereo(&mut self, conditioning: &[f32], frames: usize) -> Result<Vec<f32>, JsValue> {
+    pub fn step_block_stereo(
+        &mut self,
+        conditioning: &[f32],
+        frames: usize,
+    ) -> Result<Vec<f32>, JsValue> {
         let total = self.render_block_stereo(conditioning, frames)?;
         Ok(self.stereo_buffer[..total].to_vec())
     }

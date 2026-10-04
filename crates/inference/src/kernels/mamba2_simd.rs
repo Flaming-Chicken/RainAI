@@ -2,12 +2,7 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 #[inline(always)]
-pub fn step_recurrence_f32(
-    latent_state: &mut [f32],
-    a_diag: &[f32],
-    b_diag: &[f32],
-    u_t: &[f32],
-) {
+pub fn step_recurrence_f32(latent_state: &mut [f32], a_diag: &[f32], b_diag: &[f32], u_t: &[f32]) {
     let len = latent_state.len();
     assert!(
         a_diag.len() >= len && b_diag.len() >= len && u_t.len() >= len,
@@ -27,12 +22,7 @@ pub fn step_recurrence_f32(
 
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
-pub fn step_recurrence_f32(
-    latent_state: &mut [f32],
-    a_diag: &[f32],
-    b_diag: &[f32],
-    u_t: &[f32],
-) {
+pub fn step_recurrence_f32(latent_state: &mut [f32], a_diag: &[f32], b_diag: &[f32], u_t: &[f32]) {
     use std::arch::wasm32::*;
 
     let len = latent_state.len();
@@ -59,7 +49,10 @@ pub fn step_recurrence_f32(
             let next_s1 = f32x4_add(f32x4_mul(a1, s1), f32x4_mul(b1, u1));
 
             v128_store(latent_state.as_mut_ptr().add(offset) as *mut v128, next_s0);
-            v128_store(latent_state.as_mut_ptr().add(offset + 4) as *mut v128, next_s1);
+            v128_store(
+                latent_state.as_mut_ptr().add(offset + 4) as *mut v128,
+                next_s1,
+            );
         }
     }
 
@@ -73,7 +66,10 @@ pub fn step_recurrence_f32(
             let u = v128_load(u_t.as_ptr().add(rem_4_offset) as *const v128);
 
             let next_s = f32x4_add(f32x4_mul(a, s), f32x4_mul(b, u));
-            v128_store(latent_state.as_mut_ptr().add(rem_4_offset) as *mut v128, next_s);
+            v128_store(
+                latent_state.as_mut_ptr().add(rem_4_offset) as *mut v128,
+                next_s,
+            );
         }
     }
 

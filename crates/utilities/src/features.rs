@@ -232,9 +232,9 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::path::PathBuf;
 use std::sync::{
+    Arc,
     atomic::{AtomicBool, Ordering},
     mpsc::Sender,
-    Arc,
 };
 
 /// In-process feature extraction and manifest generator.
@@ -249,7 +249,10 @@ pub fn run_features_pipeline(
         }
     };
 
-    emit_log(format!("[*] Extracting acoustic features from {:?} in-process...", processed_dir));
+    emit_log(format!(
+        "[*] Extracting acoustic features from {:?} in-process...",
+        processed_dir
+    ));
     if !processed_dir.exists() {
         fs::create_dir_all(processed_dir)?;
     }
@@ -264,7 +267,10 @@ pub fn run_features_pipeline(
         })
         .collect();
 
-    emit_log(format!("[*] Discovered {} audio chunks to index.", wav_files.len()));
+    emit_log(format!(
+        "[*] Discovered {} audio chunks to index.",
+        wav_files.len()
+    ));
 
     if stop_signal.load(Ordering::Relaxed) {
         emit_log("[!] Feature extraction aborted by stop token.".to_string());

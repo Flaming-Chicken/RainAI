@@ -119,7 +119,10 @@ impl AudioPreviewManager {
 
     /// Returns count of clips awaiting user review.
     pub fn pending_count(&self) -> usize {
-        self.queue.iter().filter(|c| c.user_rating.is_none() && c.user_preference.is_none()).count()
+        self.queue
+            .iter()
+            .filter(|c| c.user_rating.is_none() && c.user_preference.is_none())
+            .count()
     }
 
     /// Returns the currently selected audit clip.

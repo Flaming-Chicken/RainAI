@@ -6,9 +6,9 @@
 use crate::decoder::DecodeMode;
 use crate::graph::AudioGraph;
 use shared::rain::SynthesisMode;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 
 /// Commands dispatched from the application control thread to the real-time audio thread.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -134,7 +134,8 @@ impl AudioTelemetryQueue {
 
     /// Records newly rendered frames.
     pub fn record_frames(&self, frames: usize) {
-        self.frames_counter.fetch_add(frames as u64, Ordering::Relaxed);
+        self.frames_counter
+            .fetch_add(frames as u64, Ordering::Relaxed);
     }
 }
 
@@ -249,12 +250,16 @@ impl AudioSessionMediator {
             }
             AudioCommand::SetMute(muted) => {
                 self.is_muted = muted;
-                self.telemetry_sender.is_muted.store(muted, Ordering::Relaxed);
+                self.telemetry_sender
+                    .is_muted
+                    .store(muted, Ordering::Relaxed);
             }
             AudioCommand::ResetGraph => {
                 self.graph.reset();
             }
-            AudioCommand::SetIntensity(_) | AudioCommand::SetMode(_) | AudioCommand::SetDecoderMode(_) => {
+            AudioCommand::SetIntensity(_)
+            | AudioCommand::SetMode(_)
+            | AudioCommand::SetDecoderMode(_) => {
                 // Forwarded or applied directly to graph nodes
             }
         }

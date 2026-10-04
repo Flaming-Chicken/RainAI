@@ -167,7 +167,6 @@ impl MoeExecutionMode {
     }
 }
 
-
 /// Structural role of a neural/acoustic layer, dictating its optimal unquantized representation
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LayerRole {
@@ -235,9 +234,7 @@ impl LayerRole {
                     PrecisionFormat::from_continuous_bit_width(target_bits)
                 }
             }
-            Self::DenseProjection => {
-                PrecisionFormat::from_continuous_bit_width(target_bits)
-            }
+            Self::DenseProjection => PrecisionFormat::from_continuous_bit_width(target_bits),
         }
     }
 }
@@ -388,7 +385,8 @@ impl BoxCoxDequantizer {
         }
 
         if bit_pos >= 0 {
-            let frac_bits = ((frac * ((1 << (bit_pos + 1)) as f32)).round() as u32) & ((1 << (bit_pos + 1)) - 1);
+            let frac_bits = ((frac * ((1 << (bit_pos + 1)) as f32)).round() as u32)
+                & ((1 << (bit_pos + 1)) - 1);
             bits |= frac_bits;
         }
 
@@ -408,7 +406,11 @@ impl BoxCoxDequantizer {
         }
 
         let is_neg = (bits >> 15) == 1;
-        let u = if is_neg { (!bits).wrapping_add(1) } else { bits };
+        let u = if is_neg {
+            (!bits).wrapping_add(1)
+        } else {
+            bits
+        };
 
         let r = (u >> 14) & 1;
         let mut bit_pos = 13i32;

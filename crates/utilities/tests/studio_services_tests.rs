@@ -1,18 +1,16 @@
 //! Tests for Studio Services: AudioPreviewManager & DatabaseHealthWorker.
 
-use std::{
-    collections::HashMap,
-    fs,
-};
+use std::{collections::HashMap, fs};
 use utilities::{
-    audio_preview::{AuditClip, AudioPreviewManager, PreferenceChoice},
+    audio_preview::{AudioPreviewManager, AuditClip, PreferenceChoice},
     autopilot::SurfaceEntropyAuditor,
     data_worker::{DataWorkerCommand, DatabaseHealthWorker},
 };
 
 #[test]
 fn test_audio_preview_manager_workflow() {
-    let temp_dir = std::env::temp_dir().join(format!("rainai_preview_test_{}", rand::random::<u64>()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("rainai_preview_test_{}", rand::random::<u64>()));
     let feedback_file = temp_dir.join("user_feedback.json");
     let dpo_file = temp_dir.join("preference_pairs.json");
 
@@ -71,8 +69,13 @@ fn test_audio_preview_manager_workflow() {
     assert_eq!(manager.active_clip().unwrap().user_rating, Some(5));
 
     // Choose preference for clip_001
-    manager.prefer_active_clip(PreferenceChoice::PreferB).expect("Preference failed");
-    assert_eq!(manager.active_clip().unwrap().user_preference, Some(PreferenceChoice::PreferB));
+    manager
+        .prefer_active_clip(PreferenceChoice::PreferB)
+        .expect("Preference failed");
+    assert_eq!(
+        manager.active_clip().unwrap().user_preference,
+        Some(PreferenceChoice::PreferB)
+    );
 
     // Move to next clip (clip_002)
     manager.next_clip();
@@ -100,7 +103,8 @@ fn test_audio_preview_manager_workflow() {
 
 #[test]
 fn test_database_health_worker_lifecycle_and_entropy() {
-    let temp_dir = std::env::temp_dir().join(format!("rainai_db_worker_test_{}", rand::random::<u64>()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("rainai_db_worker_test_{}", rand::random::<u64>()));
     let manifest_file = temp_dir.join("manifest.json");
     let sources_file = temp_dir.join("sources.json");
 
@@ -118,7 +122,10 @@ fn test_database_health_worker_lifecycle_and_entropy() {
         .iter()
         .filter(|q| q.deficit_count > 0 && q.proportion < q.target_proportion * 0.85)
         .collect();
-    assert!(!deficit_surfaces.is_empty(), "Deficit surfaces must be detected");
+    assert!(
+        !deficit_surfaces.is_empty(),
+        "Deficit surfaces must be detected"
+    );
 
     // Test Worker Spawn & Shutdown
     let mut worker = DatabaseHealthWorker::spawn(&manifest_file, &sources_file);
@@ -131,19 +138,23 @@ fn test_database_health_worker_lifecycle_and_entropy() {
 
 #[test]
 fn test_quality_score_and_pruning_hierarchy() {
-    let temp_dir = std::env::temp_dir().join(format!("rainai_quality_test_{}", rand::random::<u64>()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("rainai_quality_test_{}", rand::random::<u64>()));
     fs::create_dir_all(&temp_dir).unwrap();
     let manifest_path = temp_dir.join("manifest.json");
 
+    use utilities::data_worker::{DatabaseHealthWorker, compute_acoustic_quality_score};
     use utilities::features::AudioMetadata;
-    use utilities::data_worker::{compute_acoustic_quality_score, DatabaseHealthWorker};
 
     let processed_dir = temp_dir.join("processed");
     fs::create_dir_all(&processed_dir).unwrap();
 
     // Low quality metadata (near silence / muffled)
     let low_q_meta = AudioMetadata {
-        path: processed_dir.join("chunk_low_q.wav").to_string_lossy().to_string(),
+        path: processed_dir
+            .join("chunk_low_q.wav")
+            .to_string_lossy()
+            .to_string(),
         filename: "chunk_low_q.wav".to_string(),
         sample_rate: 48000,
         channels: 2,
@@ -161,7 +172,10 @@ fn test_quality_score_and_pruning_hierarchy() {
 
     // High quality metadata (healthy rain dynamics and transient response)
     let high_q_meta = AudioMetadata {
-        path: processed_dir.join("chunk_high_q.wav").to_string_lossy().to_string(),
+        path: processed_dir
+            .join("chunk_high_q.wav")
+            .to_string_lossy()
+            .to_string(),
         filename: "chunk_high_q.wav".to_string(),
         sample_rate: 48000,
         channels: 2,
@@ -179,7 +193,12 @@ fn test_quality_score_and_pruning_hierarchy() {
 
     let q_low = compute_acoustic_quality_score(&low_q_meta);
     let q_high = compute_acoustic_quality_score(&high_q_meta);
-    assert!(q_low < q_high, "High-quality metadata must score higher than low-quality (got {:.3} vs {:.3})", q_low, q_high);
+    assert!(
+        q_low < q_high,
+        "High-quality metadata must score higher than low-quality (got {:.3} vs {:.3})",
+        q_low,
+        q_high
+    );
 
     // Create dummy files inside a dedicated processed subfolder
     let file_low = processed_dir.join("chunk_low_q.wav");
@@ -200,8 +219,16 @@ fn test_quality_score_and_pruning_hierarchy() {
     let (_, quotas) = SurfaceEntropyAuditor::audit(&counts);
 
     // Audio size is 2048 bytes. Enforce a ceiling of 1500 bytes.
-    let evicted = DatabaseHealthWorker::enforce_rolling_quota_with_ceiling(&processed_dir, &manifest_path, &quotas, 1500);
-    assert_eq!(evicted, 1, "Exactly 1 chunk should have been evicted to meet ceiling");
+    let evicted = DatabaseHealthWorker::enforce_rolling_quota_with_ceiling(
+        &processed_dir,
+        &manifest_path,
+        &quotas,
+        1500,
+    );
+    assert_eq!(
+        evicted, 1,
+        "Exactly 1 chunk should have been evicted to meet ceiling"
+    );
 
     // The low quality file should have been evicted, preserving the high quality file
     assert!(!file_low.exists(), "Low-quality chunk must be pruned first");
@@ -212,7 +239,8 @@ fn test_quality_score_and_pruning_hierarchy() {
 
 #[test]
 fn test_trickle_in_and_categorize() {
-    let temp_dir = std::env::temp_dir().join(format!("rainai_trickle_test_{}", rand::random::<u64>()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("rainai_trickle_test_{}", rand::random::<u64>()));
     fs::create_dir_all(&temp_dir).unwrap();
     let manifest_path = temp_dir.join("manifest.json");
     let sources_path = temp_dir.join("sources.json");
@@ -240,10 +268,16 @@ fn test_trickle_in_and_categorize() {
 
     assert!(result.is_ok());
     let desc = result.unwrap();
-    assert!(desc.is_some(), "Trickle in should succeed for uningested candidate");
+    assert!(
+        desc.is_some(),
+        "Trickle in should succeed for uningested candidate"
+    );
     let desc_str = desc.unwrap();
     assert!(desc_str.contains("mock_thunder_storm_001"));
-    assert!(desc_str.contains("heavy_rain_thunder"), "tag should preserve original category");
+    assert!(
+        desc_str.contains("heavy_rain_thunder"),
+        "tag should preserve original category"
+    );
 
     // Manifest should now contain the new chunk
     assert!(manifest_path.exists());
@@ -255,7 +289,9 @@ fn test_trickle_in_and_categorize() {
 
 #[test]
 fn test_async_attribution_queue_short_circuit() {
-    use utilities::candle_train::{record_training_attribution_if_needed, AsyncAttributionRecorder};
+    use utilities::candle_train::{
+        AsyncAttributionRecorder, record_training_attribution_if_needed,
+    };
     use utilities::features::AudioMetadata;
 
     let meta = AudioMetadata {

@@ -4,7 +4,7 @@ use rayon::prelude::*;
 use std::fs;
 use std::path::Path;
 use tracing::info;
-use utilities::synth_rain::{generate_rain_texture, DEFAULT_SAMPLE_RATE};
+use utilities::synth_rain::{DEFAULT_SAMPLE_RATE, generate_rain_texture};
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt::init();

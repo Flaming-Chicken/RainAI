@@ -133,21 +133,39 @@ fn test_realtime_early_reflection_convolver() {
 fn test_hoa3_encoder_spherical_harmonics() {
     // 1. Center Front Source: azimuth = 0, elevation = 0
     let front = Hoa3Encoder::encode_point_source(0.0, 0.0, 1.0);
-    assert!((front.channels[0] - 1.0).abs() < 1e-4, "W channel must be 1.0");
-    assert!((front.channels[3] - 1.0).abs() < 1e-4, "X channel must be 1.0 (Front)");
-    assert!(front.channels[1].abs() < 1e-4, "Y channel must be 0.0 (No left-right)");
-    assert!(front.channels[2].abs() < 1e-4, "Z channel must be 0.0 (No elevation)");
+    assert!(
+        (front.channels[0] - 1.0).abs() < 1e-4,
+        "W channel must be 1.0"
+    );
+    assert!(
+        (front.channels[3] - 1.0).abs() < 1e-4,
+        "X channel must be 1.0 (Front)"
+    );
+    assert!(
+        front.channels[1].abs() < 1e-4,
+        "Y channel must be 0.0 (No left-right)"
+    );
+    assert!(
+        front.channels[2].abs() < 1e-4,
+        "Z channel must be 0.0 (No elevation)"
+    );
 
     // 2. Pure Left Source: azimuth = pi/2, elevation = 0
     let left = Hoa3Encoder::encode_point_source(std::f32::consts::FRAC_PI_2, 0.0, 1.0);
     assert!((left.channels[0] - 1.0).abs() < 1e-4);
-    assert!((left.channels[1] - 1.0).abs() < 1e-4, "Y channel must be 1.0 (Left)");
+    assert!(
+        (left.channels[1] - 1.0).abs() < 1e-4,
+        "Y channel must be 1.0 (Left)"
+    );
     assert!(left.channels[3].abs() < 1e-4, "X channel must be 0.0");
 
     // 3. Directly Overhead Source: elevation = pi/2
     let overhead = Hoa3Encoder::encode_point_source(0.0, std::f32::consts::FRAC_PI_2, 1.0);
     assert!((overhead.channels[0] - 1.0).abs() < 1e-4);
-    assert!((overhead.channels[2] - 1.0).abs() < 1e-4, "Z channel must be 1.0 (Zenith)");
+    assert!(
+        (overhead.channels[2] - 1.0).abs() < 1e-4,
+        "Z channel must be 1.0 (Zenith)"
+    );
     assert!(overhead.channels[1].abs() < 1e-4);
     assert!(overhead.channels[3].abs() < 1e-4);
 }
@@ -210,7 +228,10 @@ fn test_acoustic_scene_adaptation_and_mode_inversion() {
 
     // Adapter should detect the 63Hz resonance mode
     let has_63_mode = adapter.detected_modes.iter().any(|m| m.center_hz == 63.0);
-    assert!(has_63_mode, "Adapter must identify 63Hz room resonance mode");
+    assert!(
+        has_63_mode,
+        "Adapter must identify 63Hz room resonance mode"
+    );
 
     // Process a resonant 63Hz input through the adapter's notch filter
     let mut audio_signal = vec![0.0f32; 512];

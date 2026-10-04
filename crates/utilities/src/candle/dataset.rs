@@ -35,8 +35,10 @@ pub fn generate_batch_augmented(
 
     let audio_features = Tensor::randn(0.0f32, 1.0f32, (batch_size, LATENT_DIM), device)?;
     let z_prev = Tensor::randn(0.0f32, 1.0f32, (batch_size, LATENT_DIM), device)?;
-    let z_prev2 = Some(((&z_prev * 0.96)? + Tensor::randn(0.0f32, 0.05f32, (batch_size, LATENT_DIM), device)?)?);
-    
+    let z_prev2 = Some(
+        ((&z_prev * 0.96)? + Tensor::randn(0.0f32, 0.05f32, (batch_size, LATENT_DIM), device)?)?,
+    );
+
     // Conditioning vector [B, 554]
     let mut cond = Tensor::randn(0.0f32, 0.4f32, (batch_size, CONDITION_DIM), device)?;
 
@@ -46,7 +48,8 @@ pub fn generate_batch_augmented(
     }
 
     // Realistic target trajectory with physics-guided drift and inertia
-    let z_target = ((&z_prev * 0.94)? + Tensor::randn(0.0f32, 0.08f32, (batch_size, LATENT_DIM), device)?)?;
+    let z_target =
+        ((&z_prev * 0.94)? + Tensor::randn(0.0f32, 0.08f32, (batch_size, LATENT_DIM), device)?)?;
 
     // Target 16-band filter responses
     let target_bands = Tensor::randn(0.5f32, 0.25f32, (batch_size, FILTER_BANDS), device)?;
@@ -179,10 +182,17 @@ impl AsyncAttributionRecorder {
 
         if let Some(sources_path) = WorkspacePaths::resolve_sources() {
             if let Ok(content) = std::fs::read_to_string(&sources_path) {
-                if let Ok(items) = serde_json::from_str::<Vec<crate::ingest::DownloadItem>>(&content) {
+                if let Ok(items) =
+                    serde_json::from_str::<Vec<crate::ingest::DownloadItem>>(&content)
+                {
                     if let Some(src) = items.iter().find(|i| {
                         i.filename == *filename
-                            || filename.starts_with(&i.filename.replace(".mp3", "").replace(".wav", "").replace(".ogg", ""))
+                            || filename.starts_with(
+                                &i.filename
+                                    .replace(".mp3", "")
+                                    .replace(".wav", "")
+                                    .replace(".ogg", ""),
+                            )
                     }) {
                         platform = src.source_platform.clone();
                         license = src.license.clone();
@@ -206,7 +216,11 @@ impl AsyncAttributionRecorder {
         if let Some(parent) = target_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&target_path) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&target_path)
+        {
             use std::io::Write;
             let _ = f.write_all(attr_line.as_bytes());
         }
@@ -302,12 +316,16 @@ impl WeatherPrecipitationRegime {
     }
 
     /// Modulates condition parameters and bands to reflect meteorological regime
-    pub fn apply_meteorology(&self, cond: &mut [f32; CONDITION_DIM], bands: &mut [f32; FILTER_BANDS]) {
+    pub fn apply_meteorology(
+        &self,
+        cond: &mut [f32; CONDITION_DIM],
+        bands: &mut [f32; FILTER_BANDS],
+    ) {
         match self {
             Self::DrizzleMist => {
                 cond[512] = (cond[512] * 0.3).clamp(0.01, 1.0); // low rain rate
-                cond[513] = (cond[513] * 1.5).clamp(0.0, 1.0);  // high droplet density
-                cond[515] = (cond[515] * 1.3).clamp(0.0, 1.0);  // high freq ratio
+                cond[513] = (cond[513] * 1.5).clamp(0.0, 1.0); // high droplet density
+                cond[515] = (cond[515] * 1.3).clamp(0.0, 1.0); // high freq ratio
                 for b in 12..FILTER_BANDS {
                     bands[b] = (bands[b] * 1.3).min(20.0);
                 }
@@ -354,8 +372,9 @@ pub fn sample_sparse_dirichlet_surfaces<R: rand::Rng>(rng: &mut R, alpha: f32) -
     weights
 }
 
-static CACHED_MANIFEST: std::sync::Mutex<Option<(std::time::SystemTime, Vec<crate::features::AudioMetadata>)>> =
-    std::sync::Mutex::new(None);
+static CACHED_MANIFEST: std::sync::Mutex<
+    Option<(std::time::SystemTime, Vec<crate::features::AudioMetadata>)>,
+> = std::sync::Mutex::new(None);
 
 /// Real acoustic manifest dataset loader for Candle training.
 pub struct CandleManifestDataset {
@@ -365,12 +384,16 @@ pub struct CandleManifestDataset {
 impl CandleManifestDataset {
     pub fn load_from_manifest<P: AsRef<Path>>(path: P) -> Result<Self> {
         let p = path.as_ref();
-        let mtime = std::fs::metadata(p).and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        let mtime = std::fs::metadata(p)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
 
         if let Ok(guard) = CACHED_MANIFEST.lock() {
             if let Some((cached_time, ref cached_entries)) = *guard {
                 if cached_time == mtime && !cached_entries.is_empty() {
-                    return Ok(Self { entries: cached_entries.clone() });
+                    return Ok(Self {
+                        entries: cached_entries.clone(),
+                    });
                 }
             }
         }
@@ -398,8 +421,8 @@ impl CandleManifestDataset {
         so3_aug_prob: f32,
         surface_mixup_prob: f32,
     ) -> Result<TrainingBatch> {
-        use rand::seq::SliceRandom;
         use rand::Rng;
+        use rand::seq::SliceRandom;
         let mut rng = rand::thread_rng();
 
         let mut audio_feats = Vec::with_capacity(batch_size * LATENT_DIM);
@@ -422,7 +445,10 @@ impl CandleManifestDataset {
         };
 
         for _ in 0..batch_size {
-            let meta = self.entries.choose(&mut rng).expect("Dataset cannot be empty");
+            let meta = self
+                .entries
+                .choose(&mut rng)
+                .expect("Dataset cannot be empty");
             record_training_attribution_if_needed(meta);
 
             // Build 554-dim condition vector matching Python dataset standard (zero-heap stack array):
@@ -454,7 +480,9 @@ impl CandleManifestDataset {
             // Target 16-band filterbank gains (zero-heap stack array)
             let mut bands = [0.0f32; FILTER_BANDS];
             for b in 0..FILTER_BANDS {
-                bands[b] = (meta.rms_energy * 10.0 + (b as f32 / FILTER_BANDS as f32) * meta.high_freq_ratio).clamp(0.01, 1.0);
+                bands[b] = (meta.rms_energy * 10.0
+                    + (b as f32 / FILTER_BANDS as f32) * meta.high_freq_ratio)
+                    .clamp(0.01, 1.0);
             }
 
             // Target 4-channel FOA: W (omni), X (front-back), Y (left-right), Z (up-down) (zero-heap stack array)
@@ -487,17 +515,25 @@ impl CandleManifestDataset {
 
         // Layer 0 Hardening: sanitize all raw float arrays to guarantee zero NaNs/Infs enter tensors
         for val in &mut audio_feats {
-            if !val.is_finite() { *val = 0.0; }
+            if !val.is_finite() {
+                *val = 0.0;
+            }
         }
         for val in &mut cond_vecs {
-            if !val.is_finite() { *val = 0.0; }
+            if !val.is_finite() {
+                *val = 0.0;
+            }
         }
         for val in &mut target_bands {
-            if !val.is_finite() { *val = 0.1; }
+            if !val.is_finite() {
+                *val = 0.1;
+            }
             *val = val.clamp(0.0, 20.0);
         }
         for val in &mut target_foas {
-            if !val.is_finite() { *val = 0.0; }
+            if !val.is_finite() {
+                *val = 0.0;
+            }
         }
 
         let audio_features = Tensor::from_vec(audio_feats, (batch_size, LATENT_DIM), device)?;
@@ -508,8 +544,12 @@ impl CandleManifestDataset {
         }
 
         let z_prev = Tensor::randn(0.0f32, 1.0f32, (batch_size, LATENT_DIM), device)?;
-        let z_prev2 = Some(((&z_prev * 0.96)? + Tensor::randn(0.0f32, 0.05f32, (batch_size, LATENT_DIM), device)?)?);
-        let z_target = ((&z_prev * 0.94)? + Tensor::randn(0.0f32, 0.08f32, (batch_size, LATENT_DIM), device)?)?;
+        let z_prev2 = Some(
+            ((&z_prev * 0.96)?
+                + Tensor::randn(0.0f32, 0.05f32, (batch_size, LATENT_DIM), device)?)?,
+        );
+        let z_target = ((&z_prev * 0.94)?
+            + Tensor::randn(0.0f32, 0.08f32, (batch_size, LATENT_DIM), device)?)?;
         let target_bands = Tensor::from_vec(target_bands, (batch_size, FILTER_BANDS), device)?;
         let mut target_foa = Tensor::from_vec(target_foas, (batch_size, FOA_CHANNELS), device)?;
 
@@ -544,7 +584,12 @@ impl CandleManifestDataset {
     }
 
     /// Samples a batch from the real dataset manifest with standard parameters.
-    pub fn sample_batch(&self, batch_size: usize, device: &Device, cfg_dropout_prob: f32) -> Result<TrainingBatch> {
+    pub fn sample_batch(
+        &self,
+        batch_size: usize,
+        device: &Device,
+        cfg_dropout_prob: f32,
+    ) -> Result<TrainingBatch> {
         self.sample_batch_augmented(batch_size, device, cfg_dropout_prob, 0.0, 0.0)
     }
 
@@ -558,7 +603,9 @@ impl CandleManifestDataset {
         let val_entries = entries.split_off(train_size);
         (
             Self { entries },
-            Self { entries: val_entries },
+            Self {
+                entries: val_entries,
+            },
         )
     }
 }

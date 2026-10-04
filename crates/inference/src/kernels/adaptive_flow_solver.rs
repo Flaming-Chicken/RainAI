@@ -70,13 +70,7 @@ impl DormandPrince45 {
     const E7: f32 = -1.0 / 40.0;
 
     /// Computes a single adaptive step with local error estimation.
-    pub fn step<F>(
-        x: &[f32],
-        t: f32,
-        h: f32,
-        tol: f32,
-        mut velocity_fn: F,
-    ) -> AdaptiveStepResult
+    pub fn step<F>(x: &[f32], t: f32, h: f32, tol: f32, mut velocity_fn: F) -> AdaptiveStepResult
     where
         F: FnMut(&[f32], f32) -> Vec<f32>,
     {
@@ -109,21 +103,35 @@ impl DormandPrince45 {
         // Stage 5
         let mut x5 = vec![0.0f32; n];
         for i in 0..n {
-            x5[i] = x[i] + h * (Self::A51 * k1[i] + Self::A52 * k2[i] + Self::A53 * k3[i] + Self::A54 * k4[i]);
+            x5[i] = x[i]
+                + h * (Self::A51 * k1[i]
+                    + Self::A52 * k2[i]
+                    + Self::A53 * k3[i]
+                    + Self::A54 * k4[i]);
         }
         let k5 = velocity_fn(&x5, t + Self::C5 * h);
 
         // Stage 6
         let mut x6 = vec![0.0f32; n];
         for i in 0..n {
-            x6[i] = x[i] + h * (Self::A61 * k1[i] + Self::A62 * k2[i] + Self::A63 * k3[i] + Self::A64 * k4[i] + Self::A65 * k5[i]);
+            x6[i] = x[i]
+                + h * (Self::A61 * k1[i]
+                    + Self::A62 * k2[i]
+                    + Self::A63 * k3[i]
+                    + Self::A64 * k4[i]
+                    + Self::A65 * k5[i]);
         }
         let k6 = velocity_fn(&x6, t + Self::C6 * h);
 
         // 5th-order next state
         let mut x_next = vec![0.0f32; n];
         for i in 0..n {
-            x_next[i] = x[i] + h * (Self::B1 * k1[i] + Self::B3 * k3[i] + Self::B4 * k4[i] + Self::B5 * k5[i] + Self::B6 * k6[i]);
+            x_next[i] = x[i]
+                + h * (Self::B1 * k1[i]
+                    + Self::B3 * k3[i]
+                    + Self::B4 * k4[i]
+                    + Self::B5 * k5[i]
+                    + Self::B6 * k6[i]);
         }
 
         // Stage 7 (FSAL evaluation at x_next)
@@ -132,7 +140,13 @@ impl DormandPrince45 {
         // Error vector calculation
         let mut sum_sq_err = 0.0f32;
         for i in 0..n {
-            let err_i = h * (Self::E1 * k1[i] + Self::E3 * k3[i] + Self::E4 * k4[i] + Self::E5 * k5[i] + Self::E6 * k6[i] + Self::E7 * k7[i]);
+            let err_i = h
+                * (Self::E1 * k1[i]
+                    + Self::E3 * k3[i]
+                    + Self::E4 * k4[i]
+                    + Self::E5 * k5[i]
+                    + Self::E6 * k6[i]
+                    + Self::E7 * k7[i]);
             sum_sq_err += err_i * err_i;
         }
         let error_norm = (sum_sq_err / n.max(1) as f32).sqrt();
@@ -175,7 +189,9 @@ impl DormandPrince45 {
 
         while t < 1.0 - 1e-6 {
             if steps >= max_iterations {
-                return Err(format!("RK45 exceeded maximum iterations ({max_iterations}) at t = {t:.4}"));
+                return Err(format!(
+                    "RK45 exceeded maximum iterations ({max_iterations}) at t = {t:.4}"
+                ));
             }
 
             // Clamp h to reach exactly 1.0 at the end
@@ -224,13 +240,7 @@ impl BogackiShampine23 {
     const E3: f32 = -1.0 / 9.0;
     const E4: f32 = 1.0 / 8.0;
 
-    pub fn step<F>(
-        x: &[f32],
-        t: f32,
-        h: f32,
-        tol: f32,
-        mut velocity_fn: F,
-    ) -> AdaptiveStepResult
+    pub fn step<F>(x: &[f32], t: f32, h: f32, tol: f32, mut velocity_fn: F) -> AdaptiveStepResult
     where
         F: FnMut(&[f32], f32) -> Vec<f32>,
     {
@@ -259,7 +269,8 @@ impl BogackiShampine23 {
 
         let mut sum_sq_err = 0.0f32;
         for i in 0..n {
-            let err_i = h * (Self::E1 * k1[i] + Self::E2 * k2[i] + Self::E3 * k3[i] + Self::E4 * k4[i]);
+            let err_i =
+                h * (Self::E1 * k1[i] + Self::E2 * k2[i] + Self::E3 * k3[i] + Self::E4 * k4[i]);
             sum_sq_err += err_i * err_i;
         }
         let error_norm = (sum_sq_err / n.max(1) as f32).sqrt();
@@ -301,7 +312,9 @@ impl BogackiShampine23 {
 
         while t < 1.0 - 1e-6 {
             if steps >= max_iterations {
-                return Err(format!("RK23 exceeded maximum iterations ({max_iterations}) at t = {t:.4}"));
+                return Err(format!(
+                    "RK23 exceeded maximum iterations ({max_iterations}) at t = {t:.4}"
+                ));
             }
 
             if t + h > 1.0 {
@@ -361,7 +374,8 @@ impl LearnedFlowController {
 
     /// Predicts optimal step size $h_t$ given current velocity $\mathbf{v}_t$ and previous velocity $\mathbf{v}_{t-1}$.
     pub fn predict_step_size(&self, v_current: &[f32], v_prev: Option<&[f32]>, dt: f32) -> f32 {
-        let v_norm = (v_current.iter().map(|&x| x * x).sum::<f32>() / v_current.len().max(1) as f32).sqrt();
+        let v_norm =
+            (v_current.iter().map(|&x| x * x).sum::<f32>() / v_current.len().max(1) as f32).sqrt();
 
         let curvature = if let Some(prev) = v_prev {
             let mut diff_sq = 0.0f32;
@@ -375,7 +389,8 @@ impl LearnedFlowController {
         };
 
         // Modulate base_h inversely with curvature and velocity
-        let damping = 1.0 + self.curvature_sensitivity * curvature + self.velocity_sensitivity * v_norm;
+        let damping =
+            1.0 + self.curvature_sensitivity * curvature + self.velocity_sensitivity * v_norm;
         (self.base_h / damping).clamp(self.min_h, self.max_h)
     }
 }
@@ -455,19 +470,34 @@ impl Tsitouras54 {
 
         let mut x5 = vec![0.0f32; n];
         for i in 0..n {
-            x5[i] = x[i] + h * (Self::A51 * k1[i] + Self::A52 * k2[i] + Self::A53 * k3[i] + Self::A54 * k4[i]);
+            x5[i] = x[i]
+                + h * (Self::A51 * k1[i]
+                    + Self::A52 * k2[i]
+                    + Self::A53 * k3[i]
+                    + Self::A54 * k4[i]);
         }
         let k5 = velocity_fn(&x5, t + Self::C5 * h);
 
         let mut x6 = vec![0.0f32; n];
         for i in 0..n {
-            x6[i] = x[i] + h * (Self::A61 * k1[i] + Self::A62 * k2[i] + Self::A63 * k3[i] + Self::A64 * k4[i] + Self::A65 * k5[i]);
+            x6[i] = x[i]
+                + h * (Self::A61 * k1[i]
+                    + Self::A62 * k2[i]
+                    + Self::A63 * k3[i]
+                    + Self::A64 * k4[i]
+                    + Self::A65 * k5[i]);
         }
         let k6 = velocity_fn(&x6, t + Self::C6 * h);
 
         let mut x_next = vec![0.0f32; n];
         for i in 0..n {
-            x_next[i] = x[i] + h * (Self::B1 * k1[i] + Self::B2 * k2[i] + Self::B3 * k3[i] + Self::B4 * k4[i] + Self::B5 * k5[i] + Self::B6 * k6[i]);
+            x_next[i] = x[i]
+                + h * (Self::B1 * k1[i]
+                    + Self::B2 * k2[i]
+                    + Self::B3 * k3[i]
+                    + Self::B4 * k4[i]
+                    + Self::B5 * k5[i]
+                    + Self::B6 * k6[i]);
         }
 
         // Stage 7 (FSAL evaluation at x_next)
@@ -475,7 +505,14 @@ impl Tsitouras54 {
 
         let mut sum_sq_err = 0.0f32;
         for i in 0..n {
-            let err_i = h * (Self::E1 * k1[i] + Self::E2 * k2[i] + Self::E3 * k3[i] + Self::E4 * k4[i] + Self::E5 * k5[i] + Self::E6 * k6[i] + Self::E7 * k7[i]);
+            let err_i = h
+                * (Self::E1 * k1[i]
+                    + Self::E2 * k2[i]
+                    + Self::E3 * k3[i]
+                    + Self::E4 * k4[i]
+                    + Self::E5 * k5[i]
+                    + Self::E6 * k6[i]
+                    + Self::E7 * k7[i]);
             sum_sq_err += err_i * err_i;
         }
 
@@ -515,7 +552,9 @@ impl Tsitouras54 {
 
         while t < 1.0 - 1e-6 {
             if steps >= max_iterations {
-                return Err(format!("Tsit5 exceeded maximum iterations ({max_iterations}) at t = {t:.4}"));
+                return Err(format!(
+                    "Tsit5 exceeded maximum iterations ({max_iterations}) at t = {t:.4}"
+                ));
             }
             if t + h > 1.0 {
                 h = 1.0 - t;
@@ -598,7 +637,9 @@ impl HeunAdaptive2 {
 
         while t < 1.0 - 1e-6 {
             if steps >= max_iterations {
-                return Err(format!("Heun2 exceeded maximum iterations ({max_iterations}) at t = {t:.4}"));
+                return Err(format!(
+                    "Heun2 exceeded maximum iterations ({max_iterations}) at t = {t:.4}"
+                ));
             }
             if t + h > 1.0 {
                 h = 1.0 - t;
@@ -661,4 +702,3 @@ impl DpmSolverPP {
         Ok(current_x)
     }
 }
-

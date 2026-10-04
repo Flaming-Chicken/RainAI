@@ -7,7 +7,7 @@ use crate::model::{MoeExecutionMode, QuantizedLayer, QuantizedModelManifest};
 use crate::weight_cache_manager::WeightCacheManager;
 use crate::weight_loader::{LoadedLayer, WeightBuffer, WeightCache};
 
-use shared::rain::{QualityTier, CONDITION_DIM};
+use shared::rain::{CONDITION_DIM, QualityTier};
 
 /// Neural model status
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,7 +47,6 @@ pub struct InferenceRunner {
     pub engram_bank: Option<EngramBank>,
     pub latent_kv_cache: Vec<[f32; 32]>,
 }
-
 
 impl Default for InferenceRunner {
     fn default() -> Self {
@@ -108,8 +107,18 @@ impl InferenceRunner {
         let manifest = QuantizedModelManifest::load_default_ternary().ok();
 
         let (min_bits, max_bits) = if let Some(ref m) = manifest {
-            let min_b = m.activation_qat.per_channel_bit_widths.iter().copied().fold(32.0f32, f32::min);
-            let max_b = m.activation_qat.per_channel_bit_widths.iter().copied().fold(1.58f32, f32::max);
+            let min_b = m
+                .activation_qat
+                .per_channel_bit_widths
+                .iter()
+                .copied()
+                .fold(32.0f32, f32::min);
+            let max_b = m
+                .activation_qat
+                .per_channel_bit_widths
+                .iter()
+                .copied()
+                .fold(1.58f32, f32::max);
             (min_b, max_b)
         } else {
             (1.58, 8.0)
@@ -170,9 +179,8 @@ impl InferenceRunner {
         let original = trajectory.to_vec();
         for i in 1..n - 1 {
             for d in 0..CONDITION_DIM {
-                trajectory[i][d] = 0.25 * original[i - 1][d]
-                    + 0.50 * original[i][d]
-                    + 0.25 * original[i + 1][d];
+                trajectory[i][d] =
+                    0.25 * original[i - 1][d] + 0.50 * original[i][d] + 0.25 * original[i + 1][d];
             }
         }
     }
@@ -218,15 +226,25 @@ impl InferenceRunner {
         // Fast hash-check for conditioning gateway cache validity
         // Hashes dynamic weather/environmental parameters (512..554) and semantic embedding sample (0..8)
         let mut cond_hash = 14695981039346656037u64;
-        for (i, &v) in conditioning[512..].iter().chain(conditioning[..8].iter()).enumerate() {
-            cond_hash = (cond_hash ^ (v.to_bits() as u64).wrapping_mul((i + 1) as u64)).wrapping_mul(1099511628211);
+        for (i, &v) in conditioning[512..]
+            .iter()
+            .chain(conditioning[..8].iter())
+            .enumerate()
+        {
+            cond_hash = (cond_hash ^ (v.to_bits() as u64).wrapping_mul((i + 1) as u64))
+                .wrapping_mul(1099511628211);
         }
 
         if !self.cond_cache_valid || self.cached_cond_hash != cond_hash {
             if let Some(cond_layer) = self.weight_cache.get("encoder.cond_proj.weight") {
                 let bias = self.weight_cache.get("encoder.cond_proj.bias");
                 let bias_ref = bias.as_ref().map(|b| b.weights.as_slice());
-                Self::dispatch_projection(&cond_layer, conditioning, bias_ref, &mut self.u_t_buffer);
+                Self::dispatch_projection(
+                    &cond_layer,
+                    conditioning,
+                    bias_ref,
+                    &mut self.u_t_buffer,
+                );
             }
             kernels::simd_silu_in_place(&mut self.u_t_buffer);
             self.cached_cond_hash = cond_hash;
@@ -235,7 +253,10 @@ impl InferenceRunner {
     }
 
     /// Fast 1-step distilled inference directly projecting conditioning through consistency jump head
-    pub fn fast_consistency_step(&mut self, conditioning: &[f32; CONDITION_DIM]) -> (f32, f32, f32, f32) {
+    pub fn fast_consistency_step(
+        &mut self,
+        conditioning: &[f32; CONDITION_DIM],
+    ) -> (f32, f32, f32, f32) {
         // 1. Conditioning Projection (cached when input parameters are invariant)
         self.ensure_conditioning_projection(conditioning);
 
@@ -305,7 +326,9 @@ impl InferenceRunner {
 
     /// Polls background download progress and hot-swaps to target tier when ready
     pub fn poll_downloads(&mut self) {
-        if self.assets.tier_state(self.target_tier).is_ready() && self.active_tier != self.target_tier {
+        if self.assets.tier_state(self.target_tier).is_ready()
+            && self.active_tier != self.target_tier
+        {
             self.active_tier = self.target_tier;
             self.is_fallback_active = false;
             self.status = EngineStatus::Ready;
@@ -346,7 +369,7 @@ impl InferenceRunner {
 
             if let (Some(a_diag), Some(b_diag)) = (
                 self.weight_cache.get("mamba.A_diag.weight"),
-                self.weight_cache.get("mamba.B_diag.weight")
+                self.weight_cache.get("mamba.B_diag.weight"),
             ) {
                 kernels::step_recurrence_f32(
                     &mut self.latent_state,
@@ -406,7 +429,6 @@ impl InferenceRunner {
             }
         }
 
-
         // 4. Ambisonic FOA Projection: y_t = W_foa @ s_t
         let mut foa_out = [0.0; 4];
         if let Some(foa_layer) = self.weight_cache.get("decoder.foa_proj.weight") {
@@ -419,24 +441,24 @@ impl InferenceRunner {
 
         // Bit-width scaling for energy compensation across tiers
         let bit_scale = (self.max_bit_width / 8.0).clamp(0.5, 1.5);
-        
+
         (
-            foa_out[0] * bit_scale, 
-            foa_out[1] * bit_scale, 
-            foa_out[2] * bit_scale, 
-            foa_out[3] * bit_scale
+            foa_out[0] * bit_scale,
+            foa_out[1] * bit_scale,
+            foa_out[2] * bit_scale,
+            foa_out[3] * bit_scale,
         )
     }
 
     /// Asynchronously requests a quality tier upgrade and loads weights via IndexedDB/Network
     pub async fn upgrade_tier_async(&mut self, tier: QualityTier) -> Result<(), String> {
         self.set_target_tier(tier);
-        
+
         if tier.is_download_required() && !self.assets.tier_state(tier).is_ready() {
             let new_cache = WeightCacheManager::load_tier(tier).await?;
             self.weight_cache = new_cache;
             self.cond_cache_valid = false;
-            
+
             *self.assets.tier_state_mut(tier) = crate::asset_manager::AssetState::Ready;
             self.active_tier = tier;
             self.is_fallback_active = false;
@@ -447,7 +469,10 @@ impl InferenceRunner {
 
     /// Evaluates a block-rate neural step (50-100 Hz) to produce continuous parametric control signals
     /// that dynamically modulate compiled procedural and physical DSP engines.
-    pub fn step_parametric(&mut self, conditioning: &[f32; CONDITION_DIM]) -> NeuralParametricControl {
+    pub fn step_parametric(
+        &mut self,
+        conditioning: &[f32; CONDITION_DIM],
+    ) -> NeuralParametricControl {
         // Run recurrence and get the directional FOA vector
         let (w, x, y, z) = self.step(conditioning);
 
@@ -517,4 +542,3 @@ impl Default for NeuralParametricControl {
         }
     }
 }
-

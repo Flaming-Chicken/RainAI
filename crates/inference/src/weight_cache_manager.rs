@@ -1,7 +1,7 @@
 //! Asynchronous weight streaming, IndexedDB browser caching, and dynamic tier hot-swapping.
 
-use crate::weight_loader::{WeightCache, WeightLoader};
 use crate::model::QuantizedModelManifest;
+use crate::weight_loader::{WeightCache, WeightLoader};
 use shared::rain::QualityTier;
 
 #[cfg(target_arch = "wasm32")]
@@ -34,7 +34,11 @@ impl WeightCacheManager {
             QualityTier::StudioFp32 => "./data/slice_3_fp32.bin",
         };
 
-        tracing::info!("Fetching weight tier {:?} from endpoint: {}", tier, slice_url);
+        tracing::info!(
+            "Fetching weight tier {:?} from endpoint: {}",
+            tier,
+            slice_url
+        );
         let raw_bytes = Self::fetch_binary_slice(slice_url).await?;
 
         // 3. Save to persistent local cache for future sessions
@@ -49,11 +53,16 @@ impl WeightCacheManager {
         #[cfg(target_arch = "wasm32")]
         {
             if let Some(window) = web_sys::window() {
-                if let Ok(func) = js_sys::Reflect::get(&window, &wasm_bindgen::JsValue::from_str("__loadFromIndexedDB")) {
+                if let Ok(func) = js_sys::Reflect::get(
+                    &window,
+                    &wasm_bindgen::JsValue::from_str("__loadFromIndexedDB"),
+                ) {
                     if let Some(js_func) = func.dyn_ref::<js_sys::Function>() {
-                        let promise = js_func.call1(&window, &wasm_bindgen::JsValue::from_str(key)).ok()?;
+                        let promise = js_func
+                            .call1(&window, &wasm_bindgen::JsValue::from_str(key))
+                            .ok()?;
                         let result = JsFuture::from(js_sys::Promise::from(promise)).await.ok()?;
-                        
+
                         // Convert JS ArrayBuffer / Uint8Array back to Rust Vec<u8>
                         if result.is_object() {
                             let uint8_arr = js_sys::Uint8Array::new(&result);
@@ -79,7 +88,10 @@ impl WeightCacheManager {
         #[cfg(target_arch = "wasm32")]
         {
             if let Some(window) = web_sys::window() {
-                if let Ok(func) = js_sys::Reflect::get(&window, &wasm_bindgen::JsValue::from_str("__saveToIndexedDB")) {
+                if let Ok(func) = js_sys::Reflect::get(
+                    &window,
+                    &wasm_bindgen::JsValue::from_str("__saveToIndexedDB"),
+                ) {
                     if let Some(js_func) = func.dyn_ref::<js_sys::Function>() {
                         let k = wasm_bindgen::JsValue::from_str(key);
                         let uint8_arr = js_sys::Uint8Array::from(bytes);
@@ -105,20 +117,25 @@ impl WeightCacheManager {
             let resp_value = JsFuture::from(window.fetch_with_str(url))
                 .await
                 .map_err(|e| format!("Network fetch failed: {e:?}"))?;
-            
-            let resp: web_sys::Response = resp_value.dyn_into()
+
+            let resp: web_sys::Response = resp_value
+                .dyn_into()
                 .map_err(|_| "Failed to cast fetch response")?;
-            
+
             if !resp.ok() {
-                return Err(format!("Server returned HTTP status error: {}", resp.status()));
+                return Err(format!(
+                    "Server returned HTTP status error: {}",
+                    resp.status()
+                ));
             }
 
-            let array_buffer_promise = resp.array_buffer()
+            let array_buffer_promise = resp
+                .array_buffer()
                 .map_err(|e| format!("Failed to get array buffer: {e:?}"))?;
             let array_buffer = JsFuture::from(array_buffer_promise)
                 .await
                 .map_err(|e| format!("Failed to await array buffer: {e:?}"))?;
-            
+
             let uint8_array = js_sys::Uint8Array::new(&array_buffer);
             let mut bytes = vec![0; uint8_array.length() as usize];
             uint8_array.copy_to(&mut bytes);

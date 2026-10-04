@@ -290,7 +290,8 @@ impl PhysicalRainSynthesizer {
             }
             _ => {
                 // Water / Puddle: Minnaert bubble chirping with upward glide
-                let damping = (0.13 * minnaert_f0 + 0.0072 * minnaert_f0.powf(1.333)).clamp(100.0, 2500.0);
+                let damping =
+                    (0.13 * minnaert_f0 + 0.0072 * minnaert_f0.powf(1.333)).clamp(100.0, 2500.0);
                 let damp_mult = (-damping * inv_sr).exp();
                 let mut env = 0.7f32;
                 let inv_dur = 1.0 / duration_sec;
@@ -341,7 +342,8 @@ impl PhysicalRainSynthesizer {
         if self.rng.next_unit_f32() < spawn_prob {
             // Sample droplet diameter (Marshall-Palmer / Ulbrich Gamma distribution proxy)
             let u = self.rng.next_unit_f32().max(1e-4);
-            let diameter_mm = (-u.ln() * (0.8 + intensity * 1.5) * droplet_energy_scale).clamp(0.4, 7.0);
+            let diameter_mm =
+                (-u.ln() * (0.8 + intensity * 1.5) * droplet_energy_scale).clamp(0.4, 7.0);
 
             // Select dominant active surface
             let surfaces = [
@@ -387,7 +389,10 @@ impl PhysicalRainSynthesizer {
         // 2. Continuous wind bed and turbulence
         let white = self.rng.next_f32();
         let wind_drive = self.brown_filter.process(white) * state.wind.speed;
-        let wind_master = wind_drive * (1.0 + state.wind.gustiness * 0.5 * wind_gust_scale) * state.master_volume * 0.4;
+        let wind_master = wind_drive
+            * (1.0 + state.wind.gustiness * 0.5 * wind_gust_scale)
+            * state.master_volume
+            * 0.4;
 
         // 3. Pop droplet tail frame
         let pw = self.ring_w[self.ring_pos];

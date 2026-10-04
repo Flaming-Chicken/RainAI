@@ -23,7 +23,7 @@
 //!    Automatically synchronizes newly acquired data with `sources.json` and prepares chunks
 //!    for First-Order Ambisonic (FOA) spatial upmixing and native Candle neural training.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -31,8 +31,8 @@ use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
 use crate::ingest::{
-    analyze_pcm_samples, atomic_write, compute_file_sha256, AcousticQualityMetrics, DownloadItem,
-    LicenseTier, LicenseVerifier, ProvenanceManifest, ProvenanceRecord,
+    AcousticQualityMetrics, DownloadItem, LicenseTier, LicenseVerifier, ProvenanceManifest,
+    ProvenanceRecord, analyze_pcm_samples, atomic_write, compute_file_sha256,
 };
 
 /// Precipitation intensity category for acoustic droplet dynamics.
@@ -82,9 +82,11 @@ impl PrecipitationRate {
             Self::Drizzle
         } else if clean.contains("light") || clean.contains("soft") {
             Self::LightRain
-        } else if clean.contains("heavy") || clean.contains("deluge") || clean.contains("downpour") {
+        } else if clean.contains("heavy") || clean.contains("deluge") || clean.contains("downpour")
+        {
             Self::HeavyRain
-        } else if clean.contains("storm") || clean.contains("thunder") || clean.contains("violent") {
+        } else if clean.contains("storm") || clean.contains("thunder") || clean.contains("violent")
+        {
             Self::ViolentStorm
         } else {
             Self::ModerateRain
@@ -134,7 +136,8 @@ impl MicrophoneSetup {
             Self::BinauralInEar
         } else if clean.contains("hoa") || clean.contains("higher_order") {
             Self::AmbisonicHoa
-        } else if clean.contains("ambisonic") || clean.contains("foa") || clean.contains("b-format") {
+        } else if clean.contains("ambisonic") || clean.contains("foa") || clean.contains("b-format")
+        {
             Self::AmbisonicFoa
         } else if clean.contains("7.1.4") || clean.contains("atmos") {
             Self::Atmos7_1_4
@@ -224,13 +227,23 @@ impl RainSourceEntry {
         // 3. Merge contributors without duplicates
         for c in &other.contributors {
             let trimmed = c.trim();
-            if !trimmed.is_empty() && !self.contributors.iter().any(|existing| existing.trim() == trimmed) {
+            if !trimmed.is_empty()
+                && !self
+                    .contributors
+                    .iter()
+                    .any(|existing| existing.trim() == trimmed)
+            {
                 self.contributors.push(trimmed.to_string());
             }
         }
         if let Some(ref author) = other.author {
             let trimmed = author.trim();
-            if !trimmed.is_empty() && !self.contributors.iter().any(|existing| existing.trim() == trimmed) {
+            if !trimmed.is_empty()
+                && !self
+                    .contributors
+                    .iter()
+                    .any(|existing| existing.trim() == trimmed)
+            {
                 self.contributors.push(trimmed.to_string());
             }
         }
@@ -293,10 +306,7 @@ pub struct RainContributionManifest {
 }
 
 impl RainContributionManifest {
-    pub fn new(
-        dataset_name: impl Into<String>,
-        contributor_name: impl Into<String>,
-    ) -> Self {
+    pub fn new(dataset_name: impl Into<String>, contributor_name: impl Into<String>) -> Self {
         Self {
             manifest_version: "1.0".to_string(),
             dataset_name: dataset_name.into(),
@@ -350,8 +360,8 @@ pub struct AudioQualityThresholds {
 impl Default for AudioQualityThresholds {
     fn default() -> Self {
         Self {
-            min_rms_energy: 0.001, // Relaxed from 0.003
-            max_clipping_ratio: 0.05, // Relaxed from 0.015
+            min_rms_energy: 0.001,       // Relaxed from 0.003
+            max_clipping_ratio: 0.05,    // Relaxed from 0.015
             min_spectral_flatness: 0.02, // Relaxed from 0.04
         }
     }
@@ -440,7 +450,9 @@ pub fn assert_not_main_branch() -> Result<()> {
         .output()
     {
         if output.status.success() {
-            let branch = String::from_utf8_lossy(&output.stdout).trim().to_lowercase();
+            let branch = String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .to_lowercase();
             if branch == "main" || branch == "master" {
                 bail!(
                     "CRITICAL GOVERNANCE VIOLATION: Ingestion operations cannot be executed on branch '{}'. Switch to 'dev' branch before ingesting or staging data.",
@@ -473,7 +485,12 @@ pub fn validate_audio_file(
 
     let probed = symphonia::default::get_probe()
         .format(&hint, mss, &Default::default(), &Default::default())
-        .with_context(|| format!("Unsupported or corrupted audio container format for {:?}", path))?;
+        .with_context(|| {
+            format!(
+                "Unsupported or corrupted audio container format for {:?}",
+                path
+            )
+        })?;
 
     let mut format = probed.format;
     let track = format
@@ -656,7 +673,10 @@ pub fn validate_manifest(
             match validate_audio_file(&resolved_path, thresh) {
                 Ok((metrics, sha256, duration)) => {
                     // Content-addressed deduplication: check if this audio hash was already validated
-                    if let Some(existing) = valid_entries.iter_mut().find(|v| v.computed_sha256 == sha256) {
+                    if let Some(existing) = valid_entries
+                        .iter_mut()
+                        .find(|v| v.computed_sha256 == sha256)
+                    {
                         for tag in &entry.tags {
                             if !existing.source.tags.contains(tag) {
                                 *surface_counts.entry(tag.clone()).or_insert(0) += 1;
@@ -686,7 +706,10 @@ pub fn validate_manifest(
             }
         } else if entry.url.is_some() {
             // Remote URL source: license is valid, file not yet downloaded
-            let computed_sha256 = entry.sha256.clone().unwrap_or_else(|| "unfetched_remote".to_string());
+            let computed_sha256 = entry
+                .sha256
+                .clone()
+                .unwrap_or_else(|| "unfetched_remote".to_string());
             let is_duplicate = valid_entries.iter_mut().find(|v| {
                 if computed_sha256 != "unfetched_remote" && v.computed_sha256 == computed_sha256 {
                     return true;
@@ -916,7 +939,11 @@ pub fn import_local_directory(
     };
 
     for file in &discovered_files {
-        let file_stem = file.file_stem().unwrap_or_default().to_string_lossy().to_string();
+        let file_stem = file
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
 
         // 1. Infer tags from CLI default or filename
         let tags = if !options.default_tags.is_empty() {
@@ -929,7 +956,11 @@ pub fn import_local_directory(
         let (metrics, sha256, duration) = match validate_audio_file(file, &options.thresholds) {
             Ok(res) => res,
             Err(e) => {
-                warn!("  [!] Rejected {:?}: {}", file.file_name().unwrap_or_default(), e);
+                warn!(
+                    "  [!] Rejected {:?}: {}",
+                    file.file_name().unwrap_or_default(),
+                    e
+                );
                 rejected_reasons.push(RejectedSourceEntry {
                     source_id: file_stem,
                     file_path: file.display().to_string(),
@@ -939,7 +970,11 @@ pub fn import_local_directory(
             }
         };
 
-        let author_str = options.author.clone().unwrap_or_else(|| "Anonymous".to_string()).replace(' ', "_");
+        let author_str = options
+            .author
+            .clone()
+            .unwrap_or_else(|| "Anonymous".to_string())
+            .replace(' ', "_");
         let contrib_list = if !author_str.is_empty() && author_str != "Anonymous" {
             vec![author_str.clone()]
         } else {
@@ -949,7 +984,8 @@ pub fn import_local_directory(
         // 3. Content-addressed deduplication: check if identical audio already exists in the dataset
         let mut is_dedup = false;
         if let Some(ref mut manifest) = existing_manifest {
-            if let Some(existing_record) = manifest.records.iter_mut().find(|r| r.sha256 == sha256) {
+            if let Some(existing_record) = manifest.records.iter_mut().find(|r| r.sha256 == sha256)
+            {
                 is_dedup = true;
                 let incoming = ProvenanceRecord {
                     filename: existing_record.filename.clone(),
@@ -980,7 +1016,10 @@ pub fn import_local_directory(
                 );
 
                 // Reconcile sources.json entry if present
-                if let Some(src_item) = existing_sources.iter_mut().find(|s| s.filename == existing_record.filename) {
+                if let Some(src_item) = existing_sources
+                    .iter_mut()
+                    .find(|s| s.filename == existing_record.filename)
+                {
                     if let Some(ref best_lic) = existing_record.license {
                         src_item.license = best_lic.clone();
                     }
@@ -992,9 +1031,19 @@ pub fn import_local_directory(
                         let license_str = existing_record.license.as_deref().unwrap_or("Unknown");
                         let log_line = format!(
                             "Platform: Contribution ({}) [RECONCILED] | File: {} | Tags: {:?} | Tier: {:?} | License: {} | SHA256: {} | Path: {:?}\n",
-                            author_str, existing_record.filename, existing_record.tags, existing_record.license_tier, license_str, sha256, file
+                            author_str,
+                            existing_record.filename,
+                            existing_record.tags,
+                            existing_record.license_tier,
+                            license_str,
+                            sha256,
+                            file
                         );
-                        if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&attr_path) {
+                        if let Ok(mut f) = fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&attr_path)
+                        {
                             use std::io::Write;
                             let _ = f.write_all(log_line.as_bytes());
                         }
@@ -1017,7 +1066,7 @@ pub fn import_local_directory(
         let file_size_bytes = fs::metadata(&dest_path).map(|m| m.len()).unwrap_or(0);
         successfully_imported += 1;
         total_duration += duration;
-        
+
         for tag in &tags {
             *tags_distribution.entry(tag.clone()).or_insert(0) += 1;
         }
@@ -1065,7 +1114,11 @@ pub fn import_local_directory(
     // 8. Atomic batch append to ATTRIBUTIONS.txt only if files were imported
     if options.update_attributions && !attributions_to_append.is_empty() {
         if let Some(attr_path) = shared::paths::WorkspacePaths::resolve_attributions() {
-            if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&attr_path) {
+            if let Ok(mut f) = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&attr_path)
+            {
                 use std::io::Write;
                 for line in &attributions_to_append {
                     let _ = f.write_all(line.as_bytes());
@@ -1099,7 +1152,10 @@ pub fn import_local_directory(
     final_manifest.records.extend(provenance_records);
     final_manifest.total_sources = final_manifest.records.len();
     for (tag, count) in &tags_distribution {
-        *final_manifest.tags_distribution.entry(tag.clone()).or_insert(0) += count;
+        *final_manifest
+            .tags_distribution
+            .entry(tag.clone())
+            .or_insert(0) += count;
     }
     if let Ok(json) = serde_json::to_string_pretty(&final_manifest) {
         if let Err(e) = atomic_write(&prov_manifest_path, json.as_bytes()) {

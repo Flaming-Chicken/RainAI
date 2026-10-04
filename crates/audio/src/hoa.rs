@@ -130,15 +130,15 @@ impl Hoa3Encoder {
 
         // Order 1 (ACN 1..3)
         ch[1] = sa * ce; // Y
-        ch[2] = se;      // Z
+        ch[2] = se; // Z
         ch[3] = ca * ce; // X
 
         // Order 2 (ACN 4..8)
-        ch[4] = sqrt3_2 * sa2 * ce2;           // V
-        ch[5] = sqrt3_2 * sa * se2;            // T
-        ch[6] = 0.5 * (3.0 * se_sq - 1.0);     // R
-        ch[7] = sqrt3_2 * ca * se2;            // S
-        ch[8] = sqrt3_2 * ca2 * ce2;           // U
+        ch[4] = sqrt3_2 * sa2 * ce2; // V
+        ch[5] = sqrt3_2 * sa * se2; // T
+        ch[6] = 0.5 * (3.0 * se_sq - 1.0); // R
+        ch[7] = sqrt3_2 * ca * se2; // S
+        ch[8] = sqrt3_2 * ca2 * ce2; // U
 
         // Order 3 (ACN 9..15)
         ch[9] = sqrt10_4 * sa3 * ce2 * ce;
@@ -243,10 +243,14 @@ impl Hoa3Decoder {
         let right_rear = (w - 0.5 * y - 0.866 * x + 0.5 * v - 0.866 * u) * scale;
 
         // 2. Overhead height speakers (Z and R contributions prominent, +30 deg elevation)
-        let top_front_left = (w + 0.707 * y + 0.707 * x + 0.866 * z + 0.5 * t + 0.5 * s + 0.5 * k + 0.5 * r) * scale;
-        let top_front_right = (w - 0.707 * y + 0.707 * x + 0.866 * z - 0.5 * t + 0.5 * s + 0.5 * k + 0.5 * r) * scale;
-        let top_back_left = (w + 0.707 * y - 0.707 * x + 0.866 * z + 0.5 * t - 0.5 * s + 0.5 * k + 0.5 * r) * scale;
-        let top_back_right = (w - 0.707 * y - 0.707 * x + 0.866 * z - 0.5 * t - 0.5 * s + 0.5 * k + 0.5 * r) * scale;
+        let top_front_left =
+            (w + 0.707 * y + 0.707 * x + 0.866 * z + 0.5 * t + 0.5 * s + 0.5 * k + 0.5 * r) * scale;
+        let top_front_right =
+            (w - 0.707 * y + 0.707 * x + 0.866 * z - 0.5 * t + 0.5 * s + 0.5 * k + 0.5 * r) * scale;
+        let top_back_left =
+            (w + 0.707 * y - 0.707 * x + 0.866 * z + 0.5 * t - 0.5 * s + 0.5 * k + 0.5 * r) * scale;
+        let top_back_right =
+            (w - 0.707 * y - 0.707 * x + 0.866 * z - 0.5 * t - 0.5 * s + 0.5 * k + 0.5 * r) * scale;
 
         Surround714Frame {
             left,

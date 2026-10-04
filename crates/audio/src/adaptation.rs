@@ -62,7 +62,9 @@ impl BiquadFilter {
     /// Process a single audio sample in-place with direct-form II transposed.
     #[inline]
     pub fn process(&mut self, x: f32) -> f32 {
-        let y = self.b0 * x + self.b1 * self.x1 + self.b2 * self.x2 - self.a1 * self.y1 - self.a2 * self.y2;
+        let y = self.b0 * x + self.b1 * self.x1 + self.b2 * self.x2
+            - self.a1 * self.y1
+            - self.a2 * self.y2;
         self.x2 = self.x1;
         self.x1 = x;
         self.y2 = self.y1;
@@ -126,7 +128,9 @@ impl AcousticSceneAdapter {
         }
 
         let n = mic_buffer.len() as f32;
-        let total_energy = (mic_buffer.iter().map(|&s| s * s).sum::<f32>() / n).sqrt().max(1e-6);
+        let total_energy = (mic_buffer.iter().map(|&s| s * s).sum::<f32>() / n)
+            .sqrt()
+            .max(1e-6);
 
         // Targeted acoustic resonance probe at domestic standing wave modes
         let e_63 = Self::goertzel_energy(mic_buffer, 63.0, self.sample_rate);

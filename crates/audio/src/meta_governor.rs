@@ -6,8 +6,8 @@
 
 use inference::{ExecutionPath, MoeExecutionMode, PrecisionFormat};
 use shared::rain::{
-    EngineTelemetry, GovernorOptimizationProfile, HardwareStressProfile, MetaControllerInterceptionMode,
-    QualityTier, RainState,
+    EngineTelemetry, GovernorOptimizationProfile, HardwareStressProfile,
+    MetaControllerInterceptionMode, QualityTier, RainState,
 };
 
 /// Autonomous actions decided by the Meta-Governor
@@ -97,16 +97,27 @@ impl Default for MetaGovernor {
 }
 
 impl MetaGovernor {
-    pub fn compute_env_max_bytes(profile: GovernorOptimizationProfile, is_under_stress: bool) -> usize {
+    pub fn compute_env_max_bytes(
+        profile: GovernorOptimizationProfile,
+        is_under_stress: bool,
+    ) -> usize {
         match profile {
             GovernorOptimizationProfile::EcoBatterySaver => 24 * 1024,
             GovernorOptimizationProfile::LowLatencyInteractive => 32 * 1024,
             GovernorOptimizationProfile::BalancedAdaptive => {
-                if is_under_stress { 32 * 1024 } else { 64 * 1024 }
+                if is_under_stress {
+                    32 * 1024
+                } else {
+                    64 * 1024
+                }
             }
             GovernorOptimizationProfile::BluetoothA2DPSink => 48 * 1024,
             GovernorOptimizationProfile::StudioMaster => {
-                if is_under_stress { 64 * 1024 } else { 128 * 1024 }
+                if is_under_stress {
+                    64 * 1024
+                } else {
+                    128 * 1024
+                }
             }
         }
     }
@@ -150,7 +161,8 @@ impl MetaGovernor {
         let max_experts = profile.max_experts();
         let sample_rate = 48000.0f32;
         let env_max_buffer_bytes = Self::compute_env_max_bytes(profile, false);
-        let target_capacity_frames = ((target_buffer_ms * 2.0 / 1000.0) * sample_rate).ceil() as usize;
+        let target_capacity_frames =
+            ((target_buffer_ms * 2.0 / 1000.0) * sample_rate).ceil() as usize;
         let dynamic_buffer_bytes = target_capacity_frames * 2 * std::mem::size_of::<f32>();
 
         // Offline Max Quality Mode Decoupling: latency budget = inf, buffer = 100%, max fidelity
@@ -300,13 +312,9 @@ impl MetaGovernor {
         }
 
         // Stress evaluated relative to target size
-        let is_under_stress = buffer_health_ratio < 0.60
-            || sim_cpu < 0.22
-            || sim_panic > 0.32;
+        let is_under_stress = buffer_health_ratio < 0.60 || sim_cpu < 0.22 || sim_panic > 0.32;
 
-        let is_ample_headroom = buffer_health_ratio >= 0.85
-            && sim_cpu > 0.65
-            && sim_panic < 0.08;
+        let is_ample_headroom = buffer_health_ratio >= 0.85 && sim_cpu > 0.65 && sim_panic < 0.08;
 
         // Dynamic Multi-Objective Buffer Sizing & Environmental Limits
         let env_max_buffer_bytes = Self::compute_env_max_bytes(profile, is_under_stress);
@@ -320,7 +328,8 @@ impl MetaGovernor {
             .clamp(min_frames_safety * 2, max_frames_from_env);
         let dynamic_buffer_bytes = target_capacity_frames * bytes_per_frame;
 
-        let frame_diff = (target_capacity_frames as isize - self.current_capacity_frames as isize).unsigned_abs();
+        let frame_diff = (target_capacity_frames as isize - self.current_capacity_frames as isize)
+            .unsigned_abs();
         let emergency_resize = buffer_health_ratio < 0.25;
         let mut resize_commanded = false;
         if (emergency_resize || self.buffer_cooldown_timer >= 2.0) && frame_diff >= 128 {
@@ -427,7 +436,9 @@ impl MetaGovernor {
             }
 
             // Macro quantization cooldown check
-            if self.current_tier != next_tier && (self.quant_cooldown_timer >= 10.0 || buffer_health_ratio < 0.25) {
+            if self.current_tier != next_tier
+                && (self.quant_cooldown_timer >= 10.0 || buffer_health_ratio < 0.25)
+            {
                 self.current_tier = next_tier;
                 self.quant_cooldown_timer = 0.0;
                 self.total_quant_swaps += 1;
@@ -438,7 +449,9 @@ impl MetaGovernor {
                 self.current_moe_mode = MoeExecutionMode::SparseDynamic;
                 self.synthesis_blend = (self.synthesis_blend - dt * 0.8).max(0.0);
                 if self.synthesis_blend <= 0.05 {
-                    if self.current_tier != user_target_tier && (self.quant_cooldown_timer >= 10.0 || self.stability_timer > 3.0) {
+                    if self.current_tier != user_target_tier
+                        && (self.quant_cooldown_timer >= 10.0 || self.stability_timer > 3.0)
+                    {
                         self.current_tier = user_target_tier;
                         self.quant_cooldown_timer = 0.0;
                         self.total_quant_swaps += 1;
@@ -453,7 +466,8 @@ impl MetaGovernor {
                     self.min_bits = min_b;
                     self.max_bits = max_b;
                     if user_thinking_override.is_none() {
-                        self.use_consistency_jump = self.current_tier == QualityTier::AdaptiveMinimum
+                        self.use_consistency_jump = self.current_tier
+                            == QualityTier::AdaptiveMinimum
                             && profile == GovernorOptimizationProfile::LowLatencyInteractive;
                     }
                 }
@@ -553,7 +567,8 @@ impl LivePreferenceMediator {
         // 3. Wind Momentum: Aerodynamic fluid mass inertia (tau ~ 0.50s)
         let alpha_wind = (1.0 - (-dt / 0.50).exp()).clamp(0.0, 1.0);
         self.current_wind_speed += (target.wind.speed - self.current_wind_speed) * alpha_wind;
-        self.current_wind_gustiness += (target.wind.gustiness - self.current_wind_gustiness) * alpha_wind;
+        self.current_wind_gustiness +=
+            (target.wind.gustiness - self.current_wind_gustiness) * alpha_wind;
         state.wind.speed = self.current_wind_speed;
         state.wind.gustiness = self.current_wind_gustiness;
 

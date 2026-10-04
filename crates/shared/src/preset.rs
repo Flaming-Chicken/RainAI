@@ -51,15 +51,13 @@ impl WeatherPreset {
 
     /// Decode preset from base64 string
     pub fn from_shareable_url_hash(encoded: &str) -> Result<Self, String> {
-        let compressed = base64::Engine::decode(
-            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-            encoded,
-        )
-        .map_err(|e| format!("Base64 decode error: {e}"))?;
+        let compressed =
+            base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, encoded)
+                .map_err(|e| format!("Base64 decode error: {e}"))?;
         let decompressed = miniz_oxide::inflate::decompress_to_vec(&compressed)
             .map_err(|e| format!("Decompress error: {e:?}"))?;
-        let json_str = std::str::from_utf8(&decompressed)
-            .map_err(|e| format!("UTF-8 error: {e}"))?;
+        let json_str =
+            std::str::from_utf8(&decompressed).map_err(|e| format!("UTF-8 error: {e}"))?;
         Self::from_json(json_str).map_err(|e| e.to_string())
     }
 

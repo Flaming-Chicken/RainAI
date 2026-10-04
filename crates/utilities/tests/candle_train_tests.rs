@@ -3,16 +3,16 @@
 use candle_core::{DType, Device, Tensor};
 use candle_nn::{Module, VarBuilder, VarMap};
 use utilities::candle_train::{
-    compute_beta_vae_loss, compute_beta_vae_loss_with_free_bits, compute_expert_diversity_loss,
-    compute_expert_drift_loss, compute_flow_matching_loss, compute_hierarchical_multi_res_loss,
-    compute_latent_variance_loss, compute_moe_load_balancing_loss, compute_physics_trajectory_loss,
-    compute_router_entropy_loss, compute_soup_deficit_loss, compute_trajectory_diversity_loss,
-    generate_batch, run_candle_training_pipeline, CandleAffineAlignment, CandleConsistencyHead,
-    CandleEngramBank, CandleInvasiveMetaController, CandleJambaSelfAttention,
-    CandleLatentAttention, CandleLearnedQuantizer, CandleMamba2MoE, CandleMambaSSDBlock,
-    CandleManifestDataset, CandleSpatialVae, CandleTrainConfig, TrainingPhase, LATENT_DIM,
+    CandleAffineAlignment, CandleConsistencyHead, CandleEngramBank, CandleInvasiveMetaController,
+    CandleJambaSelfAttention, CandleLatentAttention, CandleLearnedQuantizer, CandleMamba2MoE,
+    CandleMambaSSDBlock, CandleManifestDataset, CandleSpatialVae, CandleTrainConfig, LATENT_DIM,
+    TrainingPhase, compute_beta_vae_loss, compute_beta_vae_loss_with_free_bits,
+    compute_expert_diversity_loss, compute_expert_drift_loss, compute_flow_matching_loss,
+    compute_hierarchical_multi_res_loss, compute_latent_variance_loss,
+    compute_moe_load_balancing_loss, compute_physics_trajectory_loss, compute_router_entropy_loss,
+    compute_soup_deficit_loss, compute_trajectory_diversity_loss, generate_batch,
+    run_candle_training_pipeline,
 };
-
 
 #[test]
 fn test_spatial_vae_forward_and_loss() {
@@ -37,11 +37,16 @@ fn test_spatial_vae_forward_and_loss() {
             .expect("Loss computation failed");
 
     let loss_val: f32 = loss.to_scalar().expect("Failed converting loss to scalar");
-    let recon_val: f32 = recon.to_scalar().expect("Failed converting recon to scalar");
+    let recon_val: f32 = recon
+        .to_scalar()
+        .expect("Failed converting recon to scalar");
     let kl_val: f32 = kl.to_scalar().expect("Failed converting kl to scalar");
 
     assert!(loss_val.is_finite(), "Loss is not finite: {loss_val}");
-    assert!(recon_val >= 0.0, "Recon loss must be non-negative: {recon_val}");
+    assert!(
+        recon_val >= 0.0,
+        "Recon loss must be non-negative: {recon_val}"
+    );
     assert!(kl_val.is_finite(), "KL divergence is not finite: {kl_val}");
 
     // Verify autograd backward computation succeeds
@@ -69,8 +74,7 @@ fn test_mamba2_moe_forward_and_physics_loss() {
 
     let traj_loss = compute_physics_trajectory_loss(&z_pred, &batch.z_target, &batch.z_prev, 0.1)
         .expect("Trajectory loss failed");
-    let aux_loss = compute_moe_load_balancing_loss(&router_probs)
-        .expect("MoE aux loss failed");
+    let aux_loss = compute_moe_load_balancing_loss(&router_probs).expect("MoE aux loss failed");
 
     let total_loss = (&traj_loss + (&aux_loss * 0.05).unwrap()).unwrap();
     let loss_val: f32 = total_loss.to_scalar().expect("Failed scalar conversion");
@@ -83,8 +87,9 @@ fn test_mamba2_moe_forward_and_physics_loss() {
 
 #[test]
 fn test_candle_pipeline_runner() {
-    let temp_dir = std::env::temp_dir().join(format!("rainai_candle_test_{}", rand::random::<u64>()));
-    
+    let temp_dir =
+        std::env::temp_dir().join(format!("rainai_candle_test_{}", rand::random::<u64>()));
+
     let config = CandleTrainConfig {
         phases: vec![TrainingPhase::All],
         vae_epochs: 1,
@@ -132,7 +137,6 @@ fn test_candle_pipeline_runner() {
         ..Default::default()
     };
 
-
     run_candle_training_pipeline(&config).expect("Pipeline execution failed");
 
     let vae_path = temp_dir.join("spatial_vae.safetensors");
@@ -144,17 +148,33 @@ fn test_candle_pipeline_runner() {
     let manifest_path = temp_dir.join("candle_manifest.json");
 
     assert!(vae_path.exists(), "Spatial VAE SafeTensors was not created");
-    assert!(vae_best_path.exists(), "Spatial VAE Best SafeTensors was not created");
-    assert!(mamba_path.exists(), "Mamba-2 MoE SafeTensors was not created");
-    assert!(mamba_best_path.exists(), "Mamba-2 MoE Best SafeTensors was not created");
-    assert!(mamba_fast_path.exists(), "Mamba-2 MoE Fast SafeTensors was not created");
-    assert!(mamba_soup_path.exists(), "Mamba-2 Dense Soup SafeTensors was not created");
+    assert!(
+        vae_best_path.exists(),
+        "Spatial VAE Best SafeTensors was not created"
+    );
+    assert!(
+        mamba_path.exists(),
+        "Mamba-2 MoE SafeTensors was not created"
+    );
+    assert!(
+        mamba_best_path.exists(),
+        "Mamba-2 MoE Best SafeTensors was not created"
+    );
+    assert!(
+        mamba_fast_path.exists(),
+        "Mamba-2 MoE Fast SafeTensors was not created"
+    );
+    assert!(
+        mamba_soup_path.exists(),
+        "Mamba-2 Dense Soup SafeTensors was not created"
+    );
     assert!(manifest_path.exists(), "Candle manifest was not created");
 
-
     // Verify manifest contains new training telemetry fields
-    let manifest_content = std::fs::read_to_string(&manifest_path).expect("Failed reading manifest");
-    let v: serde_json::Value = serde_json::from_str(&manifest_content).expect("Invalid JSON in manifest");
+    let manifest_content =
+        std::fs::read_to_string(&manifest_path).expect("Failed reading manifest");
+    let v: serde_json::Value =
+        serde_json::from_str(&manifest_content).expect("Invalid JSON in manifest");
     assert_eq!(v["tau_moe"], 0.75);
     assert_eq!(v["max_thinking_steps"], 3);
     assert_eq!(v["enable_distillation"], true);
@@ -177,11 +197,14 @@ fn test_candle_affine_alignment_and_quantizer() {
     let quantizer = CandleLearnedQuantizer::new(LATENT_DIM, 6.0, vs.pp("quantizer"))
         .expect("Failed creating CandleLearnedQuantizer");
 
-    let z_raw = Tensor::randn(0.0f32, 1.0f32, (2, LATENT_DIM), &device).expect("Failed generating z");
+    let z_raw =
+        Tensor::randn(0.0f32, 1.0f32, (2, LATENT_DIM), &device).expect("Failed generating z");
     let z_align = affine.forward(&z_raw).expect("Affine forward failed");
     assert_eq!(z_align.dims(), &[2, LATENT_DIM]);
 
-    let z_q = quantizer.forward(&z_align, 0.1).expect("Quantizer forward failed");
+    let z_q = quantizer
+        .forward(&z_align, 0.1)
+        .expect("Quantizer forward failed");
     assert_eq!(z_q.dims(), &[2, LATENT_DIM]);
 
     let loss = z_q.sqr().unwrap().mean_all().unwrap();
@@ -194,7 +217,8 @@ fn test_candle_mamba_ssd_block() {
     let varmap = VarMap::new();
     let vs = VarBuilder::from_varmap(&varmap, DType::F32, &device);
 
-    let ssd = CandleMambaSSDBlock::new(128, 64, vs.pp("ssd")).expect("Failed building CandleMambaSSDBlock");
+    let ssd = CandleMambaSSDBlock::new(128, 64, vs.pp("ssd"))
+        .expect("Failed building CandleMambaSSDBlock");
 
     let x = Tensor::randn(0.0f32, 1.0f32, (2, 128), &device).expect("Failed creating input");
     let h_prev = Tensor::zeros((2, 128, 64), DType::F32, &device).expect("Failed creating h_prev");
@@ -233,14 +257,28 @@ fn test_candle_invasive_meta_controller() {
     let meta = CandleInvasiveMetaController::new(8, 16, vs.pp("meta"))
         .expect("Failed building CandleInvasiveMetaController");
 
-    let moe_logits = Tensor::randn(0.0f32, 1.0f32, (2, 8), &device).expect("Failed creating logits");
-    let telemetry = Tensor::randn(0.5f32, 0.2f32, (2, 4), &device).expect("Failed creating telemetry");
-    let user_weights = Tensor::randn(0.5f32, 0.1f32, (2, 3), &device).expect("Failed creating user weights");
-    let quality_scores = Tensor::randn(0.9f32, 0.05f32, (2, 2), &device).expect("Failed creating quality");
-    let slice_level = Tensor::randn(0.75f32, 0.1f32, (2, 1), &device).expect("Failed creating slice");
-    let telem_state = Tensor::zeros((2, 32, 16), DType::F32, &device).expect("Failed creating telem state");
+    let moe_logits =
+        Tensor::randn(0.0f32, 1.0f32, (2, 8), &device).expect("Failed creating logits");
+    let telemetry =
+        Tensor::randn(0.5f32, 0.2f32, (2, 4), &device).expect("Failed creating telemetry");
+    let user_weights =
+        Tensor::randn(0.5f32, 0.1f32, (2, 3), &device).expect("Failed creating user weights");
+    let quality_scores =
+        Tensor::randn(0.9f32, 0.05f32, (2, 2), &device).expect("Failed creating quality");
+    let slice_level =
+        Tensor::randn(0.75f32, 0.1f32, (2, 1), &device).expect("Failed creating slice");
+    let telem_state =
+        Tensor::zeros((2, 32, 16), DType::F32, &device).expect("Failed creating telem state");
 
-    let out = meta.forward(&moe_logits, &telemetry, &user_weights, &quality_scores, &slice_level, &telem_state)
+    let out = meta
+        .forward(
+            &moe_logits,
+            &telemetry,
+            &user_weights,
+            &quality_scores,
+            &slice_level,
+            &telem_state,
+        )
         .expect("MetaController forward failed");
 
     assert_eq!(out.expert_mask.dims(), &[2, 8]);
@@ -253,18 +291,26 @@ fn test_candle_invasive_meta_controller() {
     assert_eq!(out.next_telem_state.dims(), &[2, 32, 16]);
 
     let rec_steps = out.recommended_steps();
-    assert!((1..=5).contains(&rec_steps), "Recommended steps must be in 1..=5: {rec_steps}");
+    assert!(
+        (1..=5).contains(&rec_steps),
+        "Recommended steps must be in 1..=5: {rec_steps}"
+    );
 
     let loss = out.expert_mask.sqr().unwrap().mean_all().unwrap();
-    let _grads = loss.backward().expect("MetaController backward pass failed");
+    let _grads = loss
+        .backward()
+        .expect("MetaController backward pass failed");
 }
 
 #[test]
 fn test_flow_matching_and_hierarchical_loss() {
     let device = Device::Cpu;
-    let pred_v = Tensor::randn(0.0f32, 1.0f32, (2, LATENT_DIM), &device).expect("Failed creating pred_v");
-    let z_target = Tensor::randn(0.0f32, 1.0f32, (2, LATENT_DIM), &device).expect("Failed creating z_target");
-    let z_noise = Tensor::randn(0.0f32, 1.0f32, (2, LATENT_DIM), &device).expect("Failed creating z_noise");
+    let pred_v =
+        Tensor::randn(0.0f32, 1.0f32, (2, LATENT_DIM), &device).expect("Failed creating pred_v");
+    let z_target =
+        Tensor::randn(0.0f32, 1.0f32, (2, LATENT_DIM), &device).expect("Failed creating z_target");
+    let z_noise =
+        Tensor::randn(0.0f32, 1.0f32, (2, LATENT_DIM), &device).expect("Failed creating z_noise");
 
     let flow_loss = compute_flow_matching_loss(&pred_v, &z_target, &z_noise, 1e-4)
         .expect("Flow matching loss failed");
@@ -272,11 +318,14 @@ fn test_flow_matching_and_hierarchical_loss() {
     assert!(flow_val.is_finite());
     assert!(flow_val >= 0.0);
 
-    let pred_audio = Tensor::randn(0.0f32, 0.5f32, (2, 4800), &device).expect("Failed creating pred_audio");
-    let target_audio = Tensor::randn(0.0f32, 0.5f32, (2, 4800), &device).expect("Failed creating target_audio");
+    let pred_audio =
+        Tensor::randn(0.0f32, 0.5f32, (2, 4800), &device).expect("Failed creating pred_audio");
+    let target_audio =
+        Tensor::randn(0.0f32, 0.5f32, (2, 4800), &device).expect("Failed creating target_audio");
 
-    let (l_total, l_fine, l_energy) = compute_hierarchical_multi_res_loss(&pred_audio, &target_audio)
-        .expect("Hierarchical loss failed");
+    let (l_total, l_fine, l_energy) =
+        compute_hierarchical_multi_res_loss(&pred_audio, &target_audio)
+            .expect("Hierarchical loss failed");
     let total_val: f32 = l_total.to_scalar().expect("Failed converting to scalar");
     let fine_val: f32 = l_fine.to_scalar().expect("Failed converting to scalar");
     let energy_val: f32 = l_energy.to_scalar().expect("Failed converting to scalar");
@@ -292,10 +341,14 @@ fn test_candle_manifest_dataset() {
     if manifest_path.exists() {
         let dataset = CandleManifestDataset::load_from_manifest(manifest_path)
             .expect("Failed loading real manifest dataset");
-        assert!(!dataset.entries.is_empty(), "Manifest entries must not be empty");
+        assert!(
+            !dataset.entries.is_empty(),
+            "Manifest entries must not be empty"
+        );
 
         let device = Device::Cpu;
-        let batch = dataset.sample_batch(4, &device, 0.1)
+        let batch = dataset
+            .sample_batch(4, &device, 0.1)
             .expect("Failed sampling batch from real manifest dataset");
 
         assert_eq!(batch.audio_features.dims(), &[4, LATENT_DIM]);
@@ -316,16 +369,15 @@ fn test_smooth_softmax_routing() {
     // Logits: row 0 concentrated (expert 0 dominates), row 1 uniform
     let logits = Tensor::from_slice(
         &[
-            10.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-            0.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            10.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
         ],
         (2, 8),
         &device,
-    ).expect("Failed creating test logits");
+    )
+    .expect("Failed creating test logits");
 
     let (smooth_weights, weights_as_mask, mean_eff) =
-        CandleMamba2MoE::route_smooth_softmax(&logits, 0.75)
-            .expect("Smooth routing failed");
+        CandleMamba2MoE::route_smooth_softmax(&logits, 0.75).expect("Smooth routing failed");
 
     assert_eq!(smooth_weights.dims(), &[2, 8]);
     assert_eq!(weights_as_mask.dims(), &[2, 8]);
@@ -335,33 +387,49 @@ fn test_smooth_softmax_routing() {
     // ALL weights must be non-zero — no discrete zeroing
     for (row, row_weights) in w_vec.iter().enumerate() {
         for (e, &w) in row_weights.iter().enumerate() {
-            assert!(w > 0.0, "Row {row} expert {e} weight must be > 0 (got {w}) — smooth routing must never zero-out experts");
+            assert!(
+                w > 0.0,
+                "Row {row} expert {e} weight must be > 0 (got {w}) — smooth routing must never zero-out experts"
+            );
         }
     }
 
     // Weights must sum to ~1.0 per row
     let row0_sum: f32 = w_vec[0].iter().sum();
     let row1_sum: f32 = w_vec[1].iter().sum();
-    assert!((row0_sum - 1.0).abs() < 1e-5, "Row 0 must sum to 1.0, got {row0_sum}");
-    assert!((row1_sum - 1.0).abs() < 1e-5, "Row 1 must sum to 1.0, got {row1_sum}");
+    assert!(
+        (row0_sum - 1.0).abs() < 1e-5,
+        "Row 0 must sum to 1.0, got {row0_sum}"
+    );
+    assert!(
+        (row1_sum - 1.0).abs() < 1e-5,
+        "Row 1 must sum to 1.0, got {row1_sum}"
+    );
 
     // Concentrated logits (row 0) must have higher weight on expert 0 than uniform (row 1)
     assert!(
         w_vec[0][0] > w_vec[1][0],
         "Concentrated row must weight expert 0 higher than uniform row: {:.4} vs {:.4}",
-        w_vec[0][0], w_vec[1][0]
+        w_vec[0][0],
+        w_vec[1][0]
     );
 
     // Uniform logits (row 1) should produce near-uniform weights (1/8 = 0.125)
     for &w in &w_vec[1] {
-        assert!((w - 0.125).abs() < 0.01, "Uniform logits must produce ~uniform weights, got {w}");
+        assert!(
+            (w - 0.125).abs() < 0.01,
+            "Uniform logits must produce ~uniform weights, got {w}"
+        );
     }
 
     // Mean effective count: exp(H). For uniform dist over 8, H = ln(8) ≈ 2.079, exp(H) ≈ 8.
     // For concentrated (row 0), exp(H) ≈ 1 (nearly all mass on one expert).
     // Mean should be between 1 and 8.
     let eff: f32 = mean_eff.to_scalar().unwrap();
-    assert!(eff > 1.0 && eff <= 8.0, "Mean effective count must be in (1, 8], got {eff}");
+    assert!(
+        eff > 1.0 && eff <= 8.0,
+        "Mean effective count must be in (1, 8], got {eff}"
+    );
 }
 
 #[test]
@@ -370,11 +438,9 @@ fn test_candle_thinking_block() {
     let varmap = VarMap::new();
     let vs = VarBuilder::from_varmap(&varmap, DType::F32, &device);
 
-    let thinking = utilities::candle_train::CandleThinkingBlock::new(
-        LATENT_DIM,
-        554,
-        vs.pp("thinking"),
-    ).expect("Failed building CandleThinkingBlock");
+    let thinking =
+        utilities::candle_train::CandleThinkingBlock::new(LATENT_DIM, 554, vs.pp("thinking"))
+            .expect("Failed building CandleThinkingBlock");
 
     let z_init = Tensor::randn(0.0f32, 1.0f32, (2, LATENT_DIM), &device).unwrap();
     let cond = Tensor::randn(0.0f32, 0.5f32, (2, 554), &device).unwrap();
@@ -399,12 +465,8 @@ fn test_cosine_scheduler_and_grad_clipping() {
     let vs = VarBuilder::from_varmap(&varmap, DType::F32, &device);
     let align = CandleAffineAlignment::new(16, vs.pp("align")).unwrap();
 
-    let mut scheduler = utilities::candle_train::CosineAnnealingWithWarmup::new(
-        1e-3,
-        1e-6,
-        10,
-        100,
-    );
+    let mut scheduler =
+        utilities::candle_train::CosineAnnealingWithWarmup::new(1e-3, 1e-6, 10, 100);
 
     // Step 1: linear warmup
     let lr_1 = scheduler.step();
@@ -425,7 +487,10 @@ fn test_cosine_scheduler_and_grad_clipping() {
 
     let initial_norm = utilities::candle_train::clip_grad_norm_varmap(&varmap, &mut grads, 1.0)
         .expect("Gradient clipping failed");
-    assert!(initial_norm > 1.0, "Initial norm should be large before clipping");
+    assert!(
+        initial_norm > 1.0,
+        "Initial norm should be large before clipping"
+    );
 }
 
 #[test]
@@ -437,85 +502,104 @@ fn test_stft_loss_modes() {
     let pred_bands = Tensor::full(0.5f32, (2, 16), &device).unwrap();
     let target_bands = Tensor::full(0.5f32, (2, 16), &device).unwrap();
 
-    let loss_zero = stft.evaluate_loss(
-        utilities::stft_loss::StftLossMode::Envelope16,
-        &pred_bands,
-        &target_bands,
-        None,
-        None,
-        &device,
-    ).expect("STFT envelope evaluation failed");
+    let loss_zero = stft
+        .evaluate_loss(
+            utilities::stft_loss::StftLossMode::Envelope16,
+            &pred_bands,
+            &target_bands,
+            None,
+            None,
+            &device,
+        )
+        .expect("STFT envelope evaluation failed");
 
     let val_zero: f32 = loss_zero.to_scalar().unwrap();
-    assert!(val_zero.abs() < 1e-4, "Identity reconstruction must produce near-zero envelope loss: {val_zero}");
+    assert!(
+        val_zero.abs() < 1e-4,
+        "Identity reconstruction must produce near-zero envelope loss: {val_zero}"
+    );
 
     // 2. Waveform mode
     let pred_audio = vec![0.1f32; 4096];
     let target_audio = vec![0.1f32; 4096];
     let (wf_loss, sc, mag) = stft.evaluate_waveform_loss(&pred_audio, &target_audio);
-    assert!(wf_loss < 1e-4, "Identity audio frames must yield zero waveform loss: {wf_loss}");
+    assert!(
+        wf_loss < 1e-4,
+        "Identity audio frames must yield zero waveform loss: {wf_loss}"
+    );
     assert!(sc < 1e-4);
     assert!(mag < 1e-4);
 
     // 3. Mel mode
     let target_diff = Tensor::full(0.8f32, (2, 16), &device).unwrap();
-    let loss_mel = stft.evaluate_loss(
-        utilities::stft_loss::StftLossMode::MelSpectral,
-        &pred_bands,
-        &target_diff,
-        None,
-        None,
-        &device,
-    ).expect("Mel spectral loss evaluation failed");
+    let loss_mel = stft
+        .evaluate_loss(
+            utilities::stft_loss::StftLossMode::MelSpectral,
+            &pred_bands,
+            &target_diff,
+            None,
+            None,
+            &device,
+        )
+        .expect("Mel spectral loss evaluation failed");
     let val_mel: f32 = loss_mel.to_scalar().unwrap();
-    assert!(val_mel > 0.0, "Dissimilar spectra must produce positive loss");
+    assert!(
+        val_mel > 0.0,
+        "Dissimilar spectra must produce positive loss"
+    );
 }
 
 #[test]
 fn test_acoustic_doa_and_diffuseness_loss() {
     let device = Device::Cpu;
-    
+
     // Batch of 2, 4 FOA channels [W, X, Y, Z]
     // Directional downward soundfield
     let target_foa = Tensor::from_slice(
-        &[0.8f32, 0.2, 0.1, -0.6,
-          0.9f32, -0.3, 0.4, -0.5],
+        &[0.8f32, 0.2, 0.1, -0.6, 0.9f32, -0.3, 0.4, -0.5],
         (2, 4),
         &device,
-    ).unwrap();
+    )
+    .unwrap();
 
     // 1. Exact identity should give near-zero DOA error and diffuseness loss
     let (_ident_doa, doa_err) = utilities::stft_loss::compute_acoustic_intensity_and_doa_loss(
         &target_foa,
         &target_foa,
         0.5,
-    ).expect("DOA computation failed");
-    let ident_diff = utilities::stft_loss::compute_soundfield_diffuseness_loss(
-        &target_foa,
-        &target_foa,
-        0.5,
-    ).expect("Diffuseness computation failed");
+    )
+    .expect("DOA computation failed");
+    let ident_diff =
+        utilities::stft_loss::compute_soundfield_diffuseness_loss(&target_foa, &target_foa, 0.5)
+            .expect("Diffuseness computation failed");
 
     let doa_err_val: f32 = doa_err.to_scalar().unwrap();
     let diff_val: f32 = ident_diff.to_scalar().unwrap();
-    assert!(doa_err_val.abs() < 1e-4, "Identity DOA error should be ~0: {doa_err_val}");
-    assert!(diff_val.abs() < 1e-4, "Identity diffuseness loss should be ~0: {diff_val}");
+    assert!(
+        doa_err_val.abs() < 1e-4,
+        "Identity DOA error should be ~0: {doa_err_val}"
+    );
+    assert!(
+        diff_val.abs() < 1e-4,
+        "Identity diffuseness loss should be ~0: {diff_val}"
+    );
 
     // 2. Opposing directional soundfield should yield bounded positive loss
     let opp_foa = Tensor::from_slice(
-        &[0.8f32, -0.2, -0.1, 0.6,
-          0.9f32, 0.3, -0.4, 0.5],
+        &[0.8f32, -0.2, -0.1, 0.6, 0.9f32, 0.3, -0.4, 0.5],
         (2, 4),
         &device,
-    ).unwrap();
-    let (opp_doa, opp_err) = utilities::stft_loss::compute_acoustic_intensity_and_doa_loss(
-        &opp_foa,
-        &target_foa,
-        0.5,
-    ).unwrap();
+    )
+    .unwrap();
+    let (opp_doa, opp_err) =
+        utilities::stft_loss::compute_acoustic_intensity_and_doa_loss(&opp_foa, &target_foa, 0.5)
+            .unwrap();
     let opp_doa_val: f32 = opp_doa.to_scalar().unwrap();
     let opp_err_val: f32 = opp_err.to_scalar().unwrap();
-    assert!(opp_doa_val > 0.0, "Opposing DOA loss must be strictly positive");
+    assert!(
+        opp_doa_val > 0.0,
+        "Opposing DOA loss must be strictly positive"
+    );
     assert!(opp_err_val > 0.0 && opp_err_val.is_finite());
 
     // 3. Autograd backward pass check
@@ -532,23 +616,28 @@ fn test_physics_trajectory_v2_acceleration_and_drag() {
 
     // Constant velocity trajectory: z_pred = 1.1 (v = 0.1, a = 0.0, speed = 0.8 < v_terminal 2.5)
     let z_pred_ideal = Tensor::full(1.1f32, (2, 64), &device).unwrap();
-    let (_loss_ideal, pos_ideal, acc_ideal, drag_ideal) = utilities::candle_train::compute_physics_trajectory_loss_v2(
-        &z_pred_ideal,
-        &z_target,
-        &z_prev,
-        Some(&z_prev2),
-        0.1,
-        0.05,
-        0.02,
-        2.5,
-    ).unwrap();
+    let (_loss_ideal, pos_ideal, acc_ideal, drag_ideal) =
+        utilities::candle_train::compute_physics_trajectory_loss_v2(
+            &z_pred_ideal,
+            &z_target,
+            &z_prev,
+            Some(&z_prev2),
+            0.1,
+            0.05,
+            0.02,
+            2.5,
+        )
+        .unwrap();
 
     let pos_val: f32 = pos_ideal.to_scalar().unwrap();
     let acc_val: f32 = acc_ideal.to_scalar().unwrap();
     let drag_val: f32 = drag_ideal.to_scalar().unwrap();
     assert!(pos_val.abs() < 1e-5, "Position error must be zero");
     assert!(acc_val.abs() < 1e-5, "Zero acceleration error must be zero");
-    assert!(drag_val.abs() < 1e-5, "Velocity below terminal must incur zero drag");
+    assert!(
+        drag_val.abs() < 1e-5,
+        "Velocity below terminal must incur zero drag"
+    );
 
     // Extreme velocity exceeding terminal velocity v_terminal = 2.5
     // v = 10.0 - 1.0 = 9.0 >> 2.5
@@ -562,13 +651,19 @@ fn test_physics_trajectory_v2_acceleration_and_drag() {
         0.05,
         0.02,
         2.5,
-    ).unwrap();
+    )
+    .unwrap();
 
     let drag_ext_val: f32 = drag_ext.to_scalar().unwrap();
-    assert!(drag_ext_val > 10.0, "Drag barrier must strongly penalize excessive speeds: {drag_ext_val}");
+    assert!(
+        drag_ext_val > 10.0,
+        "Drag barrier must strongly penalize excessive speeds: {drag_ext_val}"
+    );
 
     // Backward pass check
-    let _grads = loss_ext.backward().expect("Physics trajectory backward pass failed");
+    let _grads = loss_ext
+        .backward()
+        .expect("Physics trajectory backward pass failed");
 }
 
 #[test]
@@ -585,10 +680,15 @@ fn test_moe_router_z_loss() {
     let large_logits = Tensor::full(30.0f32, (2, 8), &device).unwrap();
     let z_loss_large = utilities::candle_train::compute_router_z_loss(&large_logits).unwrap();
     let z_val_large: f32 = z_loss_large.to_scalar().unwrap();
-    assert!(z_val_large > z_val_small, "Large logits must produce higher Z-loss penalty");
+    assert!(
+        z_val_large > z_val_small,
+        "Large logits must produce higher Z-loss penalty"
+    );
 
     // Autograd backward pass
-    let _grads = z_loss_large.backward().expect("Router Z-loss backward pass failed");
+    let _grads = z_loss_large
+        .backward()
+        .expect("Router Z-loss backward pass failed");
 }
 
 #[test]
@@ -606,7 +706,8 @@ fn test_straight_path_flow_matching_loss() {
         &z_noise,
         1e-4,
         0.1,
-    ).unwrap();
+    )
+    .unwrap();
 
     let straight_val: f32 = loss_straight.to_scalar().unwrap();
     let base_val: f32 = base_straight.to_scalar().unwrap();
@@ -615,10 +716,14 @@ fn test_straight_path_flow_matching_loss() {
 
     // Curved vector field with variance across batch
     let pred_curved = Tensor::from_slice(
-        &vec![2.0f32; 64 * 2].into_iter().chain(vec![-2.0f32; 64 * 2]).collect::<Vec<_>>(),
+        &vec![2.0f32; 64 * 2]
+            .into_iter()
+            .chain(vec![-2.0f32; 64 * 2])
+            .collect::<Vec<_>>(),
         (4, 64),
         &device,
-    ).unwrap();
+    )
+    .unwrap();
 
     let (loss_curved, _) = utilities::candle_train::compute_straight_flow_loss(
         &pred_curved,
@@ -626,10 +731,14 @@ fn test_straight_path_flow_matching_loss() {
         &z_noise,
         1e-4,
         0.5,
-    ).unwrap();
+    )
+    .unwrap();
 
     let curved_val: f32 = loss_curved.to_scalar().unwrap();
-    assert!(curved_val > straight_val, "Curved flow field must incur higher curvature loss");
+    assert!(
+        curved_val > straight_val,
+        "Curved flow field must incur higher curvature loss"
+    );
 }
 
 #[test]
@@ -642,8 +751,12 @@ fn test_spectral_flux_transient_loss() {
     ];
 
     // Perfect match
-    let loss_ident = utilities::stft_loss::compute_spectral_flux_loss(&target_mag, &target_mag, 0.5);
-    assert!(loss_ident < 1e-5, "Identity spectral flux loss must be zero: {loss_ident}");
+    let loss_ident =
+        utilities::stft_loss::compute_spectral_flux_loss(&target_mag, &target_mag, 0.5);
+    assert!(
+        loss_ident < 1e-5,
+        "Identity spectral flux loss must be zero: {loss_ident}"
+    );
 
     // Missed transient (flat prediction)
     let pred_flat = vec![
@@ -651,8 +764,12 @@ fn test_spectral_flux_transient_loss() {
         vec![0.1f32, 0.1, 0.1, 0.1], // missed the droplet strike!
         vec![0.1f32, 0.1, 0.1, 0.1],
     ];
-    let loss_missed = utilities::stft_loss::compute_spectral_flux_loss(&pred_flat, &target_mag, 0.5);
-    assert!(loss_missed > 0.1, "Missed droplet onset transient must produce significant flux penalty: {loss_missed}");
+    let loss_missed =
+        utilities::stft_loss::compute_spectral_flux_loss(&pred_flat, &target_mag, 0.5);
+    assert!(
+        loss_missed > 0.1,
+        "Missed droplet onset transient must produce significant flux penalty: {loss_missed}"
+    );
 }
 
 #[test]
@@ -680,13 +797,11 @@ fn test_so3_ambisonic_rotation_energy_invariance() {
 
     // FOA batch [B=2, C=4] (W, X, Y, Z)
     let foa = Tensor::from_slice(
-        &[
-            1.0f32, 0.4, -0.3, 0.5,
-            0.8f32, -0.6, 0.2, 0.1,
-        ],
+        &[1.0f32, 0.4, -0.3, 0.5, 0.8f32, -0.6, 0.2, 0.1],
         (2, 4),
         &device,
-    ).unwrap();
+    )
+    .unwrap();
 
     let angles = (0.75f32, -0.42f32, 1.15f32);
     let rotated = utilities::stft_loss::apply_so3_foa_rotation(&foa, angles).unwrap();
@@ -695,12 +810,31 @@ fn test_so3_ambisonic_rotation_energy_invariance() {
     let orig_w = foa.narrow(1, 0, 1).unwrap().to_vec2::<f32>().unwrap();
     let rot_w = rotated.narrow(1, 0, 1).unwrap().to_vec2::<f32>().unwrap();
     for b in 0..2 {
-        assert!((orig_w[b][0] - rot_w[b][0]).abs() < 1e-6, "W channel must be invariant under rotation");
+        assert!(
+            (orig_w[b][0] - rot_w[b][0]).abs() < 1e-6,
+            "W channel must be invariant under rotation"
+        );
     }
 
     // 2. Total velocity magnitude X^2 + Y^2 + Z^2 must be strictly preserved
-    let orig_xyz_energy = foa.narrow(1, 1, 3).unwrap().sqr().unwrap().sum_keepdim(1).unwrap().to_vec2::<f32>().unwrap();
-    let rot_xyz_energy = rotated.narrow(1, 1, 3).unwrap().sqr().unwrap().sum_keepdim(1).unwrap().to_vec2::<f32>().unwrap();
+    let orig_xyz_energy = foa
+        .narrow(1, 1, 3)
+        .unwrap()
+        .sqr()
+        .unwrap()
+        .sum_keepdim(1)
+        .unwrap()
+        .to_vec2::<f32>()
+        .unwrap();
+    let rot_xyz_energy = rotated
+        .narrow(1, 1, 3)
+        .unwrap()
+        .sqr()
+        .unwrap()
+        .sum_keepdim(1)
+        .unwrap()
+        .to_vec2::<f32>()
+        .unwrap();
     for b in 0..2 {
         assert!(
             (orig_xyz_energy[b][0] - rot_xyz_energy[b][0]).abs() < 1e-5,
@@ -712,7 +846,14 @@ fn test_so3_ambisonic_rotation_energy_invariance() {
 
     // 3. Identity angles (0, 0, 0) should reproduce identical tensor
     let ident_rot = utilities::stft_loss::apply_so3_foa_rotation(&foa, (0.0, 0.0, 0.0)).unwrap();
-    let diff = (&ident_rot - &foa).unwrap().abs().unwrap().max_all().unwrap().to_scalar::<f32>().unwrap();
+    let diff = (&ident_rot - &foa)
+        .unwrap()
+        .abs()
+        .unwrap()
+        .max_all()
+        .unwrap()
+        .to_scalar::<f32>()
+        .unwrap();
     assert!(diff < 1e-6, "Identity rotation produced difference: {diff}");
 }
 
@@ -743,8 +884,20 @@ fn test_temporal_tabu_and_expert_diversity_loss() {
         .forward_smooth_tabu(&z_prev, &cond, &h_prev, 0.75, Some(&prior_tensor), 5.0)
         .unwrap();
 
-    let p0_no = probs_no_tabu.get(0).unwrap().get(0).unwrap().to_scalar::<f32>().unwrap();
-    let p0_tabu = probs_with_tabu.get(0).unwrap().get(0).unwrap().to_scalar::<f32>().unwrap();
+    let p0_no = probs_no_tabu
+        .get(0)
+        .unwrap()
+        .get(0)
+        .unwrap()
+        .to_scalar::<f32>()
+        .unwrap();
+    let p0_tabu = probs_with_tabu
+        .get(0)
+        .unwrap()
+        .get(0)
+        .unwrap()
+        .to_scalar::<f32>()
+        .unwrap();
     assert!(
         p0_tabu < p0_no,
         "Tabu penalty must suppress repeatedly activated expert 0: p0_no={p0_no}, p0_tabu={p0_tabu}"
@@ -752,18 +905,45 @@ fn test_temporal_tabu_and_expert_diversity_loss() {
 
     // Test compute_expert_diversity_loss:
     // Case 1: Collinear distributions across steps -> diversity loss near 1.0
-    let collinear_step0 = Tensor::from_slice(&[1.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], (1, 8), &device).unwrap();
-    let collinear_step1 = Tensor::from_slice(&[1.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], (1, 8), &device).unwrap();
-    let div_loss_collinear = compute_expert_diversity_loss(&[collinear_step0, collinear_step1]).unwrap();
+    let collinear_step0 = Tensor::from_slice(
+        &[1.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        (1, 8),
+        &device,
+    )
+    .unwrap();
+    let collinear_step1 = Tensor::from_slice(
+        &[1.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        (1, 8),
+        &device,
+    )
+    .unwrap();
+    let div_loss_collinear =
+        compute_expert_diversity_loss(&[collinear_step0, collinear_step1]).unwrap();
     let col_val: f32 = div_loss_collinear.to_scalar().unwrap();
-    assert!((col_val - 1.0).abs() < 1e-4, "Collinear distributions must have similarity ~1.0: {col_val}");
+    assert!(
+        (col_val - 1.0).abs() < 1e-4,
+        "Collinear distributions must have similarity ~1.0: {col_val}"
+    );
 
     // Case 2: Orthogonal distributions across steps -> diversity loss near 0.0
-    let ortho_step0 = Tensor::from_slice(&[1.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], (1, 8), &device).unwrap();
-    let ortho_step1 = Tensor::from_slice(&[0.0f32, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], (1, 8), &device).unwrap();
+    let ortho_step0 = Tensor::from_slice(
+        &[1.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        (1, 8),
+        &device,
+    )
+    .unwrap();
+    let ortho_step1 = Tensor::from_slice(
+        &[0.0f32, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        (1, 8),
+        &device,
+    )
+    .unwrap();
     let div_loss_ortho = compute_expert_diversity_loss(&[ortho_step0, ortho_step1]).unwrap();
     let ortho_val: f32 = div_loss_ortho.to_scalar().unwrap();
-    assert!(ortho_val < 1e-4, "Orthogonal distributions must have similarity ~0.0: {ortho_val}");
+    assert!(
+        ortho_val < 1e-4,
+        "Orthogonal distributions must have similarity ~0.0: {ortho_val}"
+    );
 }
 
 #[test]
@@ -779,18 +959,26 @@ fn test_consistency_jump_head_distillation() {
     let cond = Tensor::randn(0.0f32, 1.0f32, (2, 554), &device).unwrap();
     let z_converged = Tensor::randn(0.0f32, 1.0f32, (2, LATENT_DIM), &device).unwrap();
 
-    let z_fast = head.forward(&z_0, &cond).expect("Consistency head forward failed");
+    let z_fast = head
+        .forward(&z_0, &cond)
+        .expect("Consistency head forward failed");
     assert_eq!(z_fast.dims(), &[2, LATENT_DIM]);
 
-    let distill_loss = head.compute_distill_loss(&z_fast, &z_converged, 0.5)
+    let distill_loss = head
+        .compute_distill_loss(&z_fast, &z_converged, 0.5)
         .expect("Distill loss computation failed");
     let loss_val: f32 = distill_loss.to_scalar().unwrap();
 
-    assert!(loss_val.is_finite(), "Distill loss is not finite: {loss_val}");
+    assert!(
+        loss_val.is_finite(),
+        "Distill loss is not finite: {loss_val}"
+    );
     assert!(loss_val > 0.0, "Distill loss must be positive: {loss_val}");
 
     // Backward pass
-    let _grads = distill_loss.backward().expect("Consistency head backward failed");
+    let _grads = distill_loss
+        .backward()
+        .expect("Consistency head backward failed");
 }
 
 #[test]
@@ -816,15 +1004,25 @@ fn test_engram_bank_deterministic() {
     let varmap = VarMap::new();
     let vs = VarBuilder::from_varmap(&varmap, DType::F32, &device);
 
-    let bank = CandleEngramBank::new(1024, 64, vs.pp("engram"))
-        .expect("Failed creating CandleEngramBank");
+    let bank =
+        CandleEngramBank::new(1024, 64, vs.pp("engram")).expect("Failed creating CandleEngramBank");
 
     let x = Tensor::randn(0.0f32, 1.0f32, (2, 64), &device).unwrap();
     let out1 = bank.forward(&x).expect("Engram forward 1 failed");
     let out2 = bank.forward(&x).expect("Engram forward 2 failed");
 
-    let diff = (&out1 - &out2).unwrap().abs().unwrap().max_all().unwrap().to_scalar::<f32>().unwrap();
-    assert!(diff < 1e-6, "Engram bank lookup must be deterministic, got diff={diff}");
+    let diff = (&out1 - &out2)
+        .unwrap()
+        .abs()
+        .unwrap()
+        .max_all()
+        .unwrap()
+        .to_scalar::<f32>()
+        .unwrap();
+    assert!(
+        diff < 1e-6,
+        "Engram bank lookup must be deterministic, got diff={diff}"
+    );
     assert_eq!(out1.dims(), &[2, 64]);
 }
 
@@ -837,17 +1035,28 @@ fn test_mamba2_dense_soup_collapse() {
     let mamba = CandleMamba2MoE::new(vs).expect("Failed building CandleMamba2MoE");
 
     // Dynamic router -> soup coefficients
-    let router_probs = Tensor::from_slice(&[0.3f32, 0.2, 0.1, 0.1, 0.1, 0.1, 0.05, 0.05], (1, 8), &device).unwrap();
-    let soup_alpha = mamba.router_to_soup_coefficients(&router_probs).expect("Failed calculating soup alpha");
+    let router_probs = Tensor::from_slice(
+        &[0.3f32, 0.2, 0.1, 0.1, 0.1, 0.1, 0.05, 0.05],
+        (1, 8),
+        &device,
+    )
+    .unwrap();
+    let soup_alpha = mamba
+        .router_to_soup_coefficients(&router_probs)
+        .expect("Failed calculating soup alpha");
     assert_eq!(soup_alpha.dims(), &[1, 8]);
 
     // Collapse to single dense Mamba expert
     let alpha_slice = [0.25f32, 0.15, 0.10, 0.10, 0.10, 0.10, 0.10, 0.10];
-    let dense_expert = mamba.collapse_to_dense_soup(&alpha_slice).expect("Failed collapsing dense soup");
+    let dense_expert = mamba
+        .collapse_to_dense_soup(&alpha_slice)
+        .expect("Failed collapsing dense soup");
 
     let x = Tensor::randn(0.0f32, 1.0f32, (1, 128), &device).unwrap();
     let h_prev = Tensor::zeros((1, 128), DType::F32, &device).unwrap();
-    let (y, h_next) = dense_expert.forward(&x, &h_prev).expect("Dense expert forward failed");
+    let (y, h_next) = dense_expert
+        .forward(&x, &h_prev)
+        .expect("Dense expert forward failed");
 
     assert_eq!(y.dims(), &[1, 128]);
     assert_eq!(h_next.dims(), &[1, 128]);
@@ -862,7 +1071,9 @@ fn test_multi_frame_prediction_heads() {
     let mamba = CandleMamba2MoE::new(vs).expect("Failed building CandleMamba2MoE");
     let fused = Tensor::randn(0.0f32, 1.0f32, (2, 128), &device).unwrap();
 
-    let (z1, z2, z3) = mamba.predict_multi_frame(&fused).expect("Multi-frame prediction failed");
+    let (z1, z2, z3) = mamba
+        .predict_multi_frame(&fused)
+        .expect("Multi-frame prediction failed");
     assert_eq!(z1.dims(), &[2, LATENT_DIM]);
     assert_eq!(z2.dims(), &[2, LATENT_DIM]);
     assert_eq!(z3.dims(), &[2, LATENT_DIM]);
@@ -875,9 +1086,18 @@ fn test_autopilot_hardware_probe() {
     let profile = HardwareProfile::probe();
     assert!(profile.cpu_cores >= 1, "Must detect at least 1 CPU core");
     assert!(profile.total_ram_gb > 0.1, "Total RAM must be positive");
-    assert!(profile.recommended_batch_size >= 1, "Batch size must be at least 1");
-    assert!(profile.recommended_accumulation_steps >= 1, "Accumulation steps must be at least 1");
-    assert!(profile.recommended_thinking_steps >= 1, "Thinking steps must be at least 1");
+    assert!(
+        profile.recommended_batch_size >= 1,
+        "Batch size must be at least 1"
+    );
+    assert!(
+        profile.recommended_accumulation_steps >= 1,
+        "Accumulation steps must be at least 1"
+    );
+    assert!(
+        profile.recommended_thinking_steps >= 1,
+        "Thinking steps must be at least 1"
+    );
 }
 
 #[test]
@@ -891,7 +1111,10 @@ fn test_autopilot_surface_entropy_and_quotas() {
         balanced.insert(surf.to_string(), 10);
     }
     let (entropy_bal, quotas_bal) = SurfaceEntropyAuditor::audit(&balanced);
-    assert!((entropy_bal - 1.0).abs() < 1e-4, "Equal counts must yield Shannon entropy ~1.0, got {entropy_bal}");
+    assert!(
+        (entropy_bal - 1.0).abs() < 1e-4,
+        "Equal counts must yield Shannon entropy ~1.0, got {entropy_bal}"
+    );
     for q in quotas_bal {
         assert_eq!(q.deficit_count, 0, "Balanced quotas must have zero deficit");
     }
@@ -900,7 +1123,10 @@ fn test_autopilot_surface_entropy_and_quotas() {
     let mut skewed = HashMap::new();
     skewed.insert("pavement".to_string(), 90);
     let (entropy_skewed, quotas_skewed) = SurfaceEntropyAuditor::audit(&skewed);
-    assert!(entropy_skewed < 0.1, "Single-surface corpus must yield near-zero entropy, got {entropy_skewed}");
+    assert!(
+        entropy_skewed < 0.1,
+        "Single-surface corpus must yield near-zero entropy, got {entropy_skewed}"
+    );
     let deficit_count = quotas_skewed.iter().filter(|q| q.deficit_count > 0).count();
     assert_eq!(deficit_count, 8, "Expected 8 surfaces with deficit");
 }
@@ -921,7 +1147,10 @@ fn test_autopilot_convergence_tracker() {
     assert!(!tracker.record_loss(0.399));
     assert!(!tracker.record_loss(0.398));
     let plateaued = tracker.record_loss(0.3975);
-    assert!(plateaued, "Convergence tracker must signal plateau after 3 stagnant steps");
+    assert!(
+        plateaued,
+        "Convergence tracker must signal plateau after 3 stagnant steps"
+    );
 }
 
 #[test]
@@ -933,14 +1162,20 @@ fn test_autopilot_dense_soup_tracker() {
 
     // High deficit should scale up lambda
     let boosted = tracker.update(0.10, 0.50);
-    assert!(boosted > initial_lambda, "High soup deficit must boost lambda_soup");
+    assert!(
+        boosted > initial_lambda,
+        "High soup deficit must boost lambda_soup"
+    );
 
     // Low deficit should gradually decay towards baseline
     let mut current = boosted;
     for _ in 0..10 {
         current = tracker.update(0.10, 0.11);
     }
-    assert!(current < boosted, "Low soup deficit must decay lambda_soup towards base");
+    assert!(
+        current < boosted,
+        "Low soup deficit must decay lambda_soup towards base"
+    );
 }
 
 #[test]
@@ -952,32 +1187,57 @@ fn test_nan_hardening_extreme_inputs() {
     // Test with extreme logvar values (+80 and -80) that would normally overflow exp()
     let logvar_extreme = Tensor::new(&[[80.0f32; LATENT_DIM]], &device).unwrap();
 
-    let (loss, recon, kl) = compute_beta_vae_loss(&pred_bands, &target_bands, &mu, &logvar_extreme, 0.01).unwrap();
+    let (loss, recon, kl) =
+        compute_beta_vae_loss(&pred_bands, &target_bands, &mu, &logvar_extreme, 0.01).unwrap();
     let loss_val = loss.to_scalar::<f32>().unwrap();
     let recon_val = recon.to_scalar::<f32>().unwrap();
     let kl_val = kl.to_scalar::<f32>().unwrap();
 
-    assert!(loss_val.is_finite(), "Loss with extreme logvar must be finite: {}", loss_val);
-    assert!(recon_val.is_finite(), "Recon loss with extreme logvar must be finite: {}", recon_val);
-    assert!(kl_val.is_finite(), "KL divergence with extreme logvar must be finite: {}", kl_val);
+    assert!(
+        loss_val.is_finite(),
+        "Loss with extreme logvar must be finite: {}",
+        loss_val
+    );
+    assert!(
+        recon_val.is_finite(),
+        "Recon loss with extreme logvar must be finite: {}",
+        recon_val
+    );
+    assert!(
+        kl_val.is_finite(),
+        "KL divergence with extreme logvar must be finite: {}",
+        kl_val
+    );
 }
 
 #[test]
 fn test_route_smooth_softmax_zero_prob_stability() {
     let device = Device::Cpu;
     // Extreme router logits where some logits are -1000.0 (leading to 0 probability)
-    let logits = Tensor::new(&[[-1000.0f32, 0.0, 10.0, -500.0, 2.0, -100.0, 0.5, -20.0]], &device).unwrap();
+    let logits = Tensor::new(
+        &[[-1000.0f32, 0.0, 10.0, -500.0, 2.0, -100.0, 0.5, -20.0]],
+        &device,
+    )
+    .unwrap();
     let (probs, mask, eff_count) = CandleMamba2MoE::route_smooth_softmax(&logits, 0.1).unwrap();
 
     let probs_vec = probs.flatten_all().unwrap().to_vec1::<f32>().unwrap();
     let mask_vec = mask.flatten_all().unwrap().to_vec1::<f32>().unwrap();
     let eff_count_val = eff_count.to_scalar::<f32>().unwrap();
 
-    assert!(eff_count_val.is_finite(), "Effective expert count must be finite: {}", eff_count_val);
+    assert!(
+        eff_count_val.is_finite(),
+        "Effective expert count must be finite: {}",
+        eff_count_val
+    );
 
     for p in probs_vec {
         assert!(p.is_finite(), "Router probability must be finite: {}", p);
-        assert!((0.0..=1.0).contains(&p), "Router probability must be in [0, 1]: {}", p);
+        assert!(
+            (0.0..=1.0).contains(&p),
+            "Router probability must be in [0, 1]: {}",
+            p
+        );
     }
     for m in mask_vec {
         assert!(m.is_finite(), "Router mask must be finite: {}", m);
@@ -989,41 +1249,63 @@ fn test_dimension_outlier_spike_loss() {
     let device = Device::Cpu;
     // Tensor with normal activations (all <= 2.0)
     let normal = Tensor::full(1.5f32, (2, 64), &device).unwrap();
-    let loss_normal = utilities::candle_train::compute_dimension_outlier_spike_loss(&normal, 3.5).unwrap();
+    let loss_normal =
+        utilities::candle_train::compute_dimension_outlier_spike_loss(&normal, 3.5).unwrap();
     let val_normal = loss_normal.to_scalar::<f32>().unwrap();
-    assert_eq!(val_normal, 0.0, "Normal activations below threshold must yield zero spike loss");
+    assert_eq!(
+        val_normal, 0.0,
+        "Normal activations below threshold must yield zero spike loss"
+    );
 
     // Tensor with outlier spikes (e.g. 10.0 and 25.0)
     let mut data = vec![1.0f32; 128];
     data[5] = 10.0;
     data[70] = 25.0;
     let spiked = Tensor::from_vec(data, (2, 64), &device).unwrap();
-    let loss_spiked = utilities::candle_train::compute_dimension_outlier_spike_loss(&spiked, 3.5).unwrap();
+    let loss_spiked =
+        utilities::candle_train::compute_dimension_outlier_spike_loss(&spiked, 3.5).unwrap();
     let val_spiked = loss_spiked.to_scalar::<f32>().unwrap();
-    assert!(val_spiked > 0.0, "Spiked activations must produce positive spike penalty");
-    assert!(val_spiked.is_finite(), "Spike penalty must be finite: {}", val_spiked);
+    assert!(
+        val_spiked > 0.0,
+        "Spiked activations must produce positive spike penalty"
+    );
+    assert!(
+        val_spiked.is_finite(),
+        "Spike penalty must be finite: {}",
+        val_spiked
+    );
 }
 
 #[test]
 fn test_orthogonality_loss() {
     let device = Device::Cpu;
     // 4x4 Identity matrix (perfectly orthogonal)
-    let eye = Tensor::new(&[
-        [1.0f32, 0.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0, 0.0],
-        [0.0, 0.0, 0.0, 1.0],
-    ], &device).unwrap();
+    let eye = Tensor::new(
+        &[
+            [1.0f32, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+        &device,
+    )
+    .unwrap();
 
     let loss_eye = utilities::candle_train::compute_orthogonality_loss(&eye).unwrap();
     let val_eye = loss_eye.to_scalar::<f32>().unwrap();
-    assert!(val_eye.abs() < 1e-6, "Identity matrix must have zero orthogonality loss");
+    assert!(
+        val_eye.abs() < 1e-6,
+        "Identity matrix must have zero orthogonality loss"
+    );
 
     // Non-orthogonal matrix with collapsed singular values
     let non_ortho = Tensor::full(2.0f32, (4, 4), &device).unwrap();
     let loss_non = utilities::candle_train::compute_orthogonality_loss(&non_ortho).unwrap();
     let val_non = loss_non.to_scalar::<f32>().unwrap();
-    assert!(val_non > 1.0, "Non-orthogonal matrix must have high orthogonality loss");
+    assert!(
+        val_non > 1.0,
+        "Non-orthogonal matrix must have high orthogonality loss"
+    );
 }
 
 #[test]
@@ -1034,17 +1316,31 @@ fn test_contractive_loss() {
     let z_prev2 = Tensor::full(0.8f32, (2, 4), &device).unwrap();
 
     // Constant velocity: ratio is 1.0, below max_ratio 2.0 -> loss should be 0
-    let loss = utilities::candle_train::compute_contractive_loss(&z_pred, &z_prev, Some(&z_prev2), 2.0).unwrap();
+    let loss =
+        utilities::candle_train::compute_contractive_loss(&z_pred, &z_prev, Some(&z_prev2), 2.0)
+            .unwrap();
     let val = loss.to_scalar::<f32>().unwrap();
-    assert_eq!(val, 0.0, "Constant velocity trajectory must yield 0 contractive loss");
+    assert_eq!(
+        val, 0.0,
+        "Constant velocity trajectory must yield 0 contractive loss"
+    );
 
     // Diverging velocity: previous velocity 0.001, current velocity 10.0 -> ratio >> 2.0
     let z_prev_slow = Tensor::full(0.999f32, (2, 4), &device).unwrap();
     let z_prev2_slow = Tensor::full(0.998f32, (2, 4), &device).unwrap();
     let z_pred_fast = Tensor::full(10.0f32, (2, 4), &device).unwrap();
-    let loss_diverge = utilities::candle_train::compute_contractive_loss(&z_pred_fast, &z_prev_slow, Some(&z_prev2_slow), 2.0).unwrap();
+    let loss_diverge = utilities::candle_train::compute_contractive_loss(
+        &z_pred_fast,
+        &z_prev_slow,
+        Some(&z_prev2_slow),
+        2.0,
+    )
+    .unwrap();
     let val_diverge = loss_diverge.to_scalar::<f32>().unwrap();
-    assert!(val_diverge > 0.0, "Diverging trajectory must yield positive contractive loss");
+    assert!(
+        val_diverge > 0.0,
+        "Diverging trajectory must yield positive contractive loss"
+    );
 }
 
 #[test]
@@ -1053,12 +1349,18 @@ fn test_soft_cap_loss() {
     let small_loss = Tensor::new(0.5f32, &device).unwrap();
     let capped_small = utilities::candle_train::soft_cap_loss(&small_loss, 50.0).unwrap();
     let val_small = capped_small.to_scalar::<f32>().unwrap();
-    assert!((val_small - 0.5).abs() < 0.01, "Small loss should remain nearly unaffected by soft-capping");
+    assert!(
+        (val_small - 0.5).abs() < 0.01,
+        "Small loss should remain nearly unaffected by soft-capping"
+    );
 
     let extreme_loss = Tensor::new(100000.0f32, &device).unwrap();
     let capped_extreme = utilities::candle_train::soft_cap_loss(&extreme_loss, 50.0).unwrap();
     let val_extreme = capped_extreme.to_scalar::<f32>().unwrap();
-    assert!(val_extreme <= 50.0, "Extreme loss must be capped at or below max_val");
+    assert!(
+        val_extreme <= 50.0,
+        "Extreme loss must be capped at or below max_val"
+    );
     assert!(val_extreme.is_finite(), "Capped loss must be finite");
 }
 
@@ -1082,7 +1384,10 @@ fn test_clip_grad_norm_varmap_nan_sanitization() {
     }
 
     let norm = utilities::candle_train::clip_grad_norm_varmap(&varmap, &mut grads, 1.0).unwrap();
-    assert_eq!(norm, 0.0, "Gradient norm must be 0.0 when non-finite gradients are detected");
+    assert_eq!(
+        norm, 0.0,
+        "Gradient norm must be 0.0 when non-finite gradients are detected"
+    );
 
     // Verify all gradients in grads have been sanitized to zeros
     for var in varmap.all_vars() {
@@ -1249,7 +1554,10 @@ fn test_acoustic_enclosures_and_weather_regimes() {
         enclosure.apply_enclosure(&mut bands, &mut foa);
 
         for b in bands {
-            assert!(b.is_finite() && b >= 0.0, "Enclosure produced invalid band: {b}");
+            assert!(
+                b.is_finite() && b >= 0.0,
+                "Enclosure produced invalid band: {b}"
+            );
         }
         for f in foa {
             assert!(f.is_finite(), "Enclosure produced invalid FOA: {f}");
@@ -1278,7 +1586,8 @@ fn test_acoustic_enclosures_and_weather_regimes() {
 
 #[test]
 fn test_multi_environment_training_pipeline_execution() {
-    let temp_dir = std::env::temp_dir().join(format!("rainai_multi_env_test_{}", rand::random::<u64>()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("rainai_multi_env_test_{}", rand::random::<u64>()));
 
     let config = CandleTrainConfig {
         output_dir: temp_dir.clone(),
@@ -1296,7 +1605,11 @@ fn test_multi_environment_training_pipeline_execution() {
     };
 
     let result = run_candle_training_pipeline(&config);
-    assert!(result.is_ok(), "Multi-environment pipeline run failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Multi-environment pipeline run failed: {:?}",
+        result.err()
+    );
 
     let _ = std::fs::remove_dir_all(temp_dir);
 }
@@ -1322,12 +1635,17 @@ fn test_free_bits_kl_prevents_posterior_collapse() {
         &logvar_active,
         0.05,
         0.10, // tau_free = 0.10 nats
-    ).expect("compute_beta_vae_loss_with_free_bits failed");
+    )
+    .expect("compute_beta_vae_loss_with_free_bits failed");
 
     assert!(loss_active.to_scalar::<f32>().is_ok());
     assert!(recon.to_scalar::<f32>().is_ok());
     assert!(kl_active.to_scalar::<f32>().expect("kl") > 0.0);
-    assert!(active_units > 0, "Active units should be positive for randn mu, got {}", active_units);
+    assert!(
+        active_units > 0,
+        "Active units should be positive for randn mu, got {}",
+        active_units
+    );
 
     // Case 2: Degenerate collapsed mu (mu -> 0 for all batch samples)
     let mu_collapsed = Tensor::zeros((b, d), DType::F32, &device).expect("mu_collapsed");
@@ -1340,12 +1658,20 @@ fn test_free_bits_kl_prevents_posterior_collapse() {
         &logvar_collapsed,
         0.05,
         0.10,
-    ).expect("compute_beta_vae_loss_with_free_bits failed");
+    )
+    .expect("compute_beta_vae_loss_with_free_bits failed");
 
-    assert_eq!(collapsed_units, 0, "Zero-variance mu must register 0 active units");
+    assert_eq!(
+        collapsed_units, 0,
+        "Zero-variance mu must register 0 active units"
+    );
     // Under free bits, KL is clamped to at least the free_bits threshold (0.10 nats)
     let kl_coll_val = kl_coll.to_scalar::<f32>().expect("kl");
-    assert!((kl_coll_val - 0.10).abs() < 1e-4, "KL should be floored at free_bits (0.10), got {}", kl_coll_val);
+    assert!(
+        (kl_coll_val - 0.10).abs() < 1e-4,
+        "KL should be floored at free_bits (0.10), got {}",
+        kl_coll_val
+    );
 }
 
 #[test]
@@ -1353,22 +1679,33 @@ fn test_latent_variance_hinge_loss() {
     let device = Device::Cpu;
 
     // Latents with high batch variance (std >> 1.0) -> Loss should be zero
-    let data: Vec<f32> = (0..(8 * 64)).map(|i| if (i / 64) % 2 == 0 { -5.0f32 } else { 5.0f32 }).collect();
+    let data: Vec<f32> = (0..(8 * 64))
+        .map(|i| if (i / 64) % 2 == 0 { -5.0f32 } else { 5.0f32 })
+        .collect();
     let z_healthy = Tensor::from_vec(data, (8, 64), &device).expect("healthy");
     let loss_healthy = compute_latent_variance_loss(&z_healthy, 1.0)
         .expect("compute_latent_variance_loss healthy");
     let loss_h_val: f32 = loss_healthy.to_scalar().expect("loss_h_val");
-    assert_eq!(loss_h_val, 0.0, "Healthy variance should produce 0 hinge penalty");
+    assert_eq!(
+        loss_h_val, 0.0,
+        "Healthy variance should produce 0 hinge penalty"
+    );
 
     // Latents collapsed to near-zero variance (std << 1.0) -> Loss must be strictly positive
     let z_collapsed = Tensor::zeros((8, 64), DType::F32, &device).expect("collapsed");
     let loss_collapsed = compute_latent_variance_loss(&z_collapsed, 1.0)
         .expect("compute_latent_variance_loss collapsed");
     let loss_c_val: f32 = loss_collapsed.to_scalar().expect("loss_c_val");
-    assert!((loss_c_val - 0.9801).abs() < 1e-3, "Zero std should yield hinge penalty ≈ (1.0 - sqrt(eps))^2, got {}", loss_c_val);
+    assert!(
+        (loss_c_val - 0.9801).abs() < 1e-3,
+        "Zero std should yield hinge penalty ≈ (1.0 - sqrt(eps))^2, got {}",
+        loss_c_val
+    );
 
     // Backward pass check
-    let _ = loss_collapsed.backward().expect("Backward pass through latent variance loss must succeed");
+    let _ = loss_collapsed
+        .backward()
+        .expect("Backward pass through latent variance loss must succeed");
 }
 
 #[test]
@@ -1377,12 +1714,17 @@ fn test_router_entropy_and_perplexity_metrics() {
 
     // Case 1: Perfectly uniform routing across 8 experts (p_i = 1/8 = 0.125)
     // Max entropy H = ln(8) ≈ 2.0794, Perplexity = exp(H) = 8.0
-    let uniform_probs = (Tensor::ones((4, 8), DType::F32, &device).expect("ones") / 8.0).expect("div");
-    let (loss_uniform, perp_uniform, dead_uniform) = compute_router_entropy_loss(&uniform_probs)
-        .expect("compute_router_entropy_loss uniform");
+    let uniform_probs =
+        (Tensor::ones((4, 8), DType::F32, &device).expect("ones") / 8.0).expect("div");
+    let (loss_uniform, perp_uniform, dead_uniform) =
+        compute_router_entropy_loss(&uniform_probs).expect("compute_router_entropy_loss uniform");
 
     let _loss_u_val: f32 = loss_uniform.to_scalar().expect("loss_u_val");
-    assert!((perp_uniform - 8.0).abs() < 0.05, "Uniform routing must have Perplexity ≈ 8.0, got {}", perp_uniform);
+    assert!(
+        (perp_uniform - 8.0).abs() < 0.05,
+        "Uniform routing must have Perplexity ≈ 8.0, got {}",
+        perp_uniform
+    );
     assert_eq!(dead_uniform, 0, "Uniform routing must have 0 dead experts");
 
     // Case 2: Fully collapsed router (Expert 0 has probability 1.0, others 0.0)
@@ -1391,13 +1733,22 @@ fn test_router_entropy_and_perplexity_metrics() {
     for b in 0..4 {
         collapsed_data[b * 8] = 1.0;
     }
-    let collapsed_probs = Tensor::from_vec(collapsed_data, (4, 8), &device).expect("collapsed_probs");
-    let (loss_collapsed, perp_collapsed, dead_collapsed) = compute_router_entropy_loss(&collapsed_probs)
-        .expect("compute_router_entropy_loss collapsed");
+    let collapsed_probs =
+        Tensor::from_vec(collapsed_data, (4, 8), &device).expect("collapsed_probs");
+    let (loss_collapsed, perp_collapsed, dead_collapsed) =
+        compute_router_entropy_loss(&collapsed_probs)
+            .expect("compute_router_entropy_loss collapsed");
 
     let _loss_c_val: f32 = loss_collapsed.to_scalar().expect("loss_c_val");
-    assert!((perp_collapsed - 1.0).abs() < 0.1, "Collapsed router must have Perplexity ≈ 1.0, got {}", perp_collapsed);
-    assert_eq!(dead_collapsed, 7, "Single expert active means 7 dead experts");
+    assert!(
+        (perp_collapsed - 1.0).abs() < 0.1,
+        "Collapsed router must have Perplexity ≈ 1.0, got {}",
+        perp_collapsed
+    );
+    assert_eq!(
+        dead_collapsed, 7,
+        "Single expert active means 7 dead experts"
+    );
 }
 
 #[test]
@@ -1410,15 +1761,24 @@ fn test_trajectory_diversity_loss() {
         .expect("compute_trajectory_diversity_loss collapsed");
 
     let loss_c_val: f32 = loss_collapsed.to_scalar().expect("scalar");
-    assert!((loss_c_val - 0.2401).abs() < 1e-3, "Collapsed traj should produce penalty ≈ (min_std - sqrt(eps))^2, got {}", loss_c_val);
+    assert!(
+        (loss_c_val - 0.2401).abs() < 1e-3,
+        "Collapsed traj should produce penalty ≈ (min_std - sqrt(eps))^2, got {}",
+        loss_c_val
+    );
 
     // Diverse trajectories (high standard deviation >> 0.5 across all dimensions)
-    let z_diverse = (Tensor::randn(0.0f32, 2.0f32, (16, 64), &device).expect("diverse traj") * 3.0).expect("scale");
+    let z_diverse = (Tensor::randn(0.0f32, 2.0f32, (16, 64), &device).expect("diverse traj") * 3.0)
+        .expect("scale");
     let loss_diverse = compute_trajectory_diversity_loss(&z_diverse, 0.5)
         .expect("compute_trajectory_diversity_loss diverse");
 
     let loss_d_val: f32 = loss_diverse.to_scalar().expect("scalar");
-    assert!(loss_d_val < 1e-4, "High variance batch should produce near-zero diversity loss, got {}", loss_d_val);
+    assert!(
+        loss_d_val < 1e-4,
+        "High variance batch should produce near-zero diversity loss, got {}",
+        loss_d_val
+    );
 }
 
 #[test]
@@ -1431,17 +1791,28 @@ fn test_soup_deficit_huber_soft_cap() {
     let loss_small = compute_soup_deficit_loss(&z_soup_small, &z_pred, 0.5, 10.0).unwrap();
     let val_small: f32 = loss_small.to_scalar().unwrap();
     let expected_small = 0.5 * 0.2 * 0.2;
-    assert!((val_small - expected_small).abs() < 1e-4, "Small diff must follow quadratic Huber: {val_small}");
+    assert!(
+        (val_small - expected_small).abs() < 1e-4,
+        "Small diff must follow quadratic Huber: {val_small}"
+    );
 
     // Case 2: Extreme divergence -> soft-capping bounds loss at max_cap (10.0)
     let z_soup_extreme = Tensor::full(100.0f32, (2, 64), &device).unwrap();
     let loss_extreme = compute_soup_deficit_loss(&z_soup_extreme, &z_pred, 0.5, 10.0).unwrap();
     let val_extreme: f32 = loss_extreme.to_scalar().unwrap();
-    assert!(val_extreme <= 10.0, "Extreme deficit must not exceed soft cap 10.0, got: {val_extreme}");
-    assert!(val_extreme > 9.9, "Extreme deficit should saturate near soft cap 10.0, got: {val_extreme}");
+    assert!(
+        val_extreme <= 10.0,
+        "Extreme deficit must not exceed soft cap 10.0, got: {val_extreme}"
+    );
+    assert!(
+        val_extreme > 9.9,
+        "Extreme deficit should saturate near soft cap 10.0, got: {val_extreme}"
+    );
 
     // Backward pass check
-    let _ = loss_extreme.backward().expect("Backward pass through soft-capped soup deficit must succeed");
+    let _ = loss_extreme
+        .backward()
+        .expect("Backward pass through soft-capped soup deficit must succeed");
 }
 
 #[test]
@@ -1454,15 +1825,23 @@ fn test_expert_weight_drift_penalty() {
     let pairs_close = vec![(&base_in, &close_expert)];
     let loss_close = compute_expert_drift_loss(&pairs_close, 2.0).unwrap();
     let val_close: f32 = loss_close.to_scalar().unwrap();
-    assert_eq!(val_close, 0.0, "Expert within tolerance should have zero drift penalty");
+    assert_eq!(
+        val_close, 0.0,
+        "Expert within tolerance should have zero drift penalty"
+    );
 
     // Divergent expert (ratio > 2.0)
     let divergent_expert = (&base_in * 4.0).unwrap();
     let pairs_divergent = vec![(&base_in, &divergent_expert)];
     let loss_div = compute_expert_drift_loss(&pairs_divergent, 2.0).unwrap();
     let val_div: f32 = loss_div.to_scalar().unwrap();
-    assert!(val_div > 0.0, "Divergent expert must produce strictly positive drift penalty: {val_div}");
+    assert!(
+        val_div > 0.0,
+        "Divergent expert must produce strictly positive drift penalty: {val_div}"
+    );
 
     // Backward pass check
-    let _ = loss_div.backward().expect("Backward pass through expert drift loss must succeed");
+    let _ = loss_div
+        .backward()
+        .expect("Backward pass through expert drift loss must succeed");
 }

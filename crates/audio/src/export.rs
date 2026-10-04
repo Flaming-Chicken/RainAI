@@ -34,7 +34,7 @@ pub fn write_wav_header<W: Write>(
     // fmt subchunk (IEEE float = format 3)
     writer.write_all(b"fmt ")?;
     writer.write_all(&16u32.to_le_bytes())?; // Subchunk1Size (16 for PCM/float)
-    writer.write_all(&3u16.to_le_bytes())?;  // AudioFormat: 3 = IEEE Float
+    writer.write_all(&3u16.to_le_bytes())?; // AudioFormat: 3 = IEEE Float
     writer.write_all(&num_channels.to_le_bytes())?;
     writer.write_all(&sample_rate.to_le_bytes())?;
     writer.write_all(&byte_rate.to_le_bytes())?;
@@ -67,9 +67,10 @@ pub fn render_wav_stream<W: Write>(
     write_wav_header(writer, num_channels, sample_rate, total_frames)?;
 
     let mut synth = ProceduralSynthesizer::new(sample_rate as f32);
-    
+
     // Load inference weights and setup engine
-    let weight_cache = inference::weight_loader::WeightLoader::load_embedded_ternary().unwrap_or_default();
+    let weight_cache =
+        inference::weight_loader::WeightLoader::load_embedded_ternary().unwrap_or_default();
     let mut runner = inference::runner::InferenceRunner::new(state.quality_tier, weight_cache);
     let mut decoder = AmbisonicDecoder::new(mode);
 
@@ -120,16 +121,17 @@ pub fn render_wav_stream<W: Write>(
         // Synthesize mixed Procedural/Neural frame buffer
         for frame in slice.iter_mut() {
             let foa_proc = synth.process_frame(&active_state);
-            
+
             *frame = if blend >= 0.999 {
                 foa_proc
             } else {
                 let cond = active_state.to_conditioning_array();
-                let (nw, nx, ny, nz) = if runner.use_consistency_jump && runner.has_consistency_jump_head() {
-                    runner.fast_consistency_step(&cond)
-                } else {
-                    runner.step(&cond)
-                };
+                let (nw, nx, ny, nz) =
+                    if runner.use_consistency_jump && runner.has_consistency_jump_head() {
+                        runner.fast_consistency_step(&cond)
+                    } else {
+                        runner.step(&cond)
+                    };
                 let foa_neural = crate::decoder::FoaFrame::new(nw, nx, ny, nz);
 
                 crate::decoder::FoaFrame::new(
@@ -197,8 +199,9 @@ pub async fn render_wav_stream_gpu<W: Write>(
     writer: &mut W,
     mut progress_cb: impl FnMut(f32),
 ) -> io::Result<u64> {
-    let weight_cache = inference::weight_loader::WeightLoader::load_embedded_ternary().unwrap_or_default();
-    
+    let weight_cache =
+        inference::weight_loader::WeightLoader::load_embedded_ternary().unwrap_or_default();
+
     // Attempt to initialize GPU inference runner
     match inference::webgpu_backend::GpuInferenceRunner::new(&weight_cache).await {
         Ok((mut gpu_runner, _consumer)) => {
@@ -232,7 +235,10 @@ pub async fn render_wav_stream_gpu<W: Write>(
                         foa_proc
                     } else {
                         let cond = active_state.to_conditioning_array();
-                        let (nw, nx, ny, nz) = gpu_runner.step_async(&cond).await.unwrap_or((0.0, 0.0, 0.0, 0.0));
+                        let (nw, nx, ny, nz) = gpu_runner
+                            .step_async(&cond)
+                            .await
+                            .unwrap_or((0.0, 0.0, 0.0, 0.0));
                         let foa_neural = crate::decoder::FoaFrame::new(nw, nx, ny, nz);
                         crate::decoder::FoaFrame::new(
                             foa_proc.w * blend + foa_neural.w * (1.0 - blend),
@@ -287,7 +293,10 @@ pub async fn render_wav_stream_gpu<W: Write>(
             Ok(bytes_written)
         }
         Err(err) => {
-            tracing::warn!("WebGPU offline export initialization failed ({}); falling back to CPU streaming export.", err);
+            tracing::warn!(
+                "WebGPU offline export initialization failed ({}); falling back to CPU streaming export.",
+                err
+            );
             render_wav_stream(state, duration_secs, sample_rate, mode, writer, progress_cb)
         }
     }

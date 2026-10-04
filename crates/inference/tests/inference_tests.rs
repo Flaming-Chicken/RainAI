@@ -1,8 +1,8 @@
-use inference::weight_loader::{WeightLoader, WeightCache, LoadedLayer, WeightBuffer};
-use inference::runner::{InferenceRunner, EngineStatus};
-use inference::model::{QuantizedModelManifest, PrecisionFormat};
 use inference::asset_manager::{AssetManager, AssetState};
-use shared::rain::{QualityTier, CONDITION_DIM};
+use inference::model::{PrecisionFormat, QuantizedModelManifest};
+use inference::runner::{EngineStatus, InferenceRunner};
+use inference::weight_loader::{LoadedLayer, WeightBuffer, WeightCache, WeightLoader};
+use shared::rain::{CONDITION_DIM, QualityTier};
 
 #[test]
 fn test_ternary_2bit_pack_unpack_roundtrip() {
@@ -34,7 +34,9 @@ fn test_weight_cache_operations() {
     cache.insert(layer);
     assert!(cache.contains("encoder.cond_proj.weight"));
 
-    let retrieved = cache.get("encoder.cond_proj.weight").expect("Layer must exist");
+    let retrieved = cache
+        .get("encoder.cond_proj.weight")
+        .expect("Layer must exist");
     assert_eq!(retrieved.num_elements(), 64 * 554);
     assert!(retrieved.weights.is_empty());
     assert!(!retrieved.packed_weights.is_empty());
@@ -93,37 +95,103 @@ fn test_geometric_midpoint_boundaries_and_pareto_allocation() {
     use inference::model::LayerRole;
 
     // 1. Invariant: Geometric level midpoints
-    assert_eq!(PrecisionFormat::from_continuous_bit_width(0.2), PrecisionFormat::Pruned);
-    assert_eq!(PrecisionFormat::from_continuous_bit_width(1.0), PrecisionFormat::Ternary158);
-    assert_eq!(PrecisionFormat::from_continuous_bit_width(1.80), PrecisionFormat::Ternary158);
-    assert_eq!(PrecisionFormat::from_continuous_bit_width(1.81), PrecisionFormat::Int2);
-    assert_eq!(PrecisionFormat::from_continuous_bit_width(2.58), PrecisionFormat::Int2);
-    assert_eq!(PrecisionFormat::from_continuous_bit_width(2.60), PrecisionFormat::Posit8);
-    assert_eq!(PrecisionFormat::from_continuous_bit_width(3.58), PrecisionFormat::Posit8);
-    assert_eq!(PrecisionFormat::from_continuous_bit_width(3.60), PrecisionFormat::Int4);
-    assert_eq!(PrecisionFormat::from_continuous_bit_width(4.58), PrecisionFormat::Int4);
-    assert_eq!(PrecisionFormat::from_continuous_bit_width(4.60), PrecisionFormat::Int5);
-    assert_eq!(PrecisionFormat::from_continuous_bit_width(5.58), PrecisionFormat::Int5);
-    assert_eq!(PrecisionFormat::from_continuous_bit_width(5.60), PrecisionFormat::Int8);
-    assert_eq!(PrecisionFormat::from_continuous_bit_width(8.0), PrecisionFormat::Bf16);
-    assert_eq!(PrecisionFormat::from_continuous_bit_width(12.0), PrecisionFormat::Fp16);
-    assert_eq!(PrecisionFormat::from_continuous_bit_width(18.0), PrecisionFormat::Fp32);
+    assert_eq!(
+        PrecisionFormat::from_continuous_bit_width(0.2),
+        PrecisionFormat::Pruned
+    );
+    assert_eq!(
+        PrecisionFormat::from_continuous_bit_width(1.0),
+        PrecisionFormat::Ternary158
+    );
+    assert_eq!(
+        PrecisionFormat::from_continuous_bit_width(1.80),
+        PrecisionFormat::Ternary158
+    );
+    assert_eq!(
+        PrecisionFormat::from_continuous_bit_width(1.81),
+        PrecisionFormat::Int2
+    );
+    assert_eq!(
+        PrecisionFormat::from_continuous_bit_width(2.58),
+        PrecisionFormat::Int2
+    );
+    assert_eq!(
+        PrecisionFormat::from_continuous_bit_width(2.60),
+        PrecisionFormat::Posit8
+    );
+    assert_eq!(
+        PrecisionFormat::from_continuous_bit_width(3.58),
+        PrecisionFormat::Posit8
+    );
+    assert_eq!(
+        PrecisionFormat::from_continuous_bit_width(3.60),
+        PrecisionFormat::Int4
+    );
+    assert_eq!(
+        PrecisionFormat::from_continuous_bit_width(4.58),
+        PrecisionFormat::Int4
+    );
+    assert_eq!(
+        PrecisionFormat::from_continuous_bit_width(4.60),
+        PrecisionFormat::Int5
+    );
+    assert_eq!(
+        PrecisionFormat::from_continuous_bit_width(5.58),
+        PrecisionFormat::Int5
+    );
+    assert_eq!(
+        PrecisionFormat::from_continuous_bit_width(5.60),
+        PrecisionFormat::Int8
+    );
+    assert_eq!(
+        PrecisionFormat::from_continuous_bit_width(8.0),
+        PrecisionFormat::Bf16
+    );
+    assert_eq!(
+        PrecisionFormat::from_continuous_bit_width(12.0),
+        PrecisionFormat::Fp16
+    );
+    assert_eq!(
+        PrecisionFormat::from_continuous_bit_width(18.0),
+        PrecisionFormat::Fp32
+    );
 
     // 2. Invariant: Natural per-layer Pareto allocation
     // SSM Recurrence: Retains Bf16 / Fp32 for recurrent stability
-    assert_eq!(LayerRole::MambaStateSpaceRecurrence.down_quantization_fallback(8.0), PrecisionFormat::Bf16);
-    assert_eq!(LayerRole::MambaStateSpaceRecurrence.down_quantization_fallback(5.0), PrecisionFormat::Int5);
+    assert_eq!(
+        LayerRole::MambaStateSpaceRecurrence.down_quantization_fallback(8.0),
+        PrecisionFormat::Bf16
+    );
+    assert_eq!(
+        LayerRole::MambaStateSpaceRecurrence.down_quantization_fallback(5.0),
+        PrecisionFormat::Int5
+    );
 
     // Latent Bottleneck: Prioritizes Posit tapered precision around 0 dBFS
-    assert_eq!(LayerRole::LatentBottleneck.down_quantization_fallback(6.0), PrecisionFormat::Posit16);
-    assert_eq!(LayerRole::LatentBottleneck.down_quantization_fallback(3.0), PrecisionFormat::Posit8);
+    assert_eq!(
+        LayerRole::LatentBottleneck.down_quantization_fallback(6.0),
+        PrecisionFormat::Posit16
+    );
+    assert_eq!(
+        LayerRole::LatentBottleneck.down_quantization_fallback(3.0),
+        PrecisionFormat::Posit8
+    );
 
     // Ambisonic / Filters: Preserves unitary 3D rotation phase
-    assert_eq!(LayerRole::AmbisonicRotation.down_quantization_fallback(12.0), PrecisionFormat::Fp32);
-    assert_eq!(LayerRole::AmbisonicRotation.down_quantization_fallback(6.0), PrecisionFormat::Fp16);
+    assert_eq!(
+        LayerRole::AmbisonicRotation.down_quantization_fallback(12.0),
+        PrecisionFormat::Fp32
+    );
+    assert_eq!(
+        LayerRole::AmbisonicRotation.down_quantization_fallback(6.0),
+        PrecisionFormat::Fp16
+    );
 
     // Projections: Scales smoothly down to coarse integer / ternary
-    assert_eq!(LayerRole::DenseProjection.down_quantization_fallback(1.5), PrecisionFormat::Ternary158);
+    assert_eq!(
+        LayerRole::DenseProjection.down_quantization_fallback(1.5),
+        PrecisionFormat::Ternary158
+    );
 }
 
 #[test]
@@ -178,7 +246,10 @@ fn test_multi_iteration_expert_diversity() {
         Some(&mut weights_iter0),
     );
 
-    assert!(weights_iter0[0] > weights_iter0[1], "Expert 0 should be top in iteration 0");
+    assert!(
+        weights_iter0[0] > weights_iter0[1],
+        "Expert 0 should be top in iteration 0"
+    );
 
     // In iteration 1, pass iteration 0 weights into deliberation history
     let mut delib_history = [0.0f32; 16];
@@ -246,9 +317,7 @@ fn test_rk4_continuous_flow_trajectory_solver() {
     let x0 = vec![1.0f32];
     let num_steps = 20;
 
-    let final_x = Rk4FlowSolver::solve_trajectory(&x0, num_steps, |x, _t| {
-        vec![-2.0 * x[0]]
-    });
+    let final_x = Rk4FlowSolver::solve_trajectory(&x0, num_steps, |x, _t| vec![-2.0 * x[0]]);
 
     let expected = (-2.0f32).exp();
     assert!(
@@ -308,10 +377,7 @@ fn test_hardware_compute_router_candle_and_wgsl() {
     let wgsl_backend = Arc::new(WgslComputeBackend::new(dim));
 
     // 2. Test router with Candle prioritized
-    let router = HardwareComputeRouter::new(vec![
-        candle_backend.clone(),
-        wgsl_backend.clone(),
-    ]);
+    let router = HardwareComputeRouter::new(vec![candle_backend.clone(), wgsl_backend.clone()]);
 
     let active_backend = router.select_backend().unwrap();
     assert_eq!(active_backend.backend_name(), "candle-cpu");
@@ -328,24 +394,47 @@ fn test_hardware_compute_router_candle_and_wgsl() {
             dim,
             num_freqs,
             hidden_dim,
-        ).unwrap_or_else(|_| {
+        )
+        .unwrap_or_else(|_| {
             let mut t = HashMap::new();
-            t.insert("flow_time_proj.weight".into(), Tensor::zeros((hidden_dim, time_dim), DType::F32, &Device::Cpu).unwrap());
-            t.insert("flow_time_proj.bias".into(), Tensor::zeros(hidden_dim, DType::F32, &Device::Cpu).unwrap());
-            t.insert("flow_hidden.weight".into(), Tensor::zeros((hidden_dim, dim + hidden_dim), DType::F32, &Device::Cpu).unwrap());
-            t.insert("flow_hidden.bias".into(), Tensor::zeros(hidden_dim, DType::F32, &Device::Cpu).unwrap());
-            t.insert("flow_out.weight".into(), Tensor::zeros((dim, hidden_dim), DType::F32, &Device::Cpu).unwrap());
-            t.insert("flow_out.bias".into(), Tensor::zeros(dim, DType::F32, &Device::Cpu).unwrap());
-            VelocityFlowHead::new(VarBuilder::from_tensors(t, DType::F32, &Device::Cpu), dim, num_freqs, hidden_dim).unwrap()
+            t.insert(
+                "flow_time_proj.weight".into(),
+                Tensor::zeros((hidden_dim, time_dim), DType::F32, &Device::Cpu).unwrap(),
+            );
+            t.insert(
+                "flow_time_proj.bias".into(),
+                Tensor::zeros(hidden_dim, DType::F32, &Device::Cpu).unwrap(),
+            );
+            t.insert(
+                "flow_hidden.weight".into(),
+                Tensor::zeros((hidden_dim, dim + hidden_dim), DType::F32, &Device::Cpu).unwrap(),
+            );
+            t.insert(
+                "flow_hidden.bias".into(),
+                Tensor::zeros(hidden_dim, DType::F32, &Device::Cpu).unwrap(),
+            );
+            t.insert(
+                "flow_out.weight".into(),
+                Tensor::zeros((dim, hidden_dim), DType::F32, &Device::Cpu).unwrap(),
+            );
+            t.insert(
+                "flow_out.bias".into(),
+                Tensor::zeros(dim, DType::F32, &Device::Cpu).unwrap(),
+            );
+            VelocityFlowHead::new(
+                VarBuilder::from_tensors(t, DType::F32, &Device::Cpu),
+                dim,
+                num_freqs,
+                hidden_dim,
+            )
+            .unwrap()
         }),
         device: Device::Cpu,
         available: false, // Simulated CUDA hardware absent
     });
 
-    let fallback_router = HardwareComputeRouter::new(vec![
-        unavailable_candle,
-        wgsl_backend.clone(),
-    ]);
+    let fallback_router =
+        HardwareComputeRouter::new(vec![unavailable_candle, wgsl_backend.clone()]);
 
     let fallback_backend = fallback_router.select_backend().unwrap();
     assert_eq!(fallback_backend.backend_name(), "webgpu-wgsl-custom");
@@ -366,11 +455,17 @@ fn test_step_parametric_control() {
     assert_eq!(ctrl.band_freq_drifts.len(), 16);
 
     for &gain in &ctrl.band_gains {
-        assert!(gain.is_finite() && gain > 0.0, "Band gain must be finite and positive");
+        assert!(
+            gain.is_finite() && gain > 0.0,
+            "Band gain must be finite and positive"
+        );
     }
 
     for &drift in &ctrl.band_freq_drifts {
-        assert!(drift.is_finite() && drift.abs() <= 0.15, "Frequency drift must be within expected bounds");
+        assert!(
+            drift.is_finite() && drift.abs() <= 0.15,
+            "Frequency drift must be within expected bounds"
+        );
     }
 
     assert!(ctrl.droplet_rate_mod >= 0.2 && ctrl.droplet_rate_mod <= 2.5);
@@ -384,6 +479,3 @@ fn test_step_parametric_control() {
     assert!(y.is_finite());
     assert!(z.is_finite());
 }
-
-
-

@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use candle_core::{DType, Tensor};
-use candle_nn::{linear, Linear, Module, VarBuilder};
+use candle_nn::{Linear, Module, VarBuilder, linear};
 
 use super::*;
 
@@ -99,7 +99,11 @@ impl CandleSpatialVae {
     }
 
     /// Full autoencoder forward pass.
-    pub fn forward(&self, audio_features: &Tensor, conditioning: &Tensor) -> Result<(Tensor, Tensor, Tensor, Tensor)> {
+    pub fn forward(
+        &self,
+        audio_features: &Tensor,
+        conditioning: &Tensor,
+    ) -> Result<(Tensor, Tensor, Tensor, Tensor)> {
         let (mu, logvar) = self.encode(audio_features)?;
         let z = self.reparameterize(&mu, &logvar)?;
         let (bands, foa) = self.decode(&z, conditioning)?;
@@ -210,11 +214,19 @@ impl CandleMambaExpert {
         let in_proj = linear(d_model, d_model, vs.pp("in_proj"))?;
         let rec_proj = linear(d_model, d_model, vs.pp("rec_proj"))?;
         let out_proj = linear(d_model, d_model, vs.pp("out_proj"))?;
-        Ok(Self { in_proj, rec_proj, out_proj })
+        Ok(Self {
+            in_proj,
+            rec_proj,
+            out_proj,
+        })
     }
 
     pub fn from_parts(in_proj: Linear, rec_proj: Linear, out_proj: Linear) -> Self {
-        Self { in_proj, rec_proj, out_proj }
+        Self {
+            in_proj,
+            rec_proj,
+            out_proj,
+        }
     }
 
     pub fn forward(&self, x: &Tensor, h_prev: &Tensor) -> Result<(Tensor, Tensor)> {
@@ -264,15 +276,16 @@ impl CandleEngramBank {
         let proj_vec = proj.to_vec2::<f32>()?;
         let b_sz = proj_vec.len();
         let primes = [2654435761u64, 2246822519u64, 3266489917u64, 668265263u64];
-        
+
         let mut retrieved_vec = Vec::with_capacity(b_sz * self.embed_dim);
         let bank_vec = self.bank.to_vec2::<f32>()?;
-        
+
         for row in proj_vec {
             let mut accum = vec![0.0f32; self.embed_dim];
             for (h, &val) in row.iter().enumerate().take(self.num_hash_heads) {
                 let scaled = (val * 1000.0).abs() as u64;
-                let idx = ((scaled.wrapping_mul(primes[h % primes.len()])) % (self.bank_size as u64)) as usize;
+                let idx = ((scaled.wrapping_mul(primes[h % primes.len()]))
+                    % (self.bank_size as u64)) as usize;
                 let bank_slice = &bank_vec[idx];
                 for (acc, &b_val) in accum.iter_mut().zip(bank_slice.iter()) {
                     *acc += b_val;
@@ -504,12 +517,15 @@ impl CandleMamba2MoE {
         pairs
     }
 
-
     /// Multi-Frame Prediction: predicts trajectories for t+1, t+2, and t+3.
     pub fn predict_multi_frame(&self, fused: &Tensor) -> Result<(Tensor, Tensor, Tensor)> {
         let z1 = self.out_affine.forward(&self.traj_head.forward(fused)?)?;
-        let z2 = self.out_affine.forward(&self.traj_head_t2.forward(fused)?)?;
-        let z3 = self.out_affine.forward(&self.traj_head_t3.forward(fused)?)?;
+        let z2 = self
+            .out_affine
+            .forward(&self.traj_head_t2.forward(fused)?)?;
+        let z3 = self
+            .out_affine
+            .forward(&self.traj_head_t3.forward(fused)?)?;
         Ok((z1, z2, z3))
     }
 
@@ -525,7 +541,10 @@ impl CandleMamba2MoE {
                 in_w = (in_w + scaled)?;
             }
         }
-        let in_bias = match (self.shared_base.in_proj.bias(), self.experts[0].in_proj.bias()) {
+        let in_bias = match (
+            self.shared_base.in_proj.bias(),
+            self.experts[0].in_proj.bias(),
+        ) {
             (Some(b_base), _) => {
                 let mut b = b_base.clone();
                 for (k, expert) in self.experts.iter().enumerate() {
@@ -548,7 +567,10 @@ impl CandleMamba2MoE {
                 rec_w = (rec_w + scaled)?;
             }
         }
-        let rec_bias = match (self.shared_base.rec_proj.bias(), self.experts[0].rec_proj.bias()) {
+        let rec_bias = match (
+            self.shared_base.rec_proj.bias(),
+            self.experts[0].rec_proj.bias(),
+        ) {
             (Some(b_base), _) => {
                 let mut b = b_base.clone();
                 for (k, expert) in self.experts.iter().enumerate() {
@@ -571,7 +593,10 @@ impl CandleMamba2MoE {
                 out_w = (out_w + scaled)?;
             }
         }
-        let out_bias = match (self.shared_base.out_proj.bias(), self.experts[0].out_proj.bias()) {
+        let out_bias = match (
+            self.shared_base.out_proj.bias(),
+            self.experts[0].out_proj.bias(),
+        ) {
             (Some(b_base), _) => {
                 let mut b = b_base.clone();
                 for (k, expert) in self.experts.iter().enumerate() {
@@ -589,7 +614,9 @@ impl CandleMamba2MoE {
         let rec_linear = Linear::new(rec_w, rec_bias);
         let out_linear = Linear::new(out_w, out_bias);
 
-        Ok(CandleMambaExpert::from_parts(in_linear, rec_linear, out_linear))
+        Ok(CandleMambaExpert::from_parts(
+            in_linear, rec_linear, out_linear,
+        ))
     }
 
     /// Smooth temperature-scaled softmax routing. All experts receive non-zero, differentiable
@@ -600,10 +627,7 @@ impl CandleMamba2MoE {
     /// - `smooth_weights`: full [B, N] probability distribution summing to 1.0 per row.
     /// - `weights_as_mask`: same tensor (continuous, no binary gate).
     /// - `mean_effective_count`: per-batch mean exp(H) — entropy-based effective expert count.
-    pub fn route_smooth_softmax(
-        logits: &Tensor,
-        tau_moe: f64,
-    ) -> Result<(Tensor, Tensor, Tensor)> {
+    pub fn route_smooth_softmax(logits: &Tensor, tau_moe: f64) -> Result<(Tensor, Tensor, Tensor)> {
         let tau = tau_moe.max(0.05);
         // Temperature-scaled softmax: p_e = exp((l_e - max) / tau) / Z
         let scaled = (logits * (1.0 / tau))?;
@@ -613,8 +637,8 @@ impl CandleMamba2MoE {
         // Clamping smooth_weights to [1e-8, 1.0] before log guarantees 0 * log(0) = NaN cannot occur
         let safe_weights = smooth_weights.clamp(1e-8f32, 1.0f32)?;
         let log_w = (safe_weights.log()? * -1.0)?;
-        let entropy = (&smooth_weights * &log_w)?.sum(1)?;       // [B]
-        let eff_count = entropy.exp()?;                           // exp(H), in [1, N]
+        let entropy = (&smooth_weights * &log_w)?.sum(1)?; // [B]
+        let eff_count = entropy.exp()?; // exp(H), in [1, N]
         let mean_eff = eff_count.mean_all()?;
 
         Ok((smooth_weights.clone(), smooth_weights, mean_eff))
@@ -658,7 +682,8 @@ impl CandleMamba2MoE {
                 let dropped_e = rng.gen_range(0..NUM_EXPERTS);
                 let mut mask_vec = vec![1.0f32; NUM_EXPERTS];
                 mask_vec[dropped_e] = 0.0f32;
-                let drop_mask = Tensor::from_vec(mask_vec, (1, NUM_EXPERTS), smooth_weights.device())?;
+                let drop_mask =
+                    Tensor::from_vec(mask_vec, (1, NUM_EXPERTS), smooth_weights.device())?;
                 let masked = smooth_weights.broadcast_mul(&drop_mask)?;
                 let sum_w = (masked.sum_keepdim(1)? + 1e-8f64)?;
                 smooth_weights = masked.broadcast_div(&sum_w)?;
@@ -698,7 +723,14 @@ impl CandleMamba2MoE {
         let z_raw = self.traj_head.forward(&fused)?;
         let z_pred = self.out_affine.forward(&z_raw)?;
 
-        Ok((z_pred, blended_state, router_probs, active_mask, mean_eff, router_logits))
+        Ok((
+            z_pred,
+            blended_state,
+            router_probs,
+            active_mask,
+            mean_eff,
+            router_logits,
+        ))
     }
 
     /// Forward pass with continuous smooth softmax routing and temporal tabu logit dampening (zero expert dropout).
@@ -734,7 +766,6 @@ impl CandleMamba2MoE {
     }
 }
 
-
 /// Iterative Latent Space "Thinking" and Refinement Block.
 /// Allows multiple iterative latent updates with deliberation depth embeddings
 /// and stochastic latent jittering to encourage contractive attractor dynamics.
@@ -757,7 +788,14 @@ impl CandleThinkingBlock {
         let fc1 = linear(dim + cond_dim + step_embed_dim, 128, vs.pp("fc1"))?;
         let fc2 = linear(128, dim, vs.pp("fc2"))?;
         let halt_gate = linear(dim + cond_dim + step_embed_dim, 1, vs.pp("halt_gate"))?;
-        Ok(Self { fc1, fc2, halt_gate, step_embed, dim, step_embed_dim })
+        Ok(Self {
+            fc1,
+            fc2,
+            halt_gate,
+            step_embed,
+            dim,
+            step_embed_dim,
+        })
     }
 
     /// Performs iterative thinking updates with stochastic latent jittering and depth embeddings.
@@ -777,7 +815,8 @@ impl CandleThinkingBlock {
         for step in 1..=max_steps {
             steps_taken = step;
             let z_perturbed = if jitter_sigma > 1e-6 {
-                let jitter = Tensor::randn(0.0f32, jitter_sigma, z_current.shape(), z_current.device())?;
+                let jitter =
+                    Tensor::randn(0.0f32, jitter_sigma, z_current.shape(), z_current.device())?;
                 (&z_current + &jitter)?
             } else {
                 z_current.copy()?
@@ -950,7 +989,11 @@ pub struct CandleMetaTelemetryOutput {
 impl CandleMetaTelemetryOutput {
     /// Returns discrete recommended pre-generated / thinking steps (1..=5)
     pub fn recommended_steps(&self) -> usize {
-        if let Ok(val) = self.pre_generated_steps.mean_all().and_then(|t| t.to_scalar::<f32>()) {
+        if let Ok(val) = self
+            .pre_generated_steps
+            .mean_all()
+            .and_then(|t| t.to_scalar::<f32>())
+        {
             (val.round() as usize).clamp(1, 5)
         } else {
             3
@@ -1012,10 +1055,10 @@ impl CandleInvasiveMetaController {
     pub fn forward(
         &self,
         moe_logits: &Tensor,
-        telemetry: &Tensor,       // [B, 4] [buffer_health_ms, cpu_headroom, gpu_headroom, delta_t_ms]
-        user_weights: &Tensor,    // [B, 3] [quality_pref, perf_pref, target_buffer_ms]
-        quality_scores: &Tensor,  // [B, 2]
-        slice_level: &Tensor,     // [B, 1]
+        telemetry: &Tensor, // [B, 4] [buffer_health_ms, cpu_headroom, gpu_headroom, delta_t_ms]
+        user_weights: &Tensor, // [B, 3] [quality_pref, perf_pref, target_buffer_ms]
+        quality_scores: &Tensor, // [B, 2]
+        slice_level: &Tensor, // [B, 1]
         telemetry_state: &Tensor, // [B, 32, 16]
     ) -> Result<CandleMetaTelemetryOutput> {
         let u_telem = self.telemetry_proj.forward(telemetry)?.silu()?;
@@ -1030,7 +1073,16 @@ impl CandleInvasiveMetaController {
         let mamba_out = next_telem_state.broadcast_mul(&c_t.unsqueeze(1)?)?.sum(2)?;
         let mamba_act = (&mamba_out + u_telem.broadcast_mul(&self.telem_d.unsqueeze(0)?)?)?;
 
-        let raw_features = Tensor::cat(&[moe_logits, telemetry, user_weights, quality_scores, slice_level], 1)?;
+        let raw_features = Tensor::cat(
+            &[
+                moe_logits,
+                telemetry,
+                user_weights,
+                quality_scores,
+                slice_level,
+            ],
+            1,
+        )?;
         let fused_in = Tensor::cat(&[&raw_features, &mamba_act], 1)?;
 
         let h1 = self.fusion_fc1.forward(&fused_in)?.silu()?;
@@ -1041,7 +1093,8 @@ impl CandleInvasiveMetaController {
         let raw_tau = candle_nn::ops::sigmoid(&raw_out.narrow(1, self.num_experts, 1)?)?;
         let tau_moe = ((&raw_tau * 1.9)? + 0.1)?;
 
-        let ambisonic_gate = candle_nn::ops::sigmoid(&raw_out.narrow(1, self.num_experts + 1, 1)?)?;
+        let ambisonic_gate =
+            candle_nn::ops::sigmoid(&raw_out.narrow(1, self.num_experts + 1, 1)?)?;
         let diff_gate = candle_nn::ops::sigmoid(&raw_out.narrow(1, self.num_experts + 2, 1)?)?;
         let blend_gate = candle_nn::ops::sigmoid(&raw_out.narrow(1, self.num_experts + 3, 1)?)?;
 
@@ -1085,7 +1138,12 @@ impl CandleConsistencyHead {
     pub fn new(in_dim: usize, out_dim: usize, vs: VarBuilder) -> Result<Self> {
         let fc1 = linear(in_dim, 128, vs.pp("fc1"))?;
         let fc2 = linear(128, out_dim, vs.pp("fc2"))?;
-        Ok(Self { fc1, fc2, in_dim, out_dim })
+        Ok(Self {
+            fc1,
+            fc2,
+            in_dim,
+            out_dim,
+        })
     }
 
     /// Predicts 1-step fast jump: z_fast = z_0 + Delta z_fast
@@ -1098,9 +1156,13 @@ impl CandleConsistencyHead {
     }
 
     /// Computes Huber distillation loss against the converged multi-step thinking target
-    pub fn compute_distill_loss(&self, z_fast: &Tensor, z_converged: &Tensor, delta: f64) -> Result<Tensor> {
+    pub fn compute_distill_loss(
+        &self,
+        z_fast: &Tensor,
+        z_converged: &Tensor,
+        delta: f64,
+    ) -> Result<Tensor> {
         let diff = (z_fast - z_converged)?;
         crate::stft_loss::huber_loss(&diff, delta)
     }
 }
-

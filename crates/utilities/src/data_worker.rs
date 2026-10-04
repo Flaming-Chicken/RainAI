@@ -11,9 +11,9 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, Sender},
-        Arc, Mutex,
     },
     thread::{self, JoinHandle},
     time::Duration,
@@ -131,7 +131,8 @@ impl DatabaseHealthWorker {
                         DataWorkerCommand::FreshenData => {
                             force_freshen = true;
                         }
-                        DataWorkerCommand::TriggerAudit | DataWorkerCommand::ForceBackfillDeficits => {
+                        DataWorkerCommand::TriggerAudit
+                        | DataWorkerCommand::ForceBackfillDeficits => {
                             // Immediate pass triggered below
                         }
                     }
@@ -146,7 +147,9 @@ impl DatabaseHealthWorker {
                 telemetry.auto_balance_enabled = auto_balance;
                 telemetry.chunks_healed_or_synthesized = healed_count;
 
-                let proc_dir = manifest_path.parent().unwrap_or_else(|| Path::new("data/processed"));
+                let proc_dir = manifest_path
+                    .parent()
+                    .unwrap_or_else(|| Path::new("data/processed"));
 
                 // 2. Trickle in & categorise new data
                 if auto_balance || force_freshen {
@@ -166,7 +169,9 @@ impl DatabaseHealthWorker {
                 }
 
                 // 3. If auto-balance or force-freshen is enabled, heal deficits
-                if (auto_balance || force_freshen) && (!telemetry.deficit_surfaces.is_empty() || telemetry.entropy < 0.90) {
+                if (auto_balance || force_freshen)
+                    && (!telemetry.deficit_surfaces.is_empty() || telemetry.entropy < 0.90)
+                {
                     let backfilled = Self::heal_deficits(&telemetry.deficit_surfaces);
                     healed_count += backfilled;
                     telemetry.chunks_healed_or_synthesized = healed_count;
@@ -179,19 +184,26 @@ impl DatabaseHealthWorker {
                     for s in &telemetry.deficit_surfaces {
                         *telemetry.surface_counts.entry(s.clone()).or_insert(0) += 5;
                     }
-                    let (new_entropy, new_quotas) = SurfaceEntropyAuditor::audit(&telemetry.surface_counts);
+                    let (new_entropy, new_quotas) =
+                        SurfaceEntropyAuditor::audit(&telemetry.surface_counts);
                     telemetry.entropy = new_entropy;
                     telemetry.quotas = new_quotas;
                 }
 
                 // 4. Enforce 15 GB rolling disk ceiling with quality-aware pruning
-                let evicted = Self::enforce_rolling_quota(proc_dir, &manifest_path, &telemetry.quotas);
+                let evicted =
+                    Self::enforce_rolling_quota(proc_dir, &manifest_path, &telemetry.quotas);
                 if evicted > 0 {
                     healed_count += evicted;
                     telemetry.rotated_chunks_count = healed_count;
                     telemetry.disk_usage_bytes = Self::calculate_dir_size(proc_dir);
-                    telemetry.disk_usage_pct = (telemetry.disk_usage_bytes as f64 / MAX_DATASET_BYTES as f64 * 100.0) as f32;
-                    telemetry.last_action = format!("Quality-aware pruning evicted {} lower-quality chunks", evicted);
+                    telemetry.disk_usage_pct = (telemetry.disk_usage_bytes as f64
+                        / MAX_DATASET_BYTES as f64
+                        * 100.0) as f32;
+                    telemetry.last_action = format!(
+                        "Quality-aware pruning evicted {} lower-quality chunks",
+                        evicted
+                    );
                 }
 
                 telemetry.is_running = true;
@@ -232,7 +244,8 @@ impl DatabaseHealthWorker {
         let mut total_chunks = 0usize;
         if manifest_path.exists() {
             if let Ok(file) = fs::File::open(manifest_path) {
-                let res: Result<HashMap<String, crate::features::AudioMetadata>, _> = serde_json::from_reader(file);
+                let res: Result<HashMap<String, crate::features::AudioMetadata>, _> =
+                    serde_json::from_reader(file);
                 if let Ok(entries) = res {
                     total_chunks = entries.len();
                     for meta in entries.values() {
@@ -264,7 +277,9 @@ impl DatabaseHealthWorker {
             .map(|q| q.surface.clone())
             .collect();
 
-        let processed_dir = manifest_path.parent().unwrap_or_else(|| Path::new("data/processed"));
+        let processed_dir = manifest_path
+            .parent()
+            .unwrap_or_else(|| Path::new("data/processed"));
         let disk_usage_bytes = Self::calculate_dir_size(processed_dir);
         let disk_usage_pct = (disk_usage_bytes as f64 / MAX_DATASET_BYTES as f64 * 100.0) as f32;
 
@@ -412,7 +427,8 @@ impl DatabaseHealthWorker {
         // Synthesize physical rain audio block grounded in fluid dynamics (Ulbrich DSD + Gunn-Kinzer)
         let sample_rate = 48000u32;
         let duration_sec = 5.0f32;
-        let texture = crate::synth_rain::generate_rain_texture(duration_sec, 30.0, tag, sample_rate);
+        let texture =
+            crate::synth_rain::generate_rain_texture(duration_sec, 30.0, tag, sample_rate);
 
         // Write 48kHz stereo WAV
         let spec = hound::WavSpec {
@@ -481,15 +497,18 @@ impl DatabaseHealthWorker {
         if let Some(parent) = target_path.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&target_path) {
+        if let Ok(mut f) = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&target_path)
+        {
             use std::io::Write;
             let _ = f.write_all(log_line.as_bytes());
         }
 
         Ok(Some(format!(
             "Trickled in and categorized: {} -> {}",
-            item.filename,
-            tag
+            item.filename, tag
         )))
     }
 
@@ -500,7 +519,12 @@ impl DatabaseHealthWorker {
         manifest_path: &Path,
         quotas: &[SurfaceQuota],
     ) -> usize {
-        Self::enforce_rolling_quota_with_ceiling(processed_dir, manifest_path, quotas, MAX_DATASET_BYTES)
+        Self::enforce_rolling_quota_with_ceiling(
+            processed_dir,
+            manifest_path,
+            quotas,
+            MAX_DATASET_BYTES,
+        )
     }
 
     /// Enforces a specific byte ceiling with quality-aware pruning.
@@ -537,7 +561,9 @@ impl DatabaseHealthWorker {
             let mut candidates: Vec<(String, f32, PathBuf)> = Vec::new();
             for (key, meta) in &manifest_entries {
                 let surf = meta.surface_tag.to_lowercase();
-                let is_overrep = over_represented.iter().any(|o| surf.contains(o) || o.contains(&surf));
+                let is_overrep = over_represented
+                    .iter()
+                    .any(|o| surf.contains(o) || o.contains(&surf));
                 if is_overrep {
                     let q = Self::compute_acoustic_quality_score(meta);
                     let file_path = if Path::new(&meta.path).exists() {
@@ -582,7 +608,9 @@ impl DatabaseHealthWorker {
 
             for file in wav_files {
                 let fname = file.file_name().to_string_lossy().to_string();
-                let matches_overrep = over_represented.iter().any(|surf| fname.to_lowercase().contains(surf));
+                let matches_overrep = over_represented
+                    .iter()
+                    .any(|surf| fname.to_lowercase().contains(surf));
                 if matches_overrep && fs::remove_file(file.path()).is_ok() {
                     evicted += 1;
                     if Self::calculate_dir_size(processed_dir) < (max_bytes * 95 / 100) {

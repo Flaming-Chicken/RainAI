@@ -162,7 +162,9 @@ impl<'a> BinaryAttributionDictionary<'a> {
         }
 
         let mut prefix = [0u8; 16];
-        for (i, chunk) in clean[..32].as_bytes().chunks_exact(2).enumerate() {
+        let bytes = clean.as_bytes();
+        let (chunks, _) = bytes[..32].as_chunks::<2>();
+        for (i, chunk) in chunks.iter().enumerate() {
             let byte_str = std::str::from_utf8(chunk).ok()?;
             prefix[i] = u8::from_str_radix(byte_str, 16).ok()?;
         }
@@ -296,7 +298,9 @@ fn decode_hex_prefix_16(hex: &str) -> [u8; 16] {
     if clean.len() < 32 {
         return prefix;
     }
-    for (i, chunk) in clean[..32].as_bytes().chunks_exact(2).enumerate() {
+    let bytes = clean.as_bytes();
+    let (chunks, _) = bytes[..32].as_chunks::<2>();
+    for (i, chunk) in chunks.iter().enumerate() {
         if let Ok(s) = std::str::from_utf8(chunk) {
             if let Ok(b) = u8::from_str_radix(s, 16) {
                 prefix[i] = b;
