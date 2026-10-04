@@ -39,6 +39,8 @@ training_session.json
 /data/*/*
 !/data/rain/ATTRIBUTIONS.txt
 !/Data/rain/ATTRIBUTIONS.txt
+!/data/rain/attributions.bin
+!**/attributions.bin
 
 # Global exclusions for audio and binary model artifacts
 *.flac
