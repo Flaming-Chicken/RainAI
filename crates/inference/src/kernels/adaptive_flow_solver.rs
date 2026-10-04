@@ -372,8 +372,8 @@ impl LearnedFlowController {
         }
     }
 
-    /// Predicts optimal step size $h_t$ given current velocity $\mathbf{v}_t$ and previous velocity $\mathbf{v}_{t-1}$.
-    pub fn predict_step_size(&self, v_current: &[f32], v_prev: Option<&[f32]>, dt: f32) -> f32 {
+    /// Predicts optimal step size $h_t$ given current velocity $\mathbf{v}_t$, previous velocity $\mathbf{v}_{t-1}$, and continuous weather latent $z_w$.
+    pub fn predict_step_size(&self, v_current: &[f32], v_prev: Option<&[f32]>, weather_latent: Option<&[f32]>, dt: f32) -> f32 {
         let v_norm =
             (v_current.iter().map(|&x| x * x).sum::<f32>() / v_current.len().max(1) as f32).sqrt();
 
@@ -388,9 +388,16 @@ impl LearnedFlowController {
             0.0f32
         };
 
-        // Modulate base_h inversely with curvature and velocity
+        // If a weather latent is provided, compute its magnitude as a proxy for environmental turbulence.
+        let latent_turbulence = if let Some(zw) = weather_latent {
+            (zw.iter().map(|&x| x * x).sum::<f32>() / zw.len().max(1) as f32).sqrt()
+        } else {
+            0.0f32
+        };
+
+        // Modulate base_h inversely with curvature, velocity, and weather latent turbulence
         let damping =
-            1.0 + self.curvature_sensitivity * curvature + self.velocity_sensitivity * v_norm;
+            1.0 + self.curvature_sensitivity * curvature + self.velocity_sensitivity * v_norm + 0.5 * latent_turbulence;
         (self.base_h / damping).clamp(self.min_h, self.max_h)
     }
 }
