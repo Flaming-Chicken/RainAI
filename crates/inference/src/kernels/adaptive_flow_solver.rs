@@ -338,16 +338,17 @@ impl BogackiShampine23 {
 }
 
 /// Learned Flow Step-Size Controller (Neural ODE Step Modulator).
-///
-/// Dynamically predicts optimal integration step sizes based on trajectory curvature $\kappa$
-/// and velocity norm $||\mathbf{v}||_2$.
+/// Dynamically predicts optimal integration step sizes based on trajectory kinematics (acceleration, jerk),
+/// environmental turbulence (weather latent), and hardware constraints (thermal deficit).
 #[derive(Debug, Clone)]
 pub struct LearnedFlowController {
     pub base_h: f32,
     pub min_h: f32,
     pub max_h: f32,
     pub curvature_sensitivity: f32,
+    pub jerk_sensitivity: f32,
     pub velocity_sensitivity: f32,
+    pub thermal_relaxation: f32,
 }
 
 impl Default for LearnedFlowController {
@@ -357,7 +358,9 @@ impl Default for LearnedFlowController {
             min_h: 0.01,
             max_h: 0.20,
             curvature_sensitivity: 1.5,
+            jerk_sensitivity: 0.8,
             velocity_sensitivity: 0.5,
+            thermal_relaxation: 2.0,
         }
     }
 }
@@ -372,21 +375,42 @@ impl LearnedFlowController {
         }
     }
 
-    /// Predicts optimal step size $h_t$ given current velocity $\mathbf{v}_t$, previous velocity $\mathbf{v}_{t-1}$, and continuous weather latent $z_w$.
-    pub fn predict_step_size(&self, v_current: &[f32], v_prev: Option<&[f32]>, weather_latent: Option<&[f32]>, dt: f32) -> f32 {
+    /// Predicts optimal step size $h_t$ incorporating leading kinematic indicators (acceleration, jerk),
+    /// the active weather latent, and hardware thermal telemetry.
+    pub fn predict_step_size(
+        &self, 
+        v_current: &[f32], 
+        v_prev: Option<&[f32]>, 
+        v_prev_prev: Option<&[f32]>, 
+        weather_latent: Option<&[f32]>, 
+        thermal_deficit: f32,
+        dt: f32
+    ) -> f32 {
         let v_norm =
             (v_current.iter().map(|&x| x * x).sum::<f32>() / v_current.len().max(1) as f32).sqrt();
 
-        let curvature = if let Some(prev) = v_prev {
+        let mut acceleration = 0.0f32;
+        let mut jerk = 0.0f32;
+
+        if let Some(prev) = v_prev {
             let mut diff_sq = 0.0f32;
             for i in 0..v_current.len().min(prev.len()) {
                 let d = (v_current[i] - prev[i]) / dt.max(1e-6);
                 diff_sq += d * d;
             }
-            (diff_sq / v_current.len().max(1) as f32).sqrt()
-        } else {
-            0.0f32
-        };
+            acceleration = (diff_sq / v_current.len().max(1) as f32).sqrt();
+
+            if let Some(prev_prev) = v_prev_prev {
+                let mut jerk_sq = 0.0f32;
+                for i in 0..v_current.len().min(prev_prev.len()) {
+                    let a_curr = (v_current[i] - prev[i]) / dt.max(1e-6);
+                    let a_prev = (prev[i] - prev_prev[i]) / dt.max(1e-6);
+                    let j = (a_curr - a_prev) / dt.max(1e-6);
+                    jerk_sq += j * j;
+                }
+                jerk = (jerk_sq / v_current.len().max(1) as f32).sqrt();
+            }
+        }
 
         // If a weather latent is provided, compute its magnitude as a proxy for environmental turbulence.
         let latent_turbulence = if let Some(zw) = weather_latent {
@@ -395,9 +419,16 @@ impl LearnedFlowController {
             0.0f32
         };
 
-        // Modulate base_h inversely with curvature, velocity, and weather latent turbulence
-        let damping =
-            1.0 + self.curvature_sensitivity * curvature + self.velocity_sensitivity * v_norm + 0.5 * latent_turbulence;
+        // Hardware thermal override: if device is throttling (thermal_deficit > 0), force larger steps (relax damping).
+        let thermal_factor = 1.0 - (thermal_deficit.clamp(0.0, 1.0) * 0.8);
+
+        // Modulate base_h inversely with kinematics and weather, softened by thermal relaxation
+        let damping = (1.0 
+            + self.curvature_sensitivity * acceleration 
+            + self.jerk_sensitivity * jerk 
+            + self.velocity_sensitivity * v_norm 
+            + 0.5 * latent_turbulence) * thermal_factor;
+            
         (self.base_h / damping).clamp(self.min_h, self.max_h)
     }
 }
