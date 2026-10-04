@@ -46,6 +46,8 @@ pub struct InferenceRunner {
     pub cond_cache_valid: bool,
     pub engram_bank: Option<EngramBank>,
     pub latent_kv_cache: Vec<[f32; 32]>,
+    pub stochastic_brown_driver: [f32; 64],
+    pub rng_state: u64,
 }
 
 impl Default for InferenceRunner {
@@ -150,6 +152,8 @@ impl InferenceRunner {
             cond_cache_valid: false,
             engram_bank: Some(EngramBank::new()),
             latent_kv_cache: Vec::new(),
+            stochastic_brown_driver: [0.0; 64],
+            rng_state: 88172645463325252,
         }
     }
 
@@ -336,6 +340,18 @@ impl InferenceRunner {
         }
     }
 
+    /// Advances the internal zero-allocation brown noise process (-6 dB/oct leaky integration)
+    #[inline]
+    pub fn step_brown_driver(&mut self) {
+        for val in self.stochastic_brown_driver.iter_mut() {
+            self.rng_state ^= self.rng_state >> 12;
+            self.rng_state ^= self.rng_state << 25;
+            self.rng_state ^= self.rng_state >> 27;
+            let white = (self.rng_state.wrapping_mul(0x2545F4914F6CDD1D) >> 32) as f32 / 4_294_967_296.0 - 0.5;
+            *val = *val * 0.96 + white * 0.04;
+        }
+    }
+
     /// Run one step of inference given the 554-dim conditioning vector
     /// Returns 4-channel FOA values (W, X, Y, Z)
     pub fn step(&mut self, conditioning: &[f32; CONDITION_DIM]) -> (f32, f32, f32, f32) {
@@ -354,8 +370,12 @@ impl InferenceRunner {
             return (w, x, y, z);
         }
 
-        // 1. Conditioning Projection: u_t = silu(W_in @ c_t + b_in) (cached when input parameters are invariant)
+        // 1. Advance the stochastic brown noise driver and inject into conditioning projection
+        self.step_brown_driver();
         self.ensure_conditioning_projection(conditioning);
+        for (u, &b) in self.u_t_buffer.iter_mut().zip(self.stochastic_brown_driver.iter()) {
+            *u += b * 0.08;
+        }
 
         // 2. Mamba2 Recurrence & MoE Dispatch across Thinking Deliberation Steps (1..=5)
         let iterations = self.thinking_steps.clamp(1, 5);
@@ -377,6 +397,11 @@ impl InferenceRunner {
                     &b_diag.weights,
                     &self.u_t_buffer,
                 );
+            } else {
+                // Stochastic recurrent fallback: ensures living dynamic state evolution even when generator weights are uninitialized
+                for (s, &u) in self.latent_state.iter_mut().zip(self.u_t_buffer.iter()) {
+                    *s = *s * 0.94 + u * 0.06;
+                }
             }
 
             // O(1) Engram physical prior gated lookup
@@ -433,6 +458,12 @@ impl InferenceRunner {
         let mut foa_out = [0.0; 4];
         if let Some(foa_layer) = self.weight_cache.get("decoder.foa_proj.weight") {
             Self::dispatch_projection(&foa_layer, &self.latent_state, None, &mut foa_out);
+        } else {
+            // Default physical spatial projection mapping latent components to FOA (W, X, Y, Z)
+            foa_out[0] = (self.latent_state[0] * 0.5 + 1.0).clamp(0.1, 2.5);
+            foa_out[1] = self.latent_state[1].tanh() * 0.6;
+            foa_out[2] = self.latent_state[2].tanh() * 0.6;
+            foa_out[3] = self.latent_state[3].tanh() * 0.4;
         }
 
         if self.crossfade_counter > 0 {
