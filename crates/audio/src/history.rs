@@ -35,7 +35,7 @@ impl AcousticHistoryBuffer {
             30.0
         };
 
-        let safe_sr = if sample_rate.is_finite() && sample_rate >= 100.0 && sample_rate <= 192000.0 {
+        let safe_sr = if sample_rate.is_finite() && (100.0..=192000.0).contains(&sample_rate) {
             sample_rate
         } else {
             48000.0
