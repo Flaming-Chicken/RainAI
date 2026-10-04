@@ -492,35 +492,7 @@ async function runE2ETests() {
     assert(res.headers.get("Cross-Origin-Opener-Policy") === "same-origin", "SPA fallback preserves COOP header");
   }
 
-  // 19. Production vs Dev / Preview Environment Isolation Verification
-  console.log("\n--- Testing Production vs Dev / Preview Environment Isolation ---");
-  {
-    // Test Dev preview hostname detection
-    const devReq = new Request("https://dev.rainai.pages.dev/api/contribute/health", { method: "GET" });
-    const devRes = await worker.fetch(devReq, env, {});
-    assert(devRes.headers.get("X-RainAI-Environment") === "staging", "Dev hostname returns X-RainAI-Environment: staging");
-    const devJson = await devRes.json();
-    assert(devJson.environment === "staging", "Dev environment correctly detected as staging");
 
-    // Test Production apex pages.dev hostname detection
-    const prodPagesReq = new Request("https://rainai.pages.dev/api/contribute/health", { method: "GET" });
-    const prodPagesRes = await worker.fetch(prodPagesReq, env, {});
-    assert(prodPagesRes.headers.get("X-RainAI-Environment") === "production", "Apex pages.dev returns X-RainAI-Environment: production");
-    const prodPagesJson = await prodPagesRes.json();
-    assert(prodPagesJson.environment === "production", "Apex pages.dev correctly detected as production");
-
-    // Test Custom domain production detection
-    const prodReq = new Request("https://rainai.app/api/contribute/health", { method: "GET" });
-    const prodRes = await worker.fetch(prodReq, env, {});
-    assert(prodRes.headers.get("X-RainAI-Environment") === "production", "Custom domain returns X-RainAI-Environment: production");
-    const prodJson = await prodRes.json();
-    assert(prodJson.environment === "production", "Custom domain detected as production");
-
-    // Test asset passthrough preserves environment header
-    const assetReq = new Request("https://dev.rainai.pages.dev/manifest.json", { method: "GET" });
-    const assetRes = await worker.fetch(assetReq, env, {});
-    assert(assetRes.headers.get("X-RainAI-Environment") === "staging", "Asset response preserves dev environment header");
-  }
 
   console.log(`\nResults: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {

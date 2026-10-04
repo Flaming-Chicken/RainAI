@@ -68,21 +68,11 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    // Resolve runtime environment with strict preview / production separation
-    const isPreview =
-      url.hostname.includes("preview") ||
-      url.hostname.startsWith("dev.") ||
-      url.hostname.includes("staging") ||
-      url.hostname.includes("localhost") ||
-      (url.hostname.endsWith(".pages.dev") && url.hostname !== "rainai.pages.dev");
-    const detectedEnv = env.ENVIRONMENT || (isPreview ? "staging" : "production");
-
     // CORS headers for browser WASM client
     const corsHeaders = {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, X-SHA256, X-License, X-Tags, Authorization",
-      "X-RainAI-Environment": detectedEnv,
     };
 
     if (request.method === "OPTIONS") {
@@ -100,11 +90,9 @@ export default {
           assetResponse = await env.ASSETS.fetch(indexReq);
         }
 
-        // Attach critical Security & Multi-threading headers for WASM SharedArrayBuffer
         const response = new Response(assetResponse.body, assetResponse);
         response.headers.set("Cross-Origin-Opener-Policy", "same-origin");
         response.headers.set("Cross-Origin-Embedder-Policy", "require-corp");
-        response.headers.set("X-RainAI-Environment", detectedEnv);
 
         // Set optimized Cache-Control headers
         if (url.pathname.endsWith(".wasm") || url.pathname.endsWith(".bin")) {
@@ -129,7 +117,6 @@ export default {
             engine: "RainAI Edge Worker",
             d1_bound: !!env.DB,
             r2_bound: !!env.DATA_BUCKET,
-            environment: detectedEnv,
             timestamp: new Date().toISOString(),
           }),
           {
@@ -255,8 +242,8 @@ export default {
               sha256, filename, status, license, license_tier, license_rank,
               license_approved, dsp_passed, author, tags_json, descriptions_json,
               contributors_json, alternate_licenses_json, file_size_bytes, quarantine_reason,
-              environment, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+              updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
             ON CONFLICT(sha256) DO UPDATE SET
               filename = excluded.filename,
               status = excluded.status,
@@ -272,7 +259,6 @@ export default {
               alternate_licenses_json = excluded.alternate_licenses_json,
               file_size_bytes = CASE WHEN excluded.file_size_bytes > 0 THEN excluded.file_size_bytes ELSE records.file_size_bytes END,
               quarantine_reason = excluded.quarantine_reason,
-              environment = excluded.environment,
               updated_at = datetime('now');
           `;
           await env.DB.prepare(insertSql).bind(
@@ -290,8 +276,7 @@ export default {
             JSON.stringify(mergedContributors),
             JSON.stringify(alternateLicenses),
             body.file_size_bytes || existingRecord?.file_size_bytes || 0,
-            quarantineReason,
-            detectedEnv
+            quarantineReason
           ).run();
         }
 
@@ -306,7 +291,6 @@ export default {
           alternate_licenses: alternateLicenses,
           license_approved: licenseApproved,
           dsp_passed: dspPassed,
-          environment: detectedEnv,
           staged_at: existingRecord?.staged_at || new Date().toISOString(),
           last_updated_at: new Date().toISOString(),
           target_prefix: targetPrefix,
@@ -393,12 +377,9 @@ export default {
 
       // 4. Maintainer Triage: List Quarantined Records
       if (url.pathname === "/api/contribute/quarantine-list" && request.method === "GET") {
-        const envFilter = url.searchParams.get("env");
         if (env.DB) {
-          const sql = envFilter
-            ? "SELECT * FROM records WHERE status = 'QUARANTINE' AND environment = ? ORDER BY updated_at DESC"
-            : "SELECT * FROM records WHERE status = 'QUARANTINE' ORDER BY updated_at DESC";
-          const stmt = envFilter ? env.DB.prepare(sql).bind(envFilter) : env.DB.prepare(sql);
+          const sql = "SELECT * FROM records WHERE status = 'QUARANTINE' ORDER BY updated_at DESC";
+          const stmt = env.DB.prepare(sql);
           const res = await stmt.all();
           const records = (res.results || []).map((r) => ({
             sha256: r.sha256,
@@ -416,7 +397,6 @@ export default {
             alternate_licenses: JSON.parse(r.alternate_licenses_json || "[]"),
             file_size_bytes: r.file_size_bytes,
             quarantine_reason: r.quarantine_reason,
-            environment: r.environment || "production",
             created_at: r.created_at,
             updated_at: r.updated_at,
           }));
@@ -437,9 +417,7 @@ export default {
           const obj = await env.DATA_BUCKET.get(item.key);
           if (obj) {
             const data = await obj.json();
-            if (!envFilter || data.environment === envFilter) {
-              records.push(data);
-            }
+            records.push(data);
           }
         }
 
@@ -450,12 +428,9 @@ export default {
 
       // 5. Maintainer Pull-Approved: List Approved Records
       if (url.pathname === "/api/contribute/approved-list" && request.method === "GET") {
-        const envFilter = url.searchParams.get("env");
         if (env.DB) {
-          const sql = envFilter
-            ? "SELECT * FROM records WHERE status = 'APPROVED' AND environment = ? ORDER BY updated_at DESC"
-            : "SELECT * FROM records WHERE status = 'APPROVED' ORDER BY updated_at DESC";
-          const stmt = envFilter ? env.DB.prepare(sql).bind(envFilter) : env.DB.prepare(sql);
+          const sql = "SELECT * FROM records WHERE status = 'APPROVED' ORDER BY updated_at DESC";
+          const stmt = env.DB.prepare(sql);
           const res = await stmt.all();
           const records = (res.results || []).map((r) => ({
             sha256: r.sha256,
@@ -473,7 +448,6 @@ export default {
             alternate_licenses: JSON.parse(r.alternate_licenses_json || "[]"),
             file_size_bytes: r.file_size_bytes,
             quarantine_reason: r.quarantine_reason,
-            environment: r.environment || "production",
             created_at: r.created_at,
             updated_at: r.updated_at,
           }));
@@ -494,9 +468,7 @@ export default {
           const obj = await env.DATA_BUCKET.get(item.key);
           if (obj) {
             const data = await obj.json();
-            if (!envFilter || data.environment === envFilter) {
-              records.push(data);
-            }
+            records.push(data);
           }
         }
 
