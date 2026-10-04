@@ -64,6 +64,38 @@ function getLicenseRank(lic) {
   return { rank: 2, tier: "Unknown", approved: false };
 }
 
+let dbInitialized = false;
+async function ensureDbSchema(db) {
+  if (!db || dbInitialized) return;
+  try {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS records (
+        sha256 TEXT PRIMARY KEY,
+        filename TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('QUARANTINE', 'APPROVED', 'URL_ONLY')),
+        license TEXT NOT NULL,
+        license_tier TEXT NOT NULL,
+        license_rank INTEGER NOT NULL DEFAULT 2,
+        license_approved INTEGER NOT NULL DEFAULT 0,
+        dsp_passed INTEGER NOT NULL DEFAULT 0,
+        author TEXT,
+        tags_json TEXT NOT NULL DEFAULT '[]',
+        descriptions_json TEXT NOT NULL DEFAULT '[]',
+        contributors_json TEXT NOT NULL DEFAULT '[]',
+        alternate_licenses_json TEXT NOT NULL DEFAULT '[]',
+        file_size_bytes INTEGER NOT NULL DEFAULT 0,
+        quarantine_reason TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_records_status ON records(status);
+    `);
+    dbInitialized = true;
+  } catch (err) {
+    console.error("D1 schema initialization error:", err);
+  }
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -109,6 +141,10 @@ export default {
     }
 
     try {
+      if (env.DB) {
+        await ensureDbSchema(env.DB);
+      }
+
       // 1. Health & Quota Diagnostics
       if (url.pathname === "/api/contribute/health" && request.method === "GET") {
         return new Response(
