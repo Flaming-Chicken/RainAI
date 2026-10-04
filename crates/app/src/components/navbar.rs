@@ -64,6 +64,19 @@ pub fn render_navbar(app: &mut TemplateApp, ui: &mut egui::Ui, constraints: &Scr
                     app.show_help_dialog = true;
                 }
 
+                let privacy_text = if constraints.is_mobile {
+                    "Privacy"
+                } else {
+                    "Privacy"
+                };
+                if ui
+                    .button(privacy_text)
+                    .on_hover_text("Privacy policy and contribution terms")
+                    .clicked()
+                {
+                    app.show_privacy_dialog = true;
+                }
+
                 // Storage diagnostics button
                 let storage_text = match app.storage_diag.is_persisted {
                     Some(true) => {

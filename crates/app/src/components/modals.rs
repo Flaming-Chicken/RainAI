@@ -364,6 +364,10 @@ pub fn render_dialogs(app: &mut TemplateApp, ui: &mut egui::Ui) {
     if app.show_contribute_dialog {
         render_contribute_dialog(app, ui);
     }
+
+    if app.show_privacy_dialog {
+        render_privacy_dialog(app, ui);
+    }
 }
 
 pub fn render_storage_modal(app: &mut TemplateApp, ui: &mut egui::Ui) {
@@ -665,11 +669,17 @@ pub fn render_contribute_dialog(app: &mut TemplateApp, ui: &mut egui::Ui) {
                 ui.add_space(8.0);
 
                 // Mandatory Contributor Warranty Affirmation Checkbox
-                ui.checkbox(
-                    &mut app.contribute_state.confirmed_rights_warranty,
-                    egui::RichText::new("I represent and warrant that I own or have the necessary rights to grant this license.")
-                        .strong(),
-                );
+                ui.horizontal_wrapped(|ui| {
+                    ui.checkbox(
+                        &mut app.contribute_state.confirmed_rights_warranty,
+                        egui::RichText::new("I represent and warrant that I have the right to provide and license this audio, and agree to the")
+                            .strong(),
+                    );
+                    if ui.link("Privacy Policy").clicked() {
+                        app.show_privacy_dialog = true;
+                    }
+                    ui.label(".");
+                });
 
                 ui.add_space(8.0);
                 ui.separator();
@@ -749,5 +759,28 @@ pub fn render_contribute_dialog(app: &mut TemplateApp, ui: &mut egui::Ui) {
 
     if !open {
         app.show_contribute_dialog = false;
+    }
+}
+
+pub fn render_privacy_dialog(app: &mut TemplateApp, ui: &mut egui::Ui) {
+    let mut open = true;
+    let win_w = (ui.available_width() - 24.0).clamp(340.0, 680.0);
+    let win_h = (ui.available_height() - 32.0).clamp(440.0, 720.0);
+
+    egui::Window::new("🛡 RainAI Privacy Policy & Terms")
+        .open(&mut open)
+        .resizable(true)
+        .collapsible(true)
+        .default_size(egui::vec2(win_w, win_h))
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .show(ui.ctx(), |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                const PRIVACY_TEXT: &str = include_str!("../../../../PRIVACY_POLICY.md");
+                ui.label(PRIVACY_TEXT);
+            });
+        });
+
+    if !open {
+        app.show_privacy_dialog = false;
     }
 }

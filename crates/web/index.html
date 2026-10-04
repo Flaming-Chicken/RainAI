@@ -52,11 +52,75 @@
     <link data-trunk rel="copy-file" href="../inference/data/rainai_deployment_config.json" data-target-path="data">
     <link data-trunk rel="copy-dir" href="../inference/src/shaders" data-target-path="shaders">
 
+    <!-- Cloudflare Turnstile API -->
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+
     <!-- CSS and JavaScript Assets Managed by Trunk -->
     <link data-trunk rel="scss" href="index.scss" data-integrity="none">
     <script data-trunk rel="inline" src="index.js" defer data-integrity="none"></script>
   </head>
   <body>
+    <!-- Transparent Studio Loading Skeleton & ETA Progress Bar -->
+    <div id="loading_overlay" class="loading_overlay">
+      <!-- Simulated Studio Navbar Skeleton -->
+      <header class="skeleton_navbar">
+        <div class="skeleton_brand">
+          <div class="skeleton_icon"></div>
+          <div class="skeleton_title"></div>
+        </div>
+        <div class="skeleton_nav_buttons">
+          <div class="skeleton_btn"></div>
+          <div class="skeleton_btn"></div>
+          <div class="skeleton_btn"></div>
+        </div>
+      </header>
+
+      <!-- Simulated Studio Soundstage Layout Skeleton -->
+      <main class="skeleton_studio">
+        <div class="skeleton_panel skeleton_visualizer">
+          <div class="skeleton_radar_circle"></div>
+          <div class="skeleton_radar_wave"></div>
+        </div>
+        <div class="skeleton_panel skeleton_controls">
+          <div class="skeleton_slider_row"></div>
+          <div class="skeleton_slider_row"></div>
+          <div class="skeleton_slider_row"></div>
+          <div class="skeleton_slider_row"></div>
+        </div>
+      </main>
+
+      <!-- Center Dynamic Progress & Hardware Card -->
+      <div class="loading_center_card">
+        <div class="loading_title_row">
+          <span class="pulse_dot"></span>
+          <h2>Initializing Neural Audio Engine</h2>
+        </div>
+        <div class="hw_badge_row">
+          <span id="hw_badge" class="badge">Detecting Acceleration...</span>
+        </div>
+
+        <div class="progress_container">
+          <div class="progress_track">
+            <div id="progress_fill" class="progress_fill"></div>
+          </div>
+          <div class="progress_status">
+            <span id="progress_step">Downloading Neural Weights...</span>
+            <span id="progress_pct">0%</span>
+          </div>
+          <div class="progress_metrics">
+            <span id="progress_bytes">0.0 MB / ~14.8 MB</span>
+            <span id="progress_speed">Speed: -- MB/s</span>
+            <span id="progress_eta">ETA: Calculating...</span>
+          </div>
+        </div>
+
+        <div id="recovery_banner" class="recovery_banner hidden"></div>
+      </div>
+    </div>
+
+    <!-- Hidden Cloudflare Turnstile Verification Target -->
+    <div id="cf-turnstile-container" class="turnstile_hidden" style="display:none;"></div>
+
     <canvas id="egui_canvas"></canvas>
   </body>
 </html>
