@@ -520,7 +520,8 @@ impl eframe::App for TemplateApp {
 }
 
 #[cfg(target_os = "android")]
-#[no_mangle]
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
 fn android_main(app: winit::platform::android::activity::AndroidApp) {
     use eframe::NativeOptions;
     let mut options = NativeOptions::default();
@@ -534,7 +535,8 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
 }
 
 #[cfg(target_os = "ios")]
-#[no_mangle]
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
 pub extern "C" fn ios_main() {
     use eframe::NativeOptions;
     let _ = audio::IosAudioSessionManager::configure_audio_session();
