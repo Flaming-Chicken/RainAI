@@ -8,6 +8,7 @@ use candle_core::{DType, Tensor};
 use candle_nn::{Linear, Module, VarBuilder, linear};
 
 use super::*;
+use shared::rain::QualityTier;
 
 /// Numerically stable softplus: softplus(x) = max(x, 0) + ln(1 + exp(-|x|))
 /// Overflow-free for all x in (-inf, inf).
@@ -1164,5 +1165,66 @@ impl CandleConsistencyHead {
     ) -> Result<Tensor> {
         let diff = (z_fast - z_converged)?;
         crate::stft_loss::huber_loss(&diff, delta)
+    }
+}
+
+/// Audio-Rate / Block-Rate Differentiable Neural Waveshaper (L0 Exciter).
+/// Applies nonlinear harmonic saturation and acoustic air excitation to procedural rain.
+/// Its quantization bit-width and sparsity thresholds are learned continuously during training
+/// to discover the optimal default deployment quantization tier.
+pub struct CandleNeuralWaveshaper {
+    fc_in: Linear,
+    fc_hidden: Linear,
+    fc_out: Linear,
+    pub quantizer: CandleLearnedQuantizer,
+    pub mix: Tensor,
+}
+
+impl CandleNeuralWaveshaper {
+    pub fn new(hidden_dim: usize, vs: VarBuilder) -> Result<Self> {
+        let fc_in = linear(1, hidden_dim, vs.pp("fc_in"))?;
+        let fc_hidden = linear(hidden_dim, hidden_dim, vs.pp("fc_hidden"))?;
+        let fc_out = linear(hidden_dim, 1, vs.pp("fc_out"))?;
+        let quantizer = CandleLearnedQuantizer::new(hidden_dim, 8.0, vs.pp("quantizer"))?;
+        let mix = match vs.get((1,), "mix") {
+            Ok(t) => t,
+            Err(_) => Tensor::full(0.35f32, (1,), vs.device())?,
+        };
+        Ok(Self {
+            fc_in,
+            fc_hidden,
+            fc_out,
+            quantizer,
+            mix,
+        })
+    }
+
+    /// Forward pass through the differentiable neural waveshaper with continuous quantization
+    pub fn forward(&self, audio: &Tensor, tau_quant: f32) -> Result<Tensor> {
+        let original_shape = audio.shape().clone();
+        let flat_audio = audio.flatten_to(1)?.unsqueeze(1)?;
+        let h1 = self.fc_in.forward(&flat_audio)?.gelu_erf()?;
+        let h1_quant = self.quantizer.forward(&h1, tau_quant)?;
+        let h2 = self.fc_hidden.forward(&h1_quant)?.gelu_erf()?;
+        let h2_quant = self.quantizer.forward(&h2, tau_quant)?;
+        let exciter = self.fc_out.forward(&h2_quant)?.tanh()?;
+
+        let mix_clamped = self.mix.clamp(0.0f32, 1.0f32)?;
+        let shaped = (&flat_audio + (&exciter * &mix_clamped)?)?;
+        shaped.reshape(original_shape).map_err(Into::into)
+    }
+
+    /// Computes the optimal quantization tier discovered during training
+    pub fn optimal_quantization_tier(&self) -> Result<QualityTier> {
+        let mean_bits = self.quantizer.beta.abs()?.mean_all()?.to_scalar::<f32>()?;
+        if mean_bits <= 2.0 {
+            Ok(QualityTier::Ternary158)
+        } else if mean_bits <= 8.5 {
+            Ok(QualityTier::AdaptiveMinimum)
+        } else if mean_bits <= 16.5 {
+            Ok(QualityTier::HighInt16)
+        } else {
+            Ok(QualityTier::StudioFp32)
+        }
     }
 }
