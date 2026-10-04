@@ -89,6 +89,7 @@ pub struct RainView {
     pub enable_gpu_radar: bool,
     pub dragged_source: Option<RadarDragSource>,
     pub show_advanced_inspector: bool,
+    pub show_spectrogram: bool,
     pub show_provenance_hud: bool,
 
     // Phase 22: Flow Solver, WebGPU Governor & UX Telemetry
@@ -118,6 +119,7 @@ impl Default for RainView {
             enable_gpu_radar: false,
             dragged_source: None,
             show_advanced_inspector: false,
+            show_spectrogram: true,
             show_provenance_hud: false,
 
             flow_solver: FlowSolverAlgorithm::AdaptiveRk45 {
@@ -245,6 +247,22 @@ impl RainView {
 
                 if ui.add(btn).clicked() {
                     self.show_advanced_inspector = !self.show_advanced_inspector;
+                }
+
+                if self.show_advanced_inspector {
+                    ui.add_space(8.0);
+                    let spec_label = if self.show_spectrogram {
+                        "📊 Spectrogram: Visible"
+                    } else {
+                        "📊 Spectrogram: Minimized"
+                    };
+                    if ui
+                        .button(spec_label)
+                        .on_hover_text("Toggle visibility of the bottom neural spectrogram waterfall")
+                        .clicked()
+                    {
+                        self.show_spectrogram = !self.show_spectrogram;
+                    }
                 }
             });
 

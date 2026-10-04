@@ -73,6 +73,7 @@ fn test_rain_view_custom_ir_file_picker_and_session_state() {
         hrtf_profile: rain_view.hrtf_profile.clone(),
         webgpu_fp16_enabled: rain_view.webgpu_fp16,
         show_advanced_inspector: rain_view.show_advanced_inspector,
+        show_spectrogram: rain_view.show_spectrogram,
         custom_ir_hash: Some(meta.sha256_hash.clone()),
     };
 

@@ -175,6 +175,7 @@ impl TemplateApp {
             decode_mode: session.decode_mode,
             webgpu_fp16: session.webgpu_fp16_enabled,
             show_advanced_inspector: session.show_advanced_inspector,
+            show_spectrogram: session.show_spectrogram,
             noise_masking_enabled: session.noise_masking_enabled,
             hrtf_profile: session.hrtf_profile,
             ..Default::default()
@@ -275,6 +276,7 @@ impl TemplateApp {
             hrtf_profile: self.rain_view.hrtf_profile.clone(),
             webgpu_fp16_enabled: self.rain_view.webgpu_fp16,
             show_advanced_inspector: self.rain_view.show_advanced_inspector,
+            show_spectrogram: self.rain_view.show_spectrogram,
             custom_ir_hash: self
                 .rain_view
                 .custom_ir_meta
@@ -444,6 +446,7 @@ impl eframe::App for TemplateApp {
             hrtf_profile: self.rain_view.hrtf_profile.clone(),
             webgpu_fp16_enabled: self.rain_view.webgpu_fp16,
             show_advanced_inspector: self.rain_view.show_advanced_inspector,
+            show_spectrogram: self.rain_view.show_spectrogram,
             custom_ir_hash: self
                 .rain_view
                 .custom_ir_meta
@@ -501,9 +504,18 @@ impl eframe::App for TemplateApp {
         // 1. Render navbar (Top Panel)
         components::navbar::render_navbar(self, ui, &constraints);
 
-        // 2. Render bottom spectrogram waterfall panel (Progressive disclosure: visible in advanced inspector mode)
-        if self.rain_view.show_advanced_inspector {
-            render_spectrogram_panel(ui, &self.spectrogram_history);
+        // 2. Render bottom spectrogram waterfall panel (Progressive disclosure: docked resizable bottom panel)
+        if self.rain_view.show_advanced_inspector && self.rain_view.show_spectrogram {
+            egui::Panel::bottom("spectrogram_bottom_panel")
+                .resizable(true)
+                .default_size(140.0)
+                .show(ui, |ui| {
+                    render_spectrogram_panel(
+                        ui,
+                        &self.spectrogram_history,
+                        &mut self.rain_view.show_spectrogram,
+                    );
+                });
         }
 
         // 3. Central content area
