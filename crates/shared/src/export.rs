@@ -94,12 +94,12 @@ pub fn import_from_csv(csv_str: &str) -> Result<ItemCollection, DataTransferErro
     })
 }
 
-/// Exports the collection into compressed BSON binary bytes (Zlib-compressed BSON).
-pub fn export_to_compressed_bson(collection: &ItemCollection) -> Result<Vec<u8>, String> {
-    spodeian_export::export_to_compressed_bson(collection).map_err(|e| e.to_string())
+/// Exports any serializable entity into compressed BSON binary bytes (Zlib-compressed BSON).
+pub fn export_to_compressed_bson<T: serde::Serialize>(data: &T) -> Result<Vec<u8>, String> {
+    spodeian_export::export_to_compressed_bson(data).map_err(|e| e.to_string())
 }
 
-/// Imports and restores an ItemCollection from a compressed (or raw) BSON slice.
-pub fn import_from_compressed_bson(bytes: &[u8]) -> Result<ItemCollection, String> {
+/// Imports and restores any entity from a compressed (or raw) BSON slice.
+pub fn import_from_compressed_bson<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
     spodeian_export::import_from_compressed_bson(bytes).map_err(|e| e.to_string())
 }

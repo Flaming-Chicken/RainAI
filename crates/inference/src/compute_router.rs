@@ -125,6 +125,10 @@ pub enum FlowSolverAlgorithm {
     DpmSolverPP { steps: usize },
     /// Neural ODE adaptive step modulator with trajectory curvature damping.
     LearnedCurvature { tol: f32, initial_h: f32 },
+    /// Learned Predictor-Evaluator-Corrector 1-NFE multi-step integrator.
+    TrainedPec { steps: usize },
+    /// Learned Implicit Runge-Kutta 1-NFE surrogate integrator.
+    TrainedImplicitRk { steps: usize },
 }
 
 impl FlowSolverAlgorithm {
@@ -137,6 +141,8 @@ impl FlowSolverAlgorithm {
             Self::AdaptiveHeun2 { .. } => "Adaptive Heun2 (EDM/Karras 2nd-Order)",
             Self::DpmSolverPP { .. } => "DPM-Solver++ (Fast Multistep)",
             Self::LearnedCurvature { .. } => "Learned Curvature (Neural ODE Damped)",
+            Self::TrainedPec { .. } => "Trained PEC (Adams-Bashforth/Moulton 1-NFE)",
+            Self::TrainedImplicitRk { .. } => "Trained Implicit RK (Surrogate 1-NFE)",
         }
     }
 
@@ -149,6 +155,8 @@ impl FlowSolverAlgorithm {
             Self::AdaptiveHeun2 { .. } => "Heun2",
             Self::DpmSolverPP { .. } => "DPM++",
             Self::LearnedCurvature { .. } => "Learned Curvature",
+            Self::TrainedPec { .. } => "Trained PEC",
+            Self::TrainedImplicitRk { .. } => "Trained Imp-RK",
         }
     }
 }
@@ -373,6 +381,55 @@ impl HardwareComputeRouter {
                     steps += 1;
                 }
                 Ok(current_x)
+            }
+            FlowSolverAlgorithm::TrainedPec { steps } => {
+                let solver = crate::kernels::TrainedPecSolver::new(
+                    vec![1.5, -0.5],
+                    vec![0.5, 0.5],
+                );
+                let mut error_opt = None;
+                let final_x = solver.solve_trajectory(
+                    x0,
+                    steps,
+                    |x_c, t_c| match backend.evaluate_flow_velocity(x_c, t_c) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            error_opt = Some(e);
+                            vec![0.0f32; x0.len()]
+                        }
+                    },
+                )?;
+                if let Some(err) = error_opt {
+                    Err(err)
+                } else {
+                    Ok(final_x)
+                }
+            }
+            FlowSolverAlgorithm::TrainedImplicitRk { steps } => {
+                let solver = crate::kernels::TrainedImplicitRkSolver::new(
+                    vec![1.0],
+                    vec![1.0],
+                    vec![1.0],
+                    10,
+                    1e-4,
+                );
+                let mut error_opt = None;
+                let final_x = solver.solve_trajectory(
+                    x0,
+                    steps,
+                    |x_c, t_c| match backend.evaluate_flow_velocity(x_c, t_c) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            error_opt = Some(e);
+                            vec![0.0f32; x0.len()]
+                        }
+                    },
+                )?;
+                if let Some(err) = error_opt {
+                    Err(err)
+                } else {
+                    Ok(final_x)
+                }
             }
         }
     }

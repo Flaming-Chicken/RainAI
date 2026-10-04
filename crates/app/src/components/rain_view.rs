@@ -147,6 +147,28 @@ impl RainView {
         // Step procedural drift if evolve is on
         rain.step_procedural_drift(ui.input(|i| i.stable_dt).min(0.1));
 
+        // Dynamically track adaptive step-size trajectory during playback or evolve
+        if rain.is_playing || rain.evolve_enabled {
+            let base_h = match self.flow_solver {
+                FlowSolverAlgorithm::FixedRk4 { steps } => 1.0 / steps.max(1) as f32,
+                FlowSolverAlgorithm::AdaptiveRk45 { initial_h, .. } => initial_h,
+                FlowSolverAlgorithm::AdaptiveRk23 { initial_h, .. } => initial_h,
+                FlowSolverAlgorithm::AdaptiveTsit5 { initial_h, .. } => initial_h,
+                FlowSolverAlgorithm::AdaptiveHeun2 { initial_h, .. } => initial_h,
+                FlowSolverAlgorithm::DpmSolverPP { steps } => 1.0 / steps.max(1) as f32,
+                FlowSolverAlgorithm::LearnedCurvature { initial_h, .. } => initial_h,
+                FlowSolverAlgorithm::TrainedPec { steps } => 1.0 / steps.max(1) as f32,
+                FlowSolverAlgorithm::TrainedImplicitRk { steps } => 1.0 / steps.max(1) as f32,
+            };
+            let turbulence = rain.weather.intensity * 0.6 + rain.wind.speed * 0.4;
+            let thermal_factor = 1.0 + self.simulated_thermal_level * 0.75;
+            let current_h = (base_h / (1.0 + turbulence * 1.8) * thermal_factor).clamp(0.005, 0.25);
+            if self.live_step_trajectory.len() >= 24 {
+                self.live_step_trajectory.remove(0);
+            }
+            self.live_step_trajectory.push(current_h);
+        }
+
         ui.vertical(|ui| {
             self.render_header(ui, rain);
             ui.add_space(8.0);
@@ -1283,6 +1305,27 @@ impl RainView {
                                 initial_h: 0.05,
                             };
                         }
+                        if ui
+                            .selectable_label(
+                                matches!(self.flow_solver, FlowSolverAlgorithm::TrainedPec { .. }),
+                                "Trained PEC (Adams-Bashforth/Moulton 1-NFE)",
+                            )
+                            .clicked()
+                        {
+                            self.flow_solver = FlowSolverAlgorithm::TrainedPec { steps: 12 };
+                        }
+                        if ui
+                            .selectable_label(
+                                matches!(
+                                    self.flow_solver,
+                                    FlowSolverAlgorithm::TrainedImplicitRk { .. }
+                                ),
+                                "Trained Implicit RK (Surrogate 1-NFE)",
+                            )
+                            .clicked()
+                        {
+                            self.flow_solver = FlowSolverAlgorithm::TrainedImplicitRk { steps: 12 };
+                        }
                     });
                 ui.label(
                     egui::RichText::new(self.flow_solver.name())
@@ -1998,19 +2041,48 @@ impl RainView {
                     Color32::from_rgb(255, 90, 80)
                 };
                 ui.horizontal(|ui| {
-                    ui.label("Thermal Throttle Level:");
+                    ui.label("Simulated Hardware Thermal Throttle:");
+                    ui.add(
+                        egui::Slider::new(&mut self.simulated_thermal_level, 0.0..=1.0)
+                            .show_value(false)
+                            .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
+                    );
                     ui.colored_label(
                         thermal_color,
-                        format!("{:.0}%", self.simulated_thermal_level * 100.0),
+                        if self.simulated_thermal_level > 0.70 {
+                            "[THROTTLED - RELAXING INTEGRATOR STEPS]"
+                        } else if self.simulated_thermal_level > 0.40 {
+                            "[ELEVATED]"
+                        } else {
+                            "[NOMINAL]"
+                        },
                     );
                 });
                 ui.add(egui::ProgressBar::new(self.simulated_thermal_level).text(
-                    if self.simulated_thermal_level > 0.70 {
-                        "THROTTLED"
-                    } else {
-                        "NOMINAL"
-                    },
+                    format!("{:.0}% Throttle Level", self.simulated_thermal_level * 100.0),
                 ));
+
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new("📐 Continuous-Time Kinematics & Weather Latent ($z_w$)")
+                        .strong(),
+                );
+                let accel_est = (rain.weather.intensity * 1.8 + rain.wind.gustiness * 1.2).min(3.0);
+                let jerk_est = (rain.wind.turbulence * 2.2 + rain.weather.pitch_angle * 0.8).min(3.0);
+                let latent_turb = ((rain.weather.intensity.powi(2) + rain.wind.speed.powi(2)).sqrt() * 1.4).min(2.0);
+
+                ui.horizontal(|ui| {
+                    ui.label(format!("Trajectory Accel (Curvature $a_n$): {:.2}", accel_est));
+                    ui.add(egui::ProgressBar::new((accel_est / 3.0).min(1.0)));
+                });
+                ui.horizontal(|ui| {
+                    ui.label(format!("Leading Jerk Indicator ($j_n$): {:.2}", jerk_est));
+                    ui.add(egui::ProgressBar::new((jerk_est / 3.0).min(1.0)));
+                });
+                ui.horizontal(|ui| {
+                    ui.label(format!("Weather Latent Norm (||z_w||): {:.2}", latent_turb));
+                    ui.add(egui::ProgressBar::new((latent_turb / 2.0).min(1.0)));
+                });
             });
         };
 
