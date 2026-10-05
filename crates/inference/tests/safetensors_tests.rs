@@ -8,12 +8,11 @@ use std::collections::HashMap;
 
 #[test]
 fn test_safetensors_loading_and_consistency_jump() {
-    // 1. Synthesize weights for a full Mamba2-MoE model + Consistency Jump Head
+    // 1. Synthesize weights for a full dense Mamba2 model + Consistency Jump Head
     let cond_weights = vec![0.01f32; 64 * CONDITION_DIM];
     let cond_bias = vec![0.001f32; 64];
     let a_diag = vec![0.95f32; 64];
     let b_diag = vec![0.05f32; 64];
-    let router = vec![0.125f32; 8 * 64];
     let foa_weights = vec![0.25f32; 4 * 64];
     let jump_weights = vec![0.5f32; 4 * 64];
     let jump_bias = vec![0.02f32; 4];
@@ -22,7 +21,6 @@ fn test_safetensors_loading_and_consistency_jump() {
     let cond_b_bytes: &[u8] = bytemuck::cast_slice(&cond_bias);
     let a_bytes: &[u8] = bytemuck::cast_slice(&a_diag);
     let b_bytes: &[u8] = bytemuck::cast_slice(&b_diag);
-    let router_bytes: &[u8] = bytemuck::cast_slice(&router);
     let foa_bytes: &[u8] = bytemuck::cast_slice(&foa_weights);
     let jump_w_bytes: &[u8] = bytemuck::cast_slice(&jump_weights);
     let jump_b_bytes: &[u8] = bytemuck::cast_slice(&jump_bias);
@@ -43,10 +41,6 @@ fn test_safetensors_loading_and_consistency_jump() {
     data_map.insert(
         "mamba.B_diag.weight".to_string(),
         TensorView::new(Dtype::F32, vec![64], b_bytes).unwrap(),
-    );
-    data_map.insert(
-        "moe.router.weight".to_string(),
-        TensorView::new(Dtype::F32, vec![8, 64], router_bytes).unwrap(),
     );
     data_map.insert(
         "decoder.foa_proj.weight".to_string(),

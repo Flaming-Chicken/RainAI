@@ -95,6 +95,38 @@ pub fn render_spectrogram_panel(
                     painter.rect_filled(cell_rect, 0.0, color);
                 }
             }
+
+            // Frequency marker grid overlay (100 Hz, 1 kHz, 10 kHz)
+            let markers = [
+                (0.233f32, "100 Hz"),
+                (0.566f32, "1 kHz"),
+                (0.900f32, "10 kHz"),
+            ];
+            for (rel_y, label) in markers {
+                let line_y = rect.max.y - rel_y * rect.height();
+                painter.line_segment(
+                    [
+                        egui::pos2(rect.min.x, line_y),
+                        egui::pos2(rect.max.x, line_y),
+                    ],
+                    egui::Stroke::new(1.0, Color32::from_white_alpha(45)),
+                );
+                painter.text(
+                    egui::pos2(rect.max.x - 6.0, line_y - 2.0),
+                    egui::Align2::RIGHT_BOTTOM,
+                    label,
+                    egui::FontId::proportional(10.0),
+                    Color32::from_white_alpha(160),
+                );
+            }
+
+            // Clean subtle bounding frame
+            painter.rect_stroke(
+                rect,
+                2.0,
+                egui::Stroke::new(1.0, Color32::from_rgb(50, 65, 90)),
+                egui::StrokeKind::Outside,
+            );
         });
 }
 

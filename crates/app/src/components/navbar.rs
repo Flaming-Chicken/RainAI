@@ -23,6 +23,7 @@ pub fn render_navbar(app: &mut TemplateApp, ui: &mut egui::Ui, constraints: &Scr
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // 1. Theme Switcher
                 let theme_text = if constraints.is_mobile {
                     format!("{} {}", app.state.config.theme.icon(), app.state.config.theme.label())
                 } else {
@@ -31,18 +32,15 @@ pub fn render_navbar(app: &mut TemplateApp, ui: &mut egui::Ui, constraints: &Scr
 
                 if ui
                     .button(theme_text)
-                    .on_hover_text("Cycle visual themes: Dark, Warm Light, High Contrast (Dark), and High Contrast (Light)")
+                    .on_hover_text("Cycle visual themes: Dark, Warm Light, High Contrast")
                     .clicked()
                 {
                     app.state.config.theme = app.state.config.theme.next();
                     app.persist_state();
                 }
 
-                let contribute_text = if constraints.is_mobile {
-                    "Contribute"
-                } else {
-                    "🌧 Contribute Data"
-                };
+                // 2. Contribute Data
+                let contribute_text = if constraints.is_mobile { "Contribute" } else { "🌧 Contribute" };
                 if ui
                     .button(contribute_text)
                     .on_hover_text("Contribute your own precipitation audio recordings to train RainAI")
@@ -51,59 +49,97 @@ pub fn render_navbar(app: &mut TemplateApp, ui: &mut egui::Ui, constraints: &Scr
                     app.show_contribute_dialog = true;
                 }
 
-                let help_text = if constraints.is_mobile {
-                    "Help"
-                } else {
-                    "Help"
-                };
+                // 3. Settings Modal
+                let settings_text = if constraints.is_mobile { "⚙ Settings" } else { "⚙ Settings" };
                 if ui
-                    .button(help_text)
-                    .on_hover_text("Help, architecture & shortcuts")
+                    .button(settings_text)
+                    .on_hover_text("Audio listening format, performance profiles, and fine-grained DSP solver settings")
                     .clicked()
                 {
-                    app.show_help_dialog = true;
+                    app.show_settings_dialog = true;
                 }
 
-                let privacy_text = if constraints.is_mobile {
-                    "Privacy"
-                } else {
-                    "Privacy"
-                };
-                if ui
-                    .button(privacy_text)
-                    .on_hover_text("Privacy policy and contribution terms")
-                    .clicked()
-                {
-                    app.show_privacy_dialog = true;
-                }
-
-                // Storage diagnostics button
+                // 4. Storage & Backups Hub
                 let storage_text = match app.storage_diag.is_persisted {
-                    Some(true) => {
-                        if constraints.is_mobile {
-                            "Storage (P)"
-                        } else {
-                            "Storage: Persistent"
-                        }
-                    }
-                    Some(false) => {
-                        if constraints.is_mobile {
-                            "Storage (E)"
-                        } else {
-                            "Storage: Ephemeral"
-                        }
-                    }
-                    None => "Storage",
+                    Some(true) => if constraints.is_mobile { "💾 Storage (P)" } else { "💾 Storage: Persistent" },
+                    Some(false) => if constraints.is_mobile { "💾 Storage (E)" } else { "💾 Storage: Ephemeral" },
+                    None => "💾 Storage",
                 };
                 if ui
                     .button(storage_text)
-                    .on_hover_text("Storage persistence & backups")
+                    .on_hover_text("Asset preloading, backup export/import (JSON/BSON), and diagnostics")
                     .clicked()
                 {
                     app.show_storage_modal = true;
                 }
 
-                // PWA Install Button
+                // 5. Dedicated Offline Audio Export
+                let export_audio_text = if constraints.is_mobile { "🎵 Export" } else { "🎵 Export Audio" };
+                if ui
+                    .button(export_audio_text)
+                    .on_hover_text("Render soundscape to FLAC Level 8, MP3 (320k), or WAV with embedded metadata")
+                    .clicked()
+                {
+                    app.show_audio_export_dialog = true;
+                }
+
+                // 6. Presets Manager
+                let presets_text = if constraints.is_mobile { "📋 Presets" } else { "📋 Presets" };
+                if ui
+                    .button(presets_text)
+                    .on_hover_text("Browse factory presets and create new custom presets")
+                    .clicked()
+                {
+                    app.show_presets_dialog = true;
+                }
+
+                // 7. Full Provenance
+                if !constraints.is_mobile {
+                    if ui
+                        .button("📜 Provenance")
+                        .on_hover_text("View full training corpus provenance and XAI attribution details")
+                        .clicked()
+                    {
+                        app.show_provenance_dialog = true;
+                    }
+                }
+
+                // 8. Decoupled Spectrogram Toggle
+                let spec_text = if app.rain_view.show_spectrogram {
+                    "📊 Spectrogram"
+                } else {
+                    "📊 Show Spectrogram"
+                };
+                if ui
+                    .button(spec_text)
+                    .on_hover_text("Toggle bottom real-time neural spectrogram waterfall panel")
+                    .clicked()
+                {
+                    app.rain_view.show_spectrogram = !app.rain_view.show_spectrogram;
+                }
+
+                // 9. Help & Info
+                let help_text = if constraints.is_mobile { "Help" } else { "Help" };
+                if ui
+                    .button(help_text)
+                    .on_hover_text("Help, physics architecture & shortcuts")
+                    .clicked()
+                {
+                    app.show_help_dialog = true;
+                }
+
+                // 10. Privacy Policy
+                if !constraints.is_mobile {
+                    if ui
+                        .button("Privacy")
+                        .on_hover_text("Privacy policy and contribution terms")
+                        .clicked()
+                    {
+                        app.show_privacy_dialog = true;
+                    }
+                }
+
+                // PWA Install Prompt Button
                 if app.storage_diag.pwa_install_available && !app.storage_diag.is_pwa_installed {
                     if ui
                         .button("Install App")
@@ -112,33 +148,6 @@ pub fn render_navbar(app: &mut TemplateApp, ui: &mut egui::Ui, constraints: &Scr
                     {
                         trigger_pwa_install();
                     }
-                }
-
-                if ui
-                    .button("Import")
-                    .on_hover_text("Import soundscape preset from JSON or BSON")
-                    .clicked()
-                {
-                    app.show_import_dialog = true;
-                    app.import_text_buffer.clear();
-                    app.import_result_message = None;
-                }
-
-                if ui
-                    .button("Reset")
-                    .on_hover_text("Reset soundscape parameters to factory default")
-                    .clicked()
-                {
-                    app.show_reset_dialog = true;
-                }
-
-                if ui
-                    .button("Export")
-                    .on_hover_text("Export soundscape preset to JSON or BSON")
-                    .clicked()
-                {
-                    let format = app.selected_export_format;
-                    app.open_export_dialog(format);
                 }
             });
         });

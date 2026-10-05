@@ -26,7 +26,7 @@ pub struct CandleSpatialVae {
     enc_fc2: Linear,
     enc_mu: Linear,
     enc_logvar: Linear,
-    // Decoder: Latent z [B, 64] + Conditioning u [B, 554] -> 16 DDSP bands + 4 FOA gains
+    // Decoder: Latent z [B, 64] + Conditioning u [B, 64] -> 16 DDSP bands + 4 FOA gains
     dec_fc1: Linear,
     dec_fc2: Linear,
     dec_bands: Linear,
@@ -424,7 +424,7 @@ impl CandleMamba2MoE {
         conditioning: &Tensor,
         h_prev: &Tensor,
     ) -> Result<(Tensor, Tensor, Tensor)> {
-        // Combined input [B, 618]
+        // Combined input [B, 128]
         let x_in = Tensor::cat(&[z_prev, conditioning], 1)?;
         let h_in = self.in_proj.forward(&x_in)?.gelu_erf()?;
 

@@ -14,10 +14,14 @@
 //!   user configurations from browser `localStorage` or native filesystem directories.
 
 pub mod components;
+pub mod settings;
 pub mod storage_manager;
+pub mod task_queue;
 
 pub use components::*;
+pub use settings::*;
 pub use storage_manager::*;
+pub use task_queue::*;
 
 #[cfg(not(target_arch = "wasm32"))]
 use audio::DesktopAudioEngine;
@@ -53,10 +57,16 @@ impl ExportFormat {
 pub struct ContributeModalState {
     pub submission_mode: usize, // 0: Local File, 1: Remote URL
     pub file_or_url: String,
-    pub author_name: String,
+    pub authors: Vec<String>,
+    pub attribution_file_path: String,
     pub selected_license: String,
+    pub custom_license_text: String,
+    pub custom_license_file_path: String,
     pub tags_input: String,
+    pub description_input: String,
+    pub description_file_path: String,
     pub confirmed_rights_warranty: bool,
+    pub auto_proceed_after_processing: bool,
     pub show_license_details: bool,
     pub acoustic_feedback: Option<String>,
     pub status_message: Option<Result<String, String>>,
@@ -67,10 +77,16 @@ impl Default for ContributeModalState {
         Self {
             submission_mode: 0,
             file_or_url: String::new(),
-            author_name: String::new(),
+            authors: vec![String::new()],
+            attribution_file_path: String::new(),
             selected_license: "RainAI-FC-Proprietary-License".to_string(),
+            custom_license_text: String::new(),
+            custom_license_file_path: String::new(),
             tags_input: "tin_roof, rain_texture".to_string(),
+            description_input: String::new(),
+            description_file_path: String::new(),
             confirmed_rights_warranty: false,
+            auto_proceed_after_processing: true,
             show_license_details: false,
             acoustic_feedback: None,
             status_message: None,
@@ -81,6 +97,8 @@ impl Default for ContributeModalState {
 pub struct TemplateApp {
     pub state: AppState,
     pub rain_view: RainView,
+    pub settings: SettingsState,
+    pub task_queue: TaskQueue,
     #[cfg(not(target_arch = "wasm32"))]
     pub desktop_audio: Option<DesktopAudioEngine>,
     #[cfg(target_arch = "wasm32")]
@@ -91,8 +109,15 @@ pub struct TemplateApp {
     pub show_reset_dialog: bool,
     pub show_help_dialog: bool,
     pub show_privacy_dialog: bool,
+    pub show_settings_dialog: bool,
+    pub show_provenance_dialog: bool,
+    pub show_presets_dialog: bool,
+    pub show_audio_export_dialog: bool,
+    pub show_task_queue_tray: bool,
     pub show_contribute_dialog: bool,
     pub contribute_state: ContributeModalState,
+    pub preset_state: PresetModalState,
+    pub audio_export_state: AudioExportModalState,
     pub show_import_dialog: bool,
     pub import_text_buffer: String,
     pub import_result_message: Option<Result<String, String>>,
@@ -114,6 +139,8 @@ impl Default for TemplateApp {
         Self {
             state: AppState::default(),
             rain_view: RainView::default(),
+            settings: SettingsState::default(),
+            task_queue: TaskQueue::default(),
             #[cfg(not(target_arch = "wasm32"))]
             desktop_audio: None,
             #[cfg(target_arch = "wasm32")]
@@ -124,8 +151,15 @@ impl Default for TemplateApp {
             show_reset_dialog: false,
             show_help_dialog: false,
             show_privacy_dialog: false,
+            show_settings_dialog: false,
+            show_provenance_dialog: false,
+            show_presets_dialog: false,
+            show_audio_export_dialog: false,
+            show_task_queue_tray: false,
             show_contribute_dialog: false,
             contribute_state: ContributeModalState::default(),
+            preset_state: PresetModalState::default(),
+            audio_export_state: AudioExportModalState::default(),
             show_import_dialog: false,
             import_text_buffer: String::new(),
             import_result_message: None,
@@ -169,17 +203,23 @@ impl TemplateApp {
             (shared::AppState::default(), false)
         };
 
-        let session = load_session_state(cc.storage);
+        let settings = load_settings_state(cc.storage);
+        let derived = settings.resolve_parameters();
+
         let mut rain_view = RainView {
-            flow_solver: session.flow_solver,
-            decode_mode: session.decode_mode,
-            webgpu_fp16: session.webgpu_fp16_enabled,
-            show_advanced_inspector: session.show_advanced_inspector,
-            show_spectrogram: session.show_spectrogram,
-            noise_masking_enabled: session.noise_masking_enabled,
-            hrtf_profile: session.hrtf_profile,
+            flow_solver: derived.flow_solver,
+            decode_mode: settings.listening_setup.to_decode_mode(),
+            webgpu_fp16: true,
+            show_advanced_inspector: settings.show_advanced_settings,
+            show_spectrogram: settings.show_spectrogram,
+            noise_masking_enabled: settings.noise_masking_enabled,
+            hrtf_profile: settings.hrtf_profile.clone(),
             ..Default::default()
         };
+        state.rain.sound_layers = settings.layers;
+        state.rain.evolve_enabled = settings.evolve;
+        state.rain.optimization_profile = settings.profile;
+        state.rain.quality_tier = derived.waveshaper_tier;
 
         if first_launch {
             rain_view.toast_notification = Some((
@@ -189,7 +229,7 @@ impl TemplateApp {
         }
 
         #[allow(unused_variables)]
-        if let Some(ir_hash) = &session.custom_ir_hash {
+        if let Some(ir_hash) = &settings.custom_ir_hash {
             #[cfg(not(target_arch = "wasm32"))]
             {
                 let cache_dir = std::path::Path::new("data/cache/ir");
@@ -253,6 +293,7 @@ impl TemplateApp {
         let mut app = Self {
             state,
             rain_view,
+            settings,
             ..Default::default()
         };
 
@@ -266,9 +307,17 @@ impl TemplateApp {
     }
 
     pub fn persist_state(&mut self) {
+        self.settings.master_volume = self.state.rain.master_volume;
+        self.settings.layers = self.state.rain.sound_layers;
+        self.settings.evolve = self.state.rain.evolve_enabled;
+        self.settings.profile = self.state.rain.optimization_profile;
+        self.settings.show_spectrogram = self.rain_view.show_spectrogram;
+        self.settings.show_advanced_settings = self.rain_view.show_advanced_inspector;
+        save_settings_state(None, &self.settings);
+
         let session = PersistentSessionState {
             flow_solver: self.rain_view.flow_solver,
-            active_preset_name: "Gentle Summer Rain".to_string(),
+            active_preset_name: self.settings.active_preset_name.clone(),
             master_volume: self.state.rain.master_volume,
             decode_mode: self.rain_view.decode_mode,
             noise_masking_enabled: self.rain_view.noise_masking_enabled,
@@ -436,9 +485,17 @@ impl TemplateApp {
 
 impl eframe::App for TemplateApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        self.settings.master_volume = self.state.rain.master_volume;
+        self.settings.layers = self.state.rain.sound_layers;
+        self.settings.evolve = self.state.rain.evolve_enabled;
+        self.settings.profile = self.state.rain.optimization_profile;
+        self.settings.show_spectrogram = self.rain_view.show_spectrogram;
+        self.settings.show_advanced_settings = self.rain_view.show_advanced_inspector;
+        save_settings_state(Some(storage), &self.settings);
+
         let session = PersistentSessionState {
             flow_solver: self.rain_view.flow_solver,
-            active_preset_name: "Gentle Summer Rain".to_string(),
+            active_preset_name: self.settings.active_preset_name.clone(),
             master_volume: self.state.rain.master_volume,
             decode_mode: self.rain_view.decode_mode,
             noise_masking_enabled: self.rain_view.noise_masking_enabled,
@@ -504,11 +561,13 @@ impl eframe::App for TemplateApp {
         // 1. Render navbar (Top Panel)
         components::navbar::render_navbar(self, ui, &constraints);
 
-        // 2. Render bottom spectrogram waterfall panel (Progressive disclosure: docked resizable bottom panel)
-        if self.rain_view.show_advanced_inspector && self.rain_view.show_spectrogram {
+        // 2. Render bottom spectrogram waterfall panel (Decoupled, resizable, default visible)
+        if self.rain_view.show_spectrogram {
             egui::Panel::bottom("spectrogram_bottom_panel")
                 .resizable(true)
-                .default_size(140.0)
+                .default_size(120.0)
+                .min_size(60.0)
+                .max_size(220.0)
                 .show(ui, |ui| {
                     render_spectrogram_panel(
                         ui,
@@ -523,16 +582,17 @@ impl eframe::App for TemplateApp {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.group(|ui| {
                     ui.heading("🌧 RainAI Neural Spatial Soundscape Studio");
-                    ui.label("Continuous, non-repetitive procedural rain synthesis conditioned on 554 physical parameters.");
+                    ui.label("Continuous, non-repetitive procedural rain synthesis conditioned on 64 physical parameters.");
                     ui.add_space(8.0);
                     self.rain_view.render(ui, &mut self.state.rain, self.audio_state.as_ref());
                 });
             });
         });
 
-        // 4. Modals and warnings
+        // 4. Modals, warnings, and background task queue dock
         components::modals::render_dialogs(self, ui);
         components::modals::render_warning_banners(self, ui.ctx());
+        components::modals::render_queue_dock(self, ui.ctx());
     }
 }
 

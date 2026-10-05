@@ -146,6 +146,10 @@ impl FlowSolverAlgorithm {
         }
     }
 
+    pub fn label(&self) -> &'static str {
+        self.name()
+    }
+
     pub fn short_name(&self) -> &'static str {
         match self {
             Self::FixedRk4 { .. } => "Fixed RK4",

@@ -1784,3 +1784,11 @@ Platform: MockPlatform | File: mock_thunder_storm_001.mp3 | Tags: heavy_rain_thu
 Platform: Videvo | File: GlassFallsLightVer FS027302.flac | Category: surface_window (Surface: glass_window) | Tier: AttributionOnly | License: CC-BY 3.0 | URL: https://www.videvo.net/sound-effect/rain-falling-on-glass/
 Platform: MockPlatform | File: mock_thunder_storm_001.mp3 | Tags: heavy_rain_thunder | Tier: PublicDomain | License: CC0 | URL: https://example.com/thunder_sample.mp3
 Platform: MockPlatform | File: mock_thunder_storm_001.mp3 | Tags: heavy_rain_thunder | Tier: PublicDomain | License: CC0 | URL: https://example.com/thunder_sample.mp3
+Platform: MockPlatform | File: mock_thunder_storm_001.mp3 | Tags: heavy_rain_thunder | Tier: PublicDomain | License: CC0 | URL: https://example.com/thunder_sample.mp3
+Platform: MockPlatform | File: mock_thunder_storm_001.mp3 | Tags: heavy_rain_thunder | Tier: PublicDomain | License: CC0 | URL: https://example.com/thunder_sample.mp3
+Platform: MockPlatform | File: mock_thunder_storm_001.mp3 | Tags: heavy_rain_thunder | Tier: PublicDomain | License: CC0 | URL: https://example.com/thunder_sample.mp3
+Platform: MockPlatform | File: mock_thunder_storm_001.mp3 | Tags: heavy_rain_thunder | Tier: PublicDomain | License: CC0 | URL: https://example.com/thunder_sample.mp3
+Platform: MockPlatform | File: mock_thunder_storm_001.mp3 | Tags: heavy_rain_thunder | Tier: PublicDomain | License: CC0 | URL: https://example.com/thunder_sample.mp3
+Platform: MockPlatform | File: mock_thunder_storm_001.mp3 | Tags: heavy_rain_thunder | Tier: PublicDomain | License: CC0 | URL: https://example.com/thunder_sample.mp3
+Platform: MockPlatform | File: mock_thunder_storm_001.mp3 | Tags: heavy_rain_thunder | Tier: PublicDomain | License: CC0 | URL: https://example.com/thunder_sample.mp3
+Platform: MockPlatform | File: mock_thunder_storm_001.mp3 | Tags: heavy_rain_thunder | Tier: PublicDomain | License: CC0 | URL: https://example.com/thunder_sample.mp3

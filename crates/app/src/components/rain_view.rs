@@ -14,6 +14,7 @@ pub enum RainTab {
     Weather,
     Surfaces,
     SpatialSounds,
+    Conditioning,
     Presets,
     Export,
     Telemetry,
@@ -109,7 +110,7 @@ impl Default for RainView {
     fn default() -> Self {
         Self {
             current_tab: RainTab::Weather,
-            decode_mode: DecodeMode::BinauralHeadphones,
+            decode_mode: DecodeMode::StereoSpeakers, // Desktop speakers default
             listener_yaw: 0.0,
             quality_download_notice: None,
             export_duration: 30.0,
@@ -239,7 +240,7 @@ impl RainView {
                 let inspector_text = if self.show_advanced_inspector {
                     "🔽 Hide Advanced Studio & DSP Inspector"
                 } else {
-                    "🎛 Open Advanced Studio & DSP Inspector (554 Parameters, Radar & Telemetry)"
+                    "🎛 Open Advanced Studio & DSP Inspector (64 Parameters, Radar & Telemetry)"
                 };
 
                 let btn =
@@ -278,6 +279,7 @@ impl RainView {
                     RainTab::Weather => self.render_weather_tab(ui, rain),
                     RainTab::Surfaces => self.render_surfaces_tab(ui, rain),
                     RainTab::SpatialSounds => self.render_spatial_sounds_tab(ui, rain),
+                    RainTab::Conditioning => self.render_conditioning_tab(ui, rain),
                     RainTab::Presets => self.render_presets_tab(ui, rain),
                     RainTab::Export => self.render_export_tab(ui, rain, audio_state),
                     RainTab::Telemetry => self.render_telemetry_tab(ui, rain, audio_state),
@@ -368,42 +370,8 @@ impl RainView {
                         if let Ok(telemetry_array) =
                             telemetry_val.dyn_into::<js_sys::Float32Array>()
                         {
-                            // Condition Vector Structure (554 elements)
-                            let mut cond = [0.0f32; 554];
-
-                            // Map Weather Dynamics
-                            cond[0] = rain.weather.intensity;
-                            cond[1] = rain.weather.runoff;
-                            cond[2] = rain.weather.distance;
-                            cond[3] = rain.weather.enclosure;
-                            cond[4] = rain.weather.pitch_angle;
-
-                            // Map Wind Physics
-                            cond[5] = rain.wind.speed;
-                            cond[6] = rain.wind.gustiness;
-                            cond[7] = rain.wind.turbulence;
-                            cond[8] = rain.wind.howl;
-
-                            // Map Material Surface Blend
-                            let surf = rain.surfaces.normalized();
-                            cond[9..18].copy_from_slice(&surf);
-
-                            // Map Side Sounds & Spatial Radar
-                            cond[18] = rain.side_sounds.fireplace_intensity;
-                            cond[19] = rain.side_sounds.fireplace_azimuth;
-                            cond[20] = rain.side_sounds.thunder_proximity;
-                            cond[21] = rain.side_sounds.thunder_azimuth;
-                            cond[22] = rain.side_sounds.insect_density;
-                            cond[23] = rain.side_sounds.insect_azimuth;
-                            cond[24] = rain.side_sounds.bird_activity;
-                            cond[25] = rain.side_sounds.traffic_distance;
-                            cond[26] = self.listener_yaw;
-
-                            // Playback State
-                            cond[27] = if rain.is_playing { 1.0 } else { 0.0 };
-                            cond[28] = rain.master_volume;
-                            cond[29] = rain.thinking_steps as f32;
-                            cond[30] = if rain.use_consistency_jump { 1.0 } else { 0.0 };
+                            // Condition Vector Structure (64 elements)
+                            let cond = rain.to_conditioning_array();
 
                             // Bulk copy into the SharedArrayBuffer memory (Zero-lock transfer to AudioWorklet)
                             telemetry_array.copy_from(&cond);
@@ -566,8 +534,8 @@ impl RainView {
             egui::ComboBox::from_id_salt("decode_mode_selector")
                 .selected_text(self.decode_mode.label())
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.decode_mode, DecodeMode::BinauralHeadphones, DecodeMode::BinauralHeadphones.label());
                     ui.selectable_value(&mut self.decode_mode, DecodeMode::StereoSpeakers, DecodeMode::StereoSpeakers.label());
+                    ui.selectable_value(&mut self.decode_mode, DecodeMode::BinauralHeadphones, DecodeMode::BinauralHeadphones.label());
                     ui.selectable_value(&mut self.decode_mode, DecodeMode::Surround71, DecodeMode::Surround71.label());
                     ui.selectable_value(&mut self.decode_mode, DecodeMode::RawFoaPassthrough, DecodeMode::RawFoaPassthrough.label());
                 });
@@ -584,16 +552,17 @@ impl RainView {
 
             ui.add_space(8.0);
 
-            // Synthesis Engine Dropdown
-            ui.label("Engine:");
-            egui::ComboBox::from_id_salt("synthesis_mode_selector")
-                .selected_text(rain.synthesis_mode.short_label())
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut rain.synthesis_mode, SynthesisMode::NeuralAi, SynthesisMode::NeuralAi.label());
-                    ui.selectable_value(&mut rain.synthesis_mode, SynthesisMode::PhysicalSynth, SynthesisMode::PhysicalSynth.label());
-                    ui.selectable_value(&mut rain.synthesis_mode, SynthesisMode::ProceduralFilterbank, SynthesisMode::ProceduralFilterbank.label());
-                    ui.selectable_value(&mut rain.synthesis_mode, SynthesisMode::HybridAdaptive, SynthesisMode::HybridAdaptive.label());
-                });
+            // Sound Layers Checkboxes (replaces opaque engine dropdown)
+            ui.label("Sound Layers:");
+            if ui.checkbox(&mut rain.sound_layers.raindrops, "💧 Raindrops").changed() {
+                rain.sound_layers.ensure_valid();
+            }
+            if ui.checkbox(&mut rain.sound_layers.rain_wash, "🌊 Rain wash").changed() {
+                rain.sound_layers.ensure_valid();
+            }
+            if ui.checkbox(&mut rain.sound_layers.ai_texture, "🧠 AI texture (Preview)").changed() {
+                rain.sound_layers.ensure_valid();
+            }
 
             ui.add_space(8.0);
 
@@ -607,34 +576,21 @@ impl RainView {
 
             ui.add_space(8.0);
 
-            // Autonomous Meta-Governor toggle
-            let gov_label = if rain.auto_quantize {
-                "⚡ Governor: Auto"
-            } else {
-                "⚡ Governor: Manual"
-            };
-            ui.toggle_value(&mut rain.auto_quantize, gov_label);
-
-            let (badge_col, badge_text) = if !rain.auto_quantize {
-                (Color32::from_rgb(160, 160, 170), "Manual Override")
-            } else if rain.telemetry.governor_status.contains("Efficiency") || rain.telemetry.governor_status.contains("Critical") {
-                (Color32::from_rgb(255, 170, 40), rain.telemetry.governor_status.as_str())
-            } else if rain.telemetry.governor_status.contains("Expansion") || rain.telemetry.governor_status.contains("Quality") {
-                (Color32::from_rgb(80, 220, 180), rain.telemetry.governor_status.as_str())
-            } else {
-                (Color32::from_rgb(100, 180, 240), rain.telemetry.governor_status.as_str())
-            };
-            ui.colored_label(badge_col, format!("[{badge_text}]"));
+            // Buffer Health & Precision Telemetry Badges
+            ui.colored_label(
+                Color32::from_rgb(100, 180, 240),
+                format!("[Buffer: {:.0}ms]", rain.telemetry.buffer_health_ms),
+            );
             ui.colored_label(Color32::from_rgb(180, 140, 255), format!("[{}]", rain.telemetry.active_path_label));
             ui.colored_label(Color32::from_rgb(255, 215, 100), format!("[{}]", rain.telemetry.active_quantization_format));
 
             if rain.telemetry.is_prebuffered {
-                ui.colored_label(Color32::from_rgb(80, 240, 160), "⚡ Buffer Primed (Happy)");
+                ui.colored_label(Color32::from_rgb(80, 240, 160), "⚡ Buffer Primed");
             } else if !rain.is_playing {
                 ui.colored_label(Color32::from_rgb(255, 200, 90), format!("⏳ Pre-Buffering ({:.0}ms)", rain.telemetry.buffer_health_ms));
             }
 
-            // Governor Profile Dropdown
+            // Profile Dropdown
             ui.label("Profile:");
             egui::ComboBox::from_id_salt("gov_opt_profile_selector")
                 .selected_text(rain.optimization_profile.short_label())
@@ -708,6 +664,11 @@ impl RainView {
                 &mut self.current_tab,
                 RainTab::SpatialSounds,
                 "🧭 Spatial Radar",
+            );
+            ui.selectable_value(
+                &mut self.current_tab,
+                RainTab::Conditioning,
+                "✨ AI & Conditioning (Preview)",
             );
             ui.selectable_value(
                 &mut self.current_tab,
@@ -1316,7 +1277,7 @@ impl RainView {
                                     self.flow_solver,
                                     FlowSolverAlgorithm::LearnedCurvature { .. }
                                 ),
-                                "Learned Curvature (Neural ODE)",
+                                "Learned Curvature (Neural ODE) (Preview)",
                             )
                             .clicked()
                         {
@@ -1328,7 +1289,7 @@ impl RainView {
                         if ui
                             .selectable_label(
                                 matches!(self.flow_solver, FlowSolverAlgorithm::TrainedPec { .. }),
-                                "Trained PEC (Adams-Bashforth/Moulton 1-NFE)",
+                                "Trained PEC (Adams-Bashforth/Moulton 1-NFE) (Preview)",
                             )
                             .clicked()
                         {
@@ -1340,7 +1301,7 @@ impl RainView {
                                     self.flow_solver,
                                     FlowSolverAlgorithm::TrainedImplicitRk { .. }
                                 ),
-                                "Trained Implicit RK (Surrogate 1-NFE)",
+                                "Trained Implicit RK (Surrogate 1-NFE) (Preview)",
                             )
                             .clicked()
                         {
@@ -1547,6 +1508,242 @@ impl RainView {
             });
     }
 
+    fn render_conditioning_tab(&mut self, ui: &mut egui::Ui, rain: &mut RainState) {
+        ui.horizontal(|ui| {
+            ui.heading("Continuous 64-Dimensional Conditioning Vector");
+            ui.colored_label(Color32::from_rgb(255, 190, 70), "[AI FEATURES PREVIEW]");
+        });
+        ui.label(
+            "Conditioning drives physical and neural acoustic synthesis. \
+             Provide a natural language description, analyze an empirical recording, \
+             or inspect the live 64-dimensional continuous vector. Sliders and soundscape respond instantly.",
+        );
+        ui.colored_label(
+            Color32::from_rgb(100, 200, 255),
+            "✨ Preview Mode: Neural acoustic inversion, reference matching, and latent parameter steering are active.",
+        );
+        ui.add_space(4.0);
+
+        ui.horizontal(|ui| {
+            ui.label("Synthesis Engine Mode:");
+            ui.selectable_value(
+                &mut rain.synthesis_mode,
+                SynthesisMode::PhysicalSynth,
+                "🌧 Physical Fluid Dynamics",
+            );
+            ui.selectable_value(
+                &mut rain.synthesis_mode,
+                SynthesisMode::HybridAdaptive,
+                "⚡ Hybrid Adaptive",
+            );
+            ui.selectable_value(
+                &mut rain.synthesis_mode,
+                SynthesisMode::NeuralAi,
+                "🧠 Neural AI (Preview)",
+            );
+        });
+        ui.add_space(8.0);
+
+        // Section 1: Acoustic Description Prompt (Bidirectional Inversion & Semantic Projection)
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("📝 Acoustic Description Prompt").strong());
+                ui.colored_label(Color32::from_rgb(255, 190, 70), "[AI Preview]");
+            });
+            ui.label("Typing immediately modulates physical DSP parameters and projects into the 18-dim harmonic basis:");
+            ui.add_space(4.0);
+
+            if ui
+                .add(
+                    egui::TextEdit::multiline(&mut rain.conditioning_prompt)
+                        .hint_text("e.g. Heavy summer thunderstorm striking corrugated tin roof with gusts of wind and distant thunder...")
+                        .desired_width(ui.available_width() - 16.0)
+                        .desired_rows(3),
+                )
+                .changed()
+            {
+                let prompt = rain.conditioning_prompt.clone();
+                shared::conditioning::invert_text_to_rain_state(&prompt, rain);
+            }
+
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Quick Presets:");
+                if ui.small_button("Summer Meadow Drizzle").clicked() {
+                    let p = "Gentle soothing meadow rain with soft droplets on broad leaves, pine needles, and distant birds";
+                    rain.conditioning_prompt = p.to_string();
+                    shared::conditioning::invert_text_to_rain_state(p, rain);
+                }
+                if ui.small_button("Tin Roof Thunderstorm").clicked() {
+                    let p = "Energetic downpour striking corrugated tin sheets with close roaring thunder and whipping wind";
+                    rain.conditioning_prompt = p.to_string();
+                    shared::conditioning::invert_text_to_rain_state(p, rain);
+                }
+                if ui.small_button("Forest Canopy Breeze").clicked() {
+                    let p = "Deep forest canopy rainfall with water dripping through broad foliage and mossy ground";
+                    rain.conditioning_prompt = p.to_string();
+                    shared::conditioning::invert_text_to_rain_state(p, rain);
+                }
+                if ui.small_button("Canvas Tent Downpour").clicked() {
+                    let p = "Heavy raindrops drumming against taut canvas tent fabric in open woodland with gusty air";
+                    rain.conditioning_prompt = p.to_string();
+                    shared::conditioning::invert_text_to_rain_state(p, rain);
+                }
+            });
+
+            if !rain.conditioning_prompt.trim().is_empty() {
+                ui.colored_label(
+                    Color32::from_rgb(100, 200, 255),
+                    "✓ Active Text Prompt: Real-time physical DSP inversion & 18-dim semantic manifold active.",
+                );
+            }
+        });
+
+        ui.add_space(6.0);
+
+        // Section 2: Reference Audio File Conditioning
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("🎵 Reference Audio File Conditioning").strong());
+                ui.colored_label(Color32::from_rgb(255, 190, 70), "[AI Preview]");
+            });
+            ui.label("Extracts spectral centroid, zero-crossing rate, crest factor, and energy profile from an empirical recording:");
+            ui.add_space(4.0);
+
+            let mut audio_path = rain.conditioning_audio_file.clone().unwrap_or_default();
+            ui.horizontal(|ui| {
+                ui.label("Audio File Path:");
+                if ui.add(egui::TextEdit::singleline(&mut audio_path).desired_width(280.0)).changed() {
+                    rain.conditioning_audio_file = if audio_path.trim().is_empty() {
+                        None
+                    } else {
+                        Some(audio_path.clone())
+                    };
+                }
+
+                #[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))]
+                {
+                    if ui.button("📂 Browse Audio...").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Audio Files", &["wav", "flac", "mp3", "ogg"])
+                            .pick_file()
+                        {
+                            let path_str = path.to_string_lossy().to_string();
+                            audio_path = path_str.clone();
+                            rain.conditioning_audio_file = Some(path_str);
+                        }
+                    }
+                }
+
+                if ui.button("Analyze & Apply").clicked() {
+                    if let Some(path) = &rain.conditioning_audio_file {
+                        if let Ok(mut reader) = hound::WavReader::open(path) {
+                            let spec = reader.spec();
+                            let samples: Vec<f32> = match spec.sample_format {
+                                hound::SampleFormat::Float => {
+                                    reader.samples::<f32>().filter_map(Result::ok).collect()
+                                }
+                                hound::SampleFormat::Int => {
+                                    reader.samples::<i32>().filter_map(Result::ok).map(|s| s as f32 / i32::MAX as f32).collect()
+                                }
+                            };
+                            if !samples.is_empty() {
+                                shared::conditioning::invert_audio_to_rain_state(&samples, spec.sample_rate, rain);
+                                let emb = shared::conditioning::compute_audio_summary_embedding(&samples, spec.sample_rate);
+                                rain.custom_latent_embedding = Some(emb);
+                            }
+                        }
+                    }
+                }
+
+                if rain.custom_latent_embedding.is_some() || rain.custom_clap_embedding.is_some() {
+                    if ui.button("Reset to Text/Auto").clicked() {
+                        rain.custom_latent_embedding = None;
+                        rain.custom_clap_embedding = None;
+                        rain.conditioning_audio_file = None;
+                    }
+                }
+            });
+
+            if rain.custom_latent_embedding.is_some() {
+                ui.colored_label(
+                    Color32::from_rgb(120, 220, 160),
+                    "✓ Empirical Audio Conditioning Active: 24-dim acoustic metrics and semantic signature locked.",
+                );
+            }
+        });
+
+        ui.add_space(6.0);
+
+        // Section 3: Live 64-Dimensional Vector Structure & Energy Distribution
+        ui.group(|ui| {
+            ui.label(egui::RichText::new("📊 Live 64-Dimensional Vector Structure").strong());
+            ui.label(
+                "Inspect active slice ranges encoding macro intent into micro audio generation:",
+            );
+            ui.add_space(4.0);
+
+            let cond_vec = rain.to_conditioning_array();
+            let atm_energy: f32 = cond_vec[0..10].iter().map(|v| v * v).sum();
+            let mat_energy: f32 = cond_vec[10..17].iter().map(|v| v * v).sum();
+            let wind_energy: f32 = cond_vec[17..21].iter().map(|v| v * v).sum();
+            let side_energy: f32 = cond_vec[21..39].iter().map(|v| v * v).sum();
+            let metric_energy: f32 = cond_vec[40..46].iter().map(|v| v * v).sum();
+            let sem_energy: f32 = cond_vec[46..64].iter().map(|v| v * v).sum();
+
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Atmosphere [0..10]:").size(11.0));
+                ui.label(
+                    egui::RichText::new(format!("{:.2}", atm_energy))
+                        .monospace()
+                        .size(11.0),
+                );
+                ui.separator();
+                ui.label(egui::RichText::new("Material Continuum [10..17]:").size(11.0));
+                ui.label(
+                    egui::RichText::new(format!("{:.2}", mat_energy))
+                        .monospace()
+                        .size(11.0),
+                );
+                ui.separator();
+                ui.label(egui::RichText::new("Wind [17..21]:").size(11.0));
+                ui.label(
+                    egui::RichText::new(format!("{:.2}", wind_energy))
+                        .monospace()
+                        .size(11.0),
+                );
+            });
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Side Sounds [21..39]:").size(11.0));
+                ui.label(
+                    egui::RichText::new(format!("{:.2}", side_energy))
+                        .monospace()
+                        .size(11.0),
+                );
+                ui.separator();
+                ui.label(egui::RichText::new("Drift [39]:").size(11.0));
+                ui.label(
+                    egui::RichText::new(format!("{:.3}", cond_vec[39]))
+                        .monospace()
+                        .size(11.0),
+                );
+                ui.separator();
+                ui.label(egui::RichText::new("Acoustic [40..46]:").size(11.0));
+                ui.label(
+                    egui::RichText::new(format!("{:.2}", metric_energy))
+                        .monospace()
+                        .size(11.0),
+                );
+                ui.separator();
+                ui.label(egui::RichText::new("Semantic [46..64]:").size(11.0));
+                ui.label(
+                    egui::RichText::new(format!("{:.2} ‖x‖²", sem_energy))
+                        .monospace()
+                        .size(11.0),
+                );
+            });
+        });
+    }
+
     fn render_export_tab(
         &mut self,
         ui: &mut egui::Ui,
@@ -1563,23 +1760,23 @@ impl RainView {
                 ui.selectable_value(
                     &mut rain.meta_mediation_mode,
                     MetaControllerInterceptionMode::OfflineMaxQuality,
-                    "🌟 Meta-Controller Mediated (Max Quality: K=5 Thinking, 100% Neural)",
+                    "🌟 Studio Master Offline Render (Max Quality, Full Headroom)",
                 );
                 ui.selectable_value(
                     &mut rain.meta_mediation_mode,
                     MetaControllerInterceptionMode::DirectBypass,
-                    "🎯 Direct Parameter Control (Bypass Governor)",
+                    "🎯 Direct Parameter Control (Manual Raw Bypass)",
                 );
             });
             if rain.meta_mediation_mode == MetaControllerInterceptionMode::OfflineMaxQuality {
                 ui.colored_label(
                     Color32::from_rgb(120, 220, 160),
-                    "✓ Max Quality Mode: Latency budget = ∞, 8 MoE experts, full FOA ambisonics, 5-step deliberation.",
+                    "✓ Max Quality Mode: Latency budget = ∞, full FOA ambisonics, 32-bit floating point precision.",
                 );
             } else {
                 ui.colored_label(
                     Color32::from_rgb(220, 200, 100),
-                    "⚙ Direct Mode: Renders exact current UI sliders and tier without dynamic adaptation.",
+                    "⚙ Direct Mode: Renders exact current UI sliders without dynamic adaptation.",
                 );
             }
             ui.add_space(8.0);
@@ -1587,7 +1784,7 @@ impl RainView {
             ui.label(egui::RichText::new("🧠 Neural Thinking Steps Override").strong());
             ui.horizontal_wrapped(|ui| {
                 let is_auto = rain.user_thinking_steps.is_none();
-                if ui.selectable_label(is_auto, "Auto (Governor)").clicked() {
+                if ui.selectable_label(is_auto, "Auto (Standard)").clicked() {
                     rain.user_thinking_steps = None;
                 }
                 for k in 1..=5 {
@@ -1884,7 +2081,7 @@ impl RainView {
         // Neural Deliberation & Distilled Consistency Jump Card
         ui.group(|ui| {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("🧠 Neural Deliberation & Consistency Jump Engine").strong());
+                ui.label(egui::RichText::new("🧠 Neural Deliberation & Consistency Jump Engine (Preview)").strong());
                 if rain.use_consistency_jump {
                     ui.colored_label(Color32::from_rgb(100, 240, 180), "[⚡ Turbo 1-Step Consistency Jump ACTIVE]");
                 } else {
@@ -2219,7 +2416,7 @@ impl RainView {
                 ));
 
                 ui.add_space(6.0);
-                ui.label("Conditioning Vector Dimension: 554 floats (Physical & Ambisonic)");
+                ui.label("Conditioning Vector Dimension: 64 floats (Physical & Ambisonic)");
                 ui.label(format!(
                     "Preferred Target Tier: {}",
                     rain.quality_tier.label()

@@ -568,3 +568,357 @@ fn test_import_local_directory_content_addressed_deduplication() {
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn test_sidecar_metadata_extraction() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "sidecar_test_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&temp_dir).unwrap();
+
+    let audio_path = temp_dir.join("forest_rain.wav");
+    create_synthetic_rain_wav(&audio_path, 1.0, 48000, 0.4, false);
+
+    // 1. JSON sidecar
+    let json_path = temp_dir.join("forest_rain.json");
+    let json_content = serde_json::json!({
+        "license": "CC0 1.0 Universal",
+        "author": "FieldRecordist",
+        "surface": "foliage",
+        "tags": ["pine", "canopy"],
+        "description": "Rain drops trickling through hemlock branches"
+    });
+    fs::write(&json_path, json_content.to_string()).unwrap();
+
+    let meta = utilities::contribute::extract_sidecar_metadata(&audio_path)
+        .expect("Extraction failed")
+        .expect("No metadata returned");
+
+    assert_eq!(meta.license.as_deref(), Some("CC0 1.0 Universal"));
+    assert_eq!(meta.author.as_deref(), Some("FieldRecordist"));
+    assert_eq!(meta.surface_tag.as_deref(), Some("foliage"));
+    assert!(meta.tags.contains(&"foliage".to_string()));
+    assert!(meta.tags.contains(&"pine".to_string()));
+    assert_eq!(meta.descriptions.len(), 1);
+
+    let _ = fs::remove_file(json_path);
+
+    // 2. TXT sidecar
+    let txt_path = temp_dir.join("forest_rain.txt");
+    let txt_content = "license: CC-BY-4.0\nauthor: Alice\nsurface: tin_roof\ntags: metal, shed\nnotes: Heavy roof downpour";
+    fs::write(&txt_path, txt_content).unwrap();
+
+    let meta_txt = utilities::contribute::extract_sidecar_metadata(&audio_path)
+        .expect("Extraction failed")
+        .expect("No metadata returned");
+
+    assert_eq!(meta_txt.license.as_deref(), Some("CC-BY-4.0"));
+    assert_eq!(meta_txt.author.as_deref(), Some("Alice"));
+    assert_eq!(meta_txt.surface_tag.as_deref(), Some("tin_roof"));
+    assert!(meta_txt.tags.contains(&"tin_roof".to_string()));
+    assert!(meta_txt.tags.contains(&"metal".to_string()));
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_process_input_drop_folder_quarantine_routing() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "drop_quar_test_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let input_dir = temp_dir.join("input");
+    let quar_dir = temp_dir.join("quarantine");
+    let target_dir = temp_dir.join("target");
+    let ledger_path = temp_dir.join("ledger.json");
+    let prov_path = temp_dir.join("provenance.json");
+
+    fs::create_dir_all(&input_dir).unwrap();
+
+    // 1. Audio with NO license -> Quarantine
+    let no_lic_path = input_dir.join("unlicensed_audio.wav");
+    create_synthetic_rain_wav(&no_lic_path, 1.0, 48000, 0.4, false);
+
+    // 2. Audio with Restricted / Non-commercial license -> Quarantine
+    let nc_audio_path = input_dir.join("nc_restricted.wav");
+    create_synthetic_rain_wav(&nc_audio_path, 1.0, 48000, 0.4, false);
+    let nc_sidecar = input_dir.join("nc_restricted.json");
+    fs::write(
+        &nc_sidecar,
+        serde_json::json!({
+            "license": "CC-BY-NC-4.0", // NonCommercial not approved
+            "author": "Someone"
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    // 3. Corrupt/Silent audio with valid license -> Quarantine
+    let silent_path = input_dir.join("silent_rain.wav");
+    create_silent_wav(&silent_path, 1.0, 48000);
+    let silent_sidecar = input_dir.join("silent_rain.json");
+    fs::write(
+        &silent_sidecar,
+        serde_json::json!({
+            "license": "CC0 1.0 Universal",
+            "author": "Someone"
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    // Run input drop processing
+    let result = utilities::contribute::process_input_drop_folder(
+        &input_dir,
+        &quar_dir,
+        &target_dir,
+        &ledger_path,
+        &prov_path,
+    )
+    .expect("Drop folder processing failed");
+
+    assert_eq!(result.total_scanned, 3);
+    assert_eq!(result.quarantined_count, 3);
+    assert_eq!(result.standardized_count, 0);
+
+    // Input dir should now be empty of those files
+    assert!(!no_lic_path.exists());
+    assert!(!nc_audio_path.exists());
+    assert!(!silent_path.exists());
+
+    // Quarantine dir should hold quarantined files and json records
+    assert!(quar_dir.join("unlicensed_audio.wav").exists());
+    assert!(quar_dir.join("unlicensed_audio_quarantine.json").exists());
+    assert!(quar_dir.join("nc_restricted.wav").exists());
+    assert!(quar_dir.join("nc_restricted_quarantine.json").exists());
+    assert!(quar_dir.join("silent_rain.wav").exists());
+    assert!(quar_dir.join("silent_rain_quarantine.json").exists());
+
+    // Verify quarantine JSON contents
+    let quar_meta: utilities::contribute::QuarantineRecord = serde_json::from_str(
+        &fs::read_to_string(quar_dir.join("unlicensed_audio_quarantine.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(quar_meta.status, "QUARANTINE");
+    assert!(
+        quar_meta
+            .quarantine_reason
+            .contains("UNAPPROVED_OR_MISSING_LICENSE")
+    );
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_process_input_drop_folder_standardization_and_promotion() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "drop_std_test_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let input_dir = temp_dir.join("input");
+    let quar_dir = temp_dir.join("quarantine");
+    let target_dir = temp_dir.join("target");
+    let ledger_path = temp_dir.join("ledger.json");
+    let prov_path = temp_dir.join("provenance.json");
+
+    fs::create_dir_all(&input_dir).unwrap();
+
+    // Create a 44.1kHz mono rain file with CC-BY license in JSON sidecar
+    let test_audio = input_dir.join("tin_shed_downpour.wav");
+    create_synthetic_rain_wav(&test_audio, 2.0, 48000, 0.45, false);
+
+    let sidecar = input_dir.join("tin_shed_downpour.json");
+    fs::write(
+        &sidecar,
+        serde_json::json!({
+            "license": "CC-BY-4.0",
+            "author": "AcousticRecordist",
+            "surface": "tin_roof",
+            "tags": ["tin_roof", "corrugated_metal"],
+            "descriptions": ["Loud rain droplets hitting tin shed"]
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let result = utilities::contribute::process_input_drop_folder(
+        &input_dir,
+        &quar_dir,
+        &target_dir,
+        &ledger_path,
+        &prov_path,
+    )
+    .expect("Processing drop folder failed");
+
+    assert_eq!(result.total_scanned, 1);
+    assert_eq!(result.quarantined_count, 0);
+    assert_eq!(result.standardized_count, 1);
+
+    // Original file and sidecar removed from input
+    assert!(!test_audio.exists());
+    assert!(!sidecar.exists());
+
+    // Standardized file exists in target directory
+    assert_eq!(result.standardized_files.len(), 1);
+    let std_file = &result.standardized_files[0];
+    assert!(std_file.exists());
+
+    // Verify target WAV specification: 48kHz stereo Float
+    let reader = hound::WavReader::open(std_file).expect("Failed opening standardized WAV");
+    let spec = reader.spec();
+    assert_eq!(spec.sample_rate, 48000);
+    assert_eq!(spec.channels, 2);
+
+    // Verify Persistent Data Utility Ledger was created and populated
+    let ledger = utilities::data_worker::DataUtilityLedger::load_or_create(&ledger_path);
+    assert_eq!(ledger.records.len(), 1);
+    let record = ledger.records.values().next().unwrap();
+    assert_eq!(record.surface_tag, "tin_roof");
+    assert!(record.acoustic_quality_score > 0.0);
+    assert!(record.current_utility_score > 0.0);
+    assert!(record.is_cached_locally);
+
+    // Verify Provenance Manifest was created and populated
+    let prov: utilities::ingest::ProvenanceManifest =
+        serde_json::from_str(&fs::read_to_string(&prov_path).unwrap()).unwrap();
+    assert_eq!(prov.records.len(), 1);
+    assert_eq!(prov.records[0].license.as_deref(), Some("CC-BY-4.0"));
+    assert!(prov.records[0].tags.contains(&"tin_roof".to_string()));
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_smooth_rolling_quota_eviction() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "smooth_quota_test_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&temp_dir).unwrap();
+
+    let manifest_path = temp_dir.join("manifest.json");
+    let ledger_path = utilities::data_worker::ledger_path_for_manifest(&manifest_path);
+
+    let mut manifest_entries: std::collections::HashMap<
+        String,
+        utilities::features::AudioMetadata,
+    > = std::collections::HashMap::new();
+    let mut ledger = utilities::data_worker::DataUtilityLedger::default();
+
+    // Create 10 synthetic files
+    for i in 0..10 {
+        let chunk_id = format!("chunk_{:03}", i);
+        let wav_path = temp_dir.join(format!("{}.wav", chunk_id));
+        create_synthetic_rain_wav(&wav_path, 1.0, 48000, 0.4, false);
+
+        let q_score = (i as f32 + 1.0) / 10.0; // Increasing quality scores
+        let u_score = q_score;
+
+        manifest_entries.insert(
+            chunk_id.clone(),
+            utilities::features::AudioMetadata {
+                path: wav_path.display().to_string(),
+                filename: format!("{}.wav", chunk_id),
+                sample_rate: 48000,
+                channels: 2,
+                duration_secs: 1.0,
+                rms_energy: 0.1,
+                rain_rate: 20.0,
+                droplet_density: 0.5,
+                drops_per_second: 200.0,
+                high_freq_ratio: 0.2,
+                spectral_centroid: 3000.0,
+                spectral_rolloff: 6000.0,
+                spectral_flatness: 0.3,
+                surface_tag: "tin_roof".to_string(),
+            },
+        );
+
+        ledger.upsert_record(utilities::data_worker::DataChunkUtilityRecord {
+            chunk_id: chunk_id.clone(),
+            sha256: format!("sha_{}", i),
+            source_id: format!("{}.wav", chunk_id),
+            surface_tag: "tin_roof".to_string(),
+            material_properties: [0.5; 7],
+            acoustic_quality_score: q_score,
+            loss_ema: 1.0,
+            gradient_norm_ema: 1.0,
+            times_trained: 0,
+            last_trained_timestamp: 0,
+            information_novelty: 1.0,
+            current_utility_score: u_score,
+            retraining_priority: u_score,
+            is_cached_locally: true,
+        });
+    }
+
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&manifest_entries).unwrap(),
+    )
+    .unwrap();
+    ledger.save_to_file(&ledger_path).unwrap();
+
+    let total_size = utilities::data_worker::DatabaseHealthWorker::calculate_dir_size(&temp_dir);
+    // Set max_bytes such that soft ceiling (90%) is exceeded, and evict with batch limit 3
+    let artificial_max_bytes = (total_size as f64 * 0.8) as u64;
+
+    let quotas = vec![utilities::autopilot::SurfaceQuota {
+        surface: "tin_roof".to_string(),
+        count: 10,
+        deficit_count: 0,
+        proportion: 1.0,
+        target_proportion: 0.11,
+    }];
+
+    let evicted = utilities::data_worker::DatabaseHealthWorker::enforce_rolling_quota_smooth(
+        &temp_dir,
+        &manifest_path,
+        &quotas,
+        artificial_max_bytes,
+        3, // Small chunk batch limit
+    );
+
+    assert_eq!(
+        evicted, 3,
+        "Smooth eviction respected chunk batch limit of 3"
+    );
+
+    // Re-load ledger to verify score history was preserved while marked evicted
+    let reloaded_ledger = utilities::data_worker::DataUtilityLedger::load_or_create(&ledger_path);
+    assert_eq!(
+        reloaded_ledger.records.len(),
+        10,
+        "All 10 score records preserved in ledger"
+    );
+    let evicted_records: Vec<_> = reloaded_ledger
+        .records
+        .values()
+        .filter(|r| !r.is_cached_locally)
+        .collect();
+    assert_eq!(
+        evicted_records.len(),
+        3,
+        "Exactly 3 records marked evicted in ledger"
+    );
+
+    // The 3 lowest quality chunks (chunk_000, chunk_001, chunk_002) should have been evicted
+    assert!(evicted_records.iter().any(|r| r.chunk_id == "chunk_000"));
+    assert!(evicted_records.iter().any(|r| r.chunk_id == "chunk_001"));
+    assert!(evicted_records.iter().any(|r| r.chunk_id == "chunk_002"));
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}

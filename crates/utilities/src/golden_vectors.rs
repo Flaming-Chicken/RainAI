@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::f32::consts::PI;
 
-pub const CONDITION_DIM: usize = 554;
+pub const CONDITION_DIM: usize = 64;
 pub const LATENT_DIM: usize = 64;
 pub const NUM_EXPERTS: usize = 8;
 pub const EXPERTS_TOP_K: usize = 2;

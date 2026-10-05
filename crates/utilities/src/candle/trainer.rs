@@ -190,8 +190,8 @@ impl CandleTrainingSteeringHandle {
 }
 
 pub const LATENT_DIM: usize = 64;
-pub const CONDITION_DIM: usize = 554;
-pub const COMBINED_DIM: usize = LATENT_DIM + CONDITION_DIM; // 618
+pub const CONDITION_DIM: usize = 64;
+pub const COMBINED_DIM: usize = LATENT_DIM + CONDITION_DIM; // 128
 pub const NUM_EXPERTS: usize = 8;
 pub const FILTER_BANDS: usize = 16;
 pub const FOA_CHANNELS: usize = 4;
@@ -722,7 +722,16 @@ pub fn run_candle_training_pipeline_with_steering(
     }
     std::fs::create_dir_all(&config.output_dir)?;
 
-    let session_path = config.output_dir.join("training_session.json");
+    let session_candidates = [
+        config.output_dir.join("training_session.json"),
+        PathBuf::from("crates/inference/data/candle/training_session.json"),
+        PathBuf::from("checkpoints/training_session.json"),
+    ];
+    let session_path = session_candidates
+        .iter()
+        .find(|p| p.exists())
+        .cloned()
+        .unwrap_or_else(|| config.output_dir.join("training_session.json"));
     let mut session =
         AtomicCheckpointManager::load_session_state(&session_path).unwrap_or_default();
     if session.completed_vae || session.completed_mamba {
@@ -859,10 +868,17 @@ pub fn run_candle_training_pipeline_with_steering(
             let affine_align = CandleAffineAlignment::new(LATENT_DIM, vae_vs.pp("affine"))?;
             let quantizer = CandleLearnedQuantizer::new(LATENT_DIM, 6.0, vae_vs.pp("quantizer"))?;
 
-            // Rehydrate weights if available for continuous training
-            let vae_path = config.output_dir.join("spatial_vae.safetensors");
-            if vae_path.exists() {
-                if let Ok(()) = vae_varmap.load(&vae_path) {
+            // Rehydrate weights if available for continuous training across devices
+            let vae_candidates = [
+                config.output_dir.join("spatial_vae.safetensors"),
+                config.output_dir.join("spatial_vae_best.safetensors"),
+                PathBuf::from("crates/inference/data/candle/spatial_vae.safetensors"),
+                PathBuf::from("crates/inference/data/candle/spatial_vae_best.safetensors"),
+                PathBuf::from("checkpoints/spatial_vae.safetensors"),
+                PathBuf::from("checkpoints/spatial_vae_best.safetensors"),
+            ];
+            if let Some(vae_path) = vae_candidates.iter().find(|p| p.exists()) {
+                if let Ok(()) = vae_varmap.load(vae_path) {
                     log_msg(&format!(
                         "[+] Rehydrated converged Spatial VAE weights from {:?}",
                         vae_path
@@ -1230,6 +1246,12 @@ pub fn run_candle_training_pipeline_with_steering(
                         "[*] New best VAE checkpoint atomically saved -> {:?}",
                         best_path
                     ));
+                    let _ = crate::data_worker::git_sync_model_milestone(
+                        &[best_path],
+                        &session_path,
+                        "vae_best",
+                        best_vae_val_loss,
+                    );
                 }
                 let _ = AtomicCheckpointManager::atomic_save_json(&session, &session_path);
             }
@@ -1239,6 +1261,12 @@ pub fn run_candle_training_pipeline_with_steering(
             AtomicCheckpointManager::atomic_save_safetensors(&vae_varmap, &vae_path)?;
             session.completed_vae = true;
             let _ = AtomicCheckpointManager::atomic_save_json(&session, &session_path);
+            let _ = crate::data_worker::git_sync_model_milestone(
+                &[vae_path.clone()],
+                &session_path,
+                "vae_completed",
+                session.last_vae_loss,
+            );
             log_msg(&format!(
                 "[+] Verified and atomically saved final Spatial VAE weights -> {:?}",
                 vae_path
@@ -1275,10 +1303,18 @@ pub fn run_candle_training_pipeline_with_steering(
                 mamba_vs.pp("consistency_head"),
             )?;
 
-            // Rehydrate weights if available for continuous training
-            let mamba_path = config.output_dir.join("mamba2_moe.safetensors");
-            if mamba_path.exists() {
-                if let Ok(()) = mamba_varmap.load(&mamba_path) {
+            // Rehydrate weights if available for continuous training across devices
+            let mamba_candidates = [
+                config.output_dir.join("mamba2_moe.safetensors"),
+                config.output_dir.join("mamba2_moe_best.safetensors"),
+                config.output_dir.join("mamba_moe.safetensors"),
+                PathBuf::from("crates/inference/data/candle/mamba2_moe.safetensors"),
+                PathBuf::from("crates/inference/data/candle/mamba2_moe_best.safetensors"),
+                PathBuf::from("checkpoints/mamba2_moe.safetensors"),
+                PathBuf::from("checkpoints/mamba2_moe_best.safetensors"),
+            ];
+            if let Some(mamba_path) = mamba_candidates.iter().find(|p| p.exists()) {
+                if let Ok(()) = mamba_varmap.load(mamba_path) {
                     log_msg(&format!(
                         "[+] Rehydrated converged Mamba-2 MoE weights from {:?}",
                         mamba_path
@@ -1890,6 +1926,12 @@ pub fn run_candle_training_pipeline_with_steering(
                         "[*] New best Mamba-2 MoE checkpoint atomically saved -> {:?}",
                         best_path
                     ));
+                    let _ = crate::data_worker::git_sync_model_milestone(
+                        &[best_path],
+                        &session_path,
+                        "mamba2_moe_best",
+                        best_mamba_val_loss,
+                    );
                 }
                 let _ = AtomicCheckpointManager::atomic_save_json(&session, &session_path);
             }
@@ -1920,6 +1962,12 @@ pub fn run_candle_training_pipeline_with_steering(
 
             session.completed_mamba = true;
             let _ = AtomicCheckpointManager::atomic_save_json(&session, &session_path);
+            let _ = crate::data_worker::git_sync_model_milestone(
+                &[mamba_path.clone(), soup_path.clone()],
+                &session_path,
+                "mamba_soup_completed",
+                session.last_mamba_loss,
+            );
         }
     }
 

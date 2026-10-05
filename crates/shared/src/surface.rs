@@ -50,10 +50,10 @@ impl CanonicalSurface {
         }
     }
 
-    /// Offset in the 554-dimensional conditioning vector (indices 522..531).
+    /// Offset in the 64-dimensional conditioning vector (indices 10..19).
     #[inline]
     pub const fn condition_index(self) -> usize {
-        522 + self.index()
+        10 + self.index()
     }
 
     /// Canonical snake_case string representation.
@@ -269,4 +269,133 @@ pub struct ModalSurfaceProfile {
     pub damp2: f32,
     pub amp1: f32,
     pub amp2: f32,
+}
+
+/// 7-dimensional continuous physical material properties replacing rigid categorical surface bins
+/// in the continuous neural conditioning manifold and physical DSP simulation.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct PhysicalMaterialProperties {
+    /// Surface structural rigidity (0.0 soft foliage/canvas -> 1.0 hardened tin/glass)
+    pub hardness: f32,
+    /// Modal resonant pitch center (0.0 deep rumble / 200 Hz -> 1.0 high ping / 8 kHz)
+    pub resonance_freq: f32,
+    /// Structural loss factor (0.0 prolonged metallic chime -> 1.0 dead absorbent thud)
+    pub damping: f32,
+    /// Energy transmission vs reflection boundary (0.0 absorbent -> 1.0 reflective barrier)
+    pub acoustic_impedance: f32,
+    /// Microscopic surface roughness scattering (0.0 mirror glass -> 1.0 gravel/bark)
+    pub roughness: f32,
+    /// Standing water layer depth (0.0 dry surface -> 0.5 damp film -> 1.0 deep cavitation puddle)
+    pub water_depth: f32,
+    /// Cavity and enclosure hollowness (0.0 solid earth/pavement -> 1.0 hollow drum/tent/attic)
+    pub cavity_hollowness: f32,
+}
+
+impl Default for PhysicalMaterialProperties {
+    fn default() -> Self {
+        Self {
+            hardness: 0.5,
+            resonance_freq: 0.5,
+            damping: 0.5,
+            acoustic_impedance: 0.5,
+            roughness: 0.5,
+            water_depth: 0.2,
+            cavity_hollowness: 0.2,
+        }
+    }
+}
+
+impl PhysicalMaterialProperties {
+    #[inline]
+    pub const fn to_array(&self) -> [f32; 7] {
+        [
+            self.hardness,
+            self.resonance_freq,
+            self.damping,
+            self.acoustic_impedance,
+            self.roughness,
+            self.water_depth,
+            self.cavity_hollowness,
+        ]
+    }
+}
+
+impl CanonicalSurface {
+    /// Returns the continuous acoustic material properties for this canonical surface.
+    pub const fn material_properties(self) -> PhysicalMaterialProperties {
+        match self {
+            Self::TinRoof => PhysicalMaterialProperties {
+                hardness: 0.95,
+                resonance_freq: 0.75, // ~5.0 kHz
+                damping: 0.15,        // high ring
+                acoustic_impedance: 0.90,
+                roughness: 0.10,
+                water_depth: 0.05,
+                cavity_hollowness: 0.70, // corrugated sheet cavity
+            },
+            Self::CanvasTent => PhysicalMaterialProperties {
+                hardness: 0.25,
+                resonance_freq: 0.22, // ~750 Hz
+                damping: 0.75,        // damped fabric
+                acoustic_impedance: 0.30,
+                roughness: 0.40,
+                water_depth: 0.10,
+                cavity_hollowness: 0.90, // hollow tent drum
+            },
+            Self::Foliage => PhysicalMaterialProperties {
+                hardness: 0.15,
+                resonance_freq: 0.35, // ~1.5 kHz
+                damping: 0.85,        // soft leaves
+                acoustic_impedance: 0.20,
+                roughness: 0.65,
+                water_depth: 0.20,
+                cavity_hollowness: 0.10,
+            },
+            Self::WoodDeck => PhysicalMaterialProperties {
+                hardness: 0.60,
+                resonance_freq: 0.38, // ~1.8 kHz
+                damping: 0.50,        // moderate resonance
+                acoustic_impedance: 0.60,
+                roughness: 0.50,
+                water_depth: 0.15,
+                cavity_hollowness: 0.45,
+            },
+            Self::Glass => PhysicalMaterialProperties {
+                hardness: 0.98,
+                resonance_freq: 0.85, // ~6.2 kHz
+                damping: 0.10,        // crisp ring
+                acoustic_impedance: 0.95,
+                roughness: 0.02,
+                water_depth: 0.05,
+                cavity_hollowness: 0.15,
+            },
+            Self::Pavement | Self::Asphalt => PhysicalMaterialProperties {
+                hardness: 0.85,
+                resonance_freq: 0.45, // ~2.2 kHz
+                damping: 0.75,        // rigid but heavily damped
+                acoustic_impedance: 0.80,
+                roughness: 0.80,
+                water_depth: 0.25,
+                cavity_hollowness: 0.02,
+            },
+            Self::PuddleShallow => PhysicalMaterialProperties {
+                hardness: 0.20,
+                resonance_freq: 0.28, // ~1.0 kHz
+                damping: 0.90,
+                acoustic_impedance: 0.35,
+                roughness: 0.10,
+                water_depth: 0.65, // shallow water layer
+                cavity_hollowness: 0.05,
+            },
+            Self::WaterDeep => PhysicalMaterialProperties {
+                hardness: 0.05,
+                resonance_freq: 0.15, // ~400 Hz cavitation
+                damping: 0.98,
+                acoustic_impedance: 0.10,
+                roughness: 0.05,
+                water_depth: 1.00, // deep body of water
+                cavity_hollowness: 0.02,
+            },
+        }
+    }
 }

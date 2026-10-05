@@ -323,9 +323,9 @@ impl WeatherPrecipitationRegime {
     ) {
         match self {
             Self::DrizzleMist => {
-                cond[512] = (cond[512] * 0.3).clamp(0.01, 1.0); // low rain rate
-                cond[513] = (cond[513] * 1.5).clamp(0.0, 1.0); // high droplet density
-                cond[515] = (cond[515] * 1.3).clamp(0.0, 1.0); // high freq ratio
+                cond[0] = (cond[0] * 0.3).clamp(0.01, 1.0); // low rain rate / intensity
+                cond[43] = (cond[43] * 1.5).clamp(0.0, 1.0); // high droplet density
+                cond[40] = (cond[40] * 1.3).clamp(0.0, 1.0); // high spectral centroid
                 for b in 12..FILTER_BANDS {
                     bands[b] = (bands[b] * 1.3).min(20.0);
                 }
@@ -334,15 +334,15 @@ impl WeatherPrecipitationRegime {
                 // Standard Marshall-Palmer baseline
             }
             Self::CloudburstDownpour => {
-                cond[512] = (cond[512] * 1.6 + 0.3).clamp(0.0, 1.0); // heavy rain rate
-                cond[517] = (cond[517] * 1.5 + 0.2).clamp(0.0, 1.0); // high RMS energy
+                cond[0] = (cond[0] * 1.6 + 0.3).clamp(0.0, 1.0); // heavy rain rate
+                cond[44] = (cond[44] * 1.5 + 0.2).clamp(0.0, 1.0); // high RMS energy
                 for b in 0..5 {
                     bands[b] = (bands[b] * 1.5).min(20.0); // bubble resonance & impact rumble
                 }
             }
             Self::SleetGraupelHybrid => {
-                cond[514] = (cond[514] * 1.2).clamp(0.0, 1.0);
-                cond[518] = (cond[518] * 0.8).clamp(0.0, 1.0); // lower spectral flatness (peaked impacts)
+                cond[43] = (cond[43] * 1.2).clamp(0.0, 1.0); // droplet density
+                cond[41] = (cond[41] * 0.8).clamp(0.0, 1.0); // lower spectral flatness (peaked impacts)
                 // Transient impact spikes in upper mids
                 bands[8] = (bands[8] * 1.4).min(20.0);
                 bands[10] = (bands[10] * 1.3).min(20.0);
@@ -351,11 +351,11 @@ impl WeatherPrecipitationRegime {
     }
 }
 
-/// Samples an 8-surface convex mixture vector from a sparsity-inducing Dirichlet distribution (alpha = 0.25).
-pub fn sample_sparse_dirichlet_surfaces<R: rand::Rng>(rng: &mut R, alpha: f32) -> [f32; 8] {
+/// Samples a 9-surface convex mixture vector from a sparsity-inducing Dirichlet distribution (alpha = 0.25).
+pub fn sample_sparse_dirichlet_surfaces<R: rand::Rng>(rng: &mut R, alpha: f32) -> [f32; 9] {
     use rand_distr::{Distribution, Gamma};
     let gamma = Gamma::new(alpha, 1.0).unwrap_or_else(|_| Gamma::new(1.0, 1.0).unwrap());
-    let mut weights = [0.0f32; 8];
+    let mut weights = [0.0f32; 9];
     let mut sum = 0.0f32;
     for w in &mut weights {
         let sample: f32 = gamma.sample(rng);
@@ -430,20 +430,6 @@ impl CandleManifestDataset {
         let mut target_bands = Vec::with_capacity(batch_size * FILTER_BANDS);
         let mut target_foas = Vec::with_capacity(batch_size * FOA_CHANNELS);
 
-        let surface_tag_to_idx = |tag: &str| -> usize {
-            match tag {
-                "pavement" | "urban_pavement" => 522,
-                "window" | "window_rain" => 523,
-                "roof" | "roof_rain" => 524,
-                "canvas" | "canvas_tent" => 525,
-                "deck" | "wood_deck" => 526,
-                "needles" | "pine_needles" => 527,
-                "foliage" | "forest_foliage" => 528,
-                "water_deep" => 529,
-                _ => 530,
-            }
-        };
-
         for _ in 0..batch_size {
             let meta = self
                 .entries
@@ -451,24 +437,43 @@ impl CandleManifestDataset {
                 .expect("Dataset cannot be empty");
             record_training_attribution_if_needed(meta);
 
-            // Build 554-dim condition vector matching Python dataset standard (zero-heap stack array):
-            // 512 (CLAP pseudo-embedding) + 41 (Physical parameters) + 1 (Drift)
+            // Build 64-dim condition vector matching compact canonical layout:
             let mut cond = [0.0f32; CONDITION_DIM];
-            cond[512] = (meta.rain_rate / 1.0).clamp(0.0, 1.0);
-            cond[513] = (meta.droplet_density / 2.0).clamp(0.0, 1.0);
-            cond[514] = (meta.drops_per_second / 200.0).clamp(0.0, 1.0);
-            cond[515] = meta.high_freq_ratio.clamp(0.0, 1.0);
-            cond[516] = (meta.spectral_centroid / 8000.0).clamp(0.0, 1.0);
-            cond[517] = (meta.rms_energy * 20.0).clamp(0.0, 1.0);
-            cond[518] = meta.spectral_flatness.clamp(0.0, 1.0);
+            cond[0] = (meta.rain_rate / 1.0).clamp(0.0, 1.0);
+            cond[1] = (meta.rain_rate * 0.8).clamp(0.0, 1.0); // runoff
+            cond[2] = 0.6; // temperature
+            cond[3] = 0.7; // humidity
+            cond[8] = 0.3; // wind speed
+            cond[39] = 0.2; // drift index
 
-            // Compound Dirichlet surface sampling or single surface encoding
-            let s_idx1 = surface_tag_to_idx(&meta.surface_tag);
+            // Continuous physical material continuum (10..17)
+            let surface = shared::surface::CanonicalSurface::from_tag(&meta.surface_tag);
+            let mut mat_props = surface.material_properties().to_array();
             if surface_mixup_prob > 0.0 && rng.gen_range(0.0f32..1.0f32) < surface_mixup_prob {
                 let dirichlet_weights = sample_sparse_dirichlet_surfaces(&mut rng, 0.25);
-                cond[522..530].copy_from_slice(&dirichlet_weights);
-            } else {
-                cond[s_idx1] = 1.0;
+                let mut mixed_props = [0.0f32; 7];
+                for (s_idx, &s) in shared::surface::CanonicalSurface::ALL.iter().enumerate() {
+                    let p = s.material_properties().to_array();
+                    let w = dirichlet_weights[s_idx];
+                    for k in 0..7 {
+                        mixed_props[k] += p[k] * w;
+                    }
+                }
+                mat_props = mixed_props;
+            }
+            cond[10..17].copy_from_slice(&mat_props);
+
+            // Acoustic summary metrics (40..46)
+            cond[40] = (meta.spectral_centroid / 8000.0).clamp(0.0, 1.0);
+            cond[41] = meta.spectral_flatness.clamp(0.0, 1.0);
+            cond[42] = meta.high_freq_ratio.clamp(0.0, 1.0);
+            cond[43] = (meta.droplet_density / 2.0).clamp(0.0, 1.0);
+            cond[44] = (meta.rms_energy * 20.0).clamp(0.0, 1.0);
+            cond[45] = 0.5; // diffuseness
+
+            // Compact semantic projection basis (46..64 - 18 dims)
+            for i in 0..18 {
+                cond[46 + i] = 0.25;
             }
 
             // Audio spectral feature projection [64] (zero-heap stack array)

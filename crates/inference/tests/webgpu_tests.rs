@@ -32,10 +32,6 @@ fn test_wgsl_shader_compilation() {
                 ),
                 ("mamba2.wgsl", include_str!("../src/shaders/mamba2.wgsl")),
                 (
-                    "moe_dispatch.wgsl",
-                    include_str!("../src/shaders/moe_dispatch.wgsl"),
-                ),
-                (
                     "foa_projection.wgsl",
                     include_str!("../src/shaders/foa_projection.wgsl"),
                 ),
@@ -55,10 +51,6 @@ fn test_wgsl_shader_compilation() {
                 (
                     "mamba2_ssd.wgsl",
                     include_str!("../src/shaders/mamba2_ssd.wgsl"),
-                ),
-                (
-                    "dense_soup_dispatch.wgsl",
-                    include_str!("../src/shaders/dense_soup_dispatch.wgsl"),
                 ),
                 (
                     "mla_attention.wgsl",

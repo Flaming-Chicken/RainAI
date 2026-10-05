@@ -1,0 +1,549 @@
+{
+  "generated_at_utc": "2026-10-02T16:43:35Z",
+  "total_sources": 38,
+  "tags_distribution": {
+    "storm": 1,
+    "field_recording": 13,
+    "rain": 12,
+    "ambient": 18,
+    "thunderstorm": 7,
+    "synthetic_physics": 17,
+    "thunder": 1,
+    "drizzle": 1,
+    "environmental": 6
+  },
+  "records": [
+    {
+      "filename": "synth_canvas_tent.wav",
+      "source_url": "local://data/rain/Synthetic/synth_canvas_tent.wav",
+      "source_platform": "RainAI Physics DDSP Engine",
+      "tags": [
+        "synthetic_physics",
+        "ambient"
+      ],
+      "license": "RainAI-FC-Proprietary-License",
+      "license_tier": "ProjectProprietary",
+      "sha256": "33d42b8fdf937be8447280852779b790898fb575bb49cc00233f6eafce8d9235",
+      "file_size_bytes": 5760068,
+      "quality": null
+    },
+    {
+      "filename": "synth_compound_forest_camp.wav",
+      "source_url": "local://data/rain/Synthetic/synth_compound_forest_camp.wav",
+      "source_platform": "RainAI Physics DDSP Engine",
+      "tags": [
+        "synthetic_physics",
+        "ambient"
+      ],
+      "license": "RainAI-FC-Proprietary-License",
+      "license_tier": "ProjectProprietary",
+      "sha256": "78522c77fe791a2aed8221cb387699ae4c4c9acc1361d89b82cad1e99fd0ec52",
+      "file_size_bytes": 5760068,
+      "quality": null
+    },
+    {
+      "filename": "synth_compound_porch_storm.wav",
+      "source_url": "local://data/rain/Synthetic/synth_compound_porch_storm.wav",
+      "source_platform": "RainAI Physics DDSP Engine",
+      "tags": [
+        "synthetic_physics",
+        "ambient"
+      ],
+      "license": "RainAI-FC-Proprietary-License",
+      "license_tier": "ProjectProprietary",
+      "sha256": "29be0d23174af8c2baa723ca975eb49951fe422bffbe465f6299d5a633819a6e",
+      "file_size_bytes": 5760068,
+      "quality": null
+    },
+    {
+      "filename": "synth_compound_urban_balcony.wav",
+      "source_url": "local://data/rain/Synthetic/synth_compound_urban_balcony.wav",
+      "source_platform": "RainAI Physics DDSP Engine",
+      "tags": [
+        "synthetic_physics",
+        "ambient"
+      ],
+      "license": "RainAI-FC-Proprietary-License",
+      "license_tier": "ProjectProprietary",
+      "sha256": "f3e0b93303eea8b877873d8842aafc05d79d24d910169f7b464821abdb276c21",
+      "file_size_bytes": 5760068,
+      "quality": null
+    },
+    {
+      "filename": "synth_forest_foliage.wav",
+      "source_url": "local://data/rain/Synthetic/synth_forest_foliage.wav",
+      "source_platform": "RainAI Physics DDSP Engine",
+      "tags": [
+        "synthetic_physics",
+        "ambient"
+      ],
+      "license": "RainAI-FC-Proprietary-License",
+      "license_tier": "ProjectProprietary",
+      "sha256": "5ccbabb1e50c4efca7eb546322eab1390cad4e79d426691b0c3072e1cd0aacbd",
+      "file_size_bytes": 5760068,
+      "quality": null
+    },
+    {
+      "filename": "synth_gentle_drizzle.wav",
+      "source_url": "local://data/rain/Synthetic/synth_gentle_drizzle.wav",
+      "source_platform": "RainAI Physics DDSP Engine",
+      "tags": [
+        "synthetic_physics",
+        "ambient"
+      ],
+      "license": "RainAI-FC-Proprietary-License",
+      "license_tier": "ProjectProprietary",
+      "sha256": "088705814d60da7ee3a2ae9bcb23940b4c1b8746458d22e20f75b0aa9d06d8cb",
+      "file_size_bytes": 5760068,
+      "quality": null
+    },
+    {
+      "filename": "synth_heavy_downpour.wav",
+      "source_url": "local://data/rain/Synthetic/synth_heavy_downpour.wav",
+      "source_platform": "RainAI Physics DDSP Engine",
+      "tags": [
+        "synthetic_physics",
+        "ambient"
+      ],
+      "license": "RainAI-FC-Proprietary-License",
+      "license_tier": "ProjectProprietary",
+      "sha256": "b401d4fb13965a9f17bd4f85706f75a8ce51ebedf5a3c2866d82c0d87558b2ae",
+      "file_size_bytes": 5760068,
+      "quality": null
+    },
+    {
+      "filename": "synth_pine_needles.wav",
+      "source_url": "local://data/rain/Synthetic/synth_pine_needles.wav",
+      "source_platform": "RainAI Physics DDSP Engine",
+      "tags": [
+        "synthetic_physics",
+        "ambient"
+      ],
+      "license": "RainAI-FC-Proprietary-License",
+      "license_tier": "ProjectProprietary",
+      "sha256": "b9bcd073682249f6f36887d86215639356fca910e51d07b745f36733f877f0bf",
+      "file_size_bytes": 5760068,
+      "quality": null
+    },
+    {
+      "filename": "synth_puddle_shallow.wav",
+      "source_url": "local://data/rain/Synthetic/synth_puddle_shallow.wav",
+      "source_platform": "RainAI Physics DDSP Engine",
+      "tags": [
+        "synthetic_physics",
+        "ambient"
+      ],
+      "license": "RainAI-FC-Proprietary-License",
+      "license_tier": "ProjectProprietary",
+      "sha256": "9ef0ac00feb9766abd6cd0e778b04c305daba4a1d934116dbfb7746b08b5ab0c",
+      "file_size_bytes": 5760068,
+      "quality": null
+    },
+    {
+      "filename": "synth_roof_rain.wav",
+      "source_url": "local://data/rain/Synthetic/synth_roof_rain.wav",
+      "source_platform": "RainAI Physics DDSP Engine",
+      "tags": [
+        "synthetic_physics",
+        "ambient"
+      ],
+      "license": "RainAI-FC-Proprietary-License",
+      "license_tier": "ProjectProprietary",
+      "sha256": "973f502478d4d5fc4f7e38a82475f4642dac3f0ee25a76228a2929305f9a50c1",
+      "file_size_bytes": 5760068,
+      "quality": null
+    },
+    {
+      "filename": "synth_steady_rain.wav",
+      "source_url": "local://data/rain/Synthetic/synth_steady_rain.wav",
+      "source_platform": "RainAI Physics DDSP Engine",
+      "tags": [
+        "synthetic_physics",
+        "ambient"
+      ],
+      "license": "RainAI-FC-Proprietary-License",
+      "license_tier": "ProjectProprietary",
+      "sha256": "f78fa001a55e0f314e8c0c81694b10b961cdda51e9c5e52fe523a5b1fd240953",
+      "file_size_bytes": 5760068,
+      "quality": null
+    },
+    {
+      "filename": "synth_thunderstorm.wav",
+      "source_url": "local://data/rain/Synthetic/synth_thunderstorm.wav",
+      "source_platform": "RainAI Physics DDSP Engine",
+      "tags": [
+        "synthetic_physics",
+        "ambient"
+      ],
+      "license": "RainAI-FC-Proprietary-License",
+      "license_tier": "ProjectProprietary",
+      "sha256": "ba7b241ae93abf42ca4d4534c3a769aa0d91afcd89c83da3fcfcab488e5b9ca9",
+      "file_size_bytes": 5760068,
+      "quality": null
+    },
+    {
+      "filename": "synth_tin_roof.wav",
+      "source_url": "local://data/rain/Synthetic/synth_tin_roof.wav",
+      "source_platform": "RainAI Physics DDSP Engine",
+      "tags": [
+        "synthetic_physics",
+        "ambient"
+      ],
+      "license": "RainAI-FC-Proprietary-License",
+      "license_tier": "ProjectProprietary",
+      "sha256": "0e6cf0a7bf8f4af96ef0af2c54a96c25f02a4bd8faf3d7a76ecf9d9dfa7f60f9",
+      "file_size_bytes": 3840068,
+      "quality": null
+    },
+    {
+      "filename": "synth_urban_pavement.wav",
+      "source_url": "local://data/rain/Synthetic/synth_urban_pavement.wav",
+      "source_platform": "RainAI Physics DDSP Engine",
+      "tags": [
+        "synthetic_physics",
+        "ambient"
+      ],
+      "license": "RainAI-FC-Proprietary-License",
+      "license_tier": "ProjectProprietary",
+      "sha256": "ddcb537657aa7fee905db3598514e990835879a0e0c5bc94466f0feec1ae3ed8",
+      "file_size_bytes": 5760068,
+      "quality": null
+    },
+    {
+      "filename": "synth_water_deep.wav",
+      "source_url": "local://data/rain/Synthetic/synth_water_deep.wav",
+      "source_platform": "RainAI Physics DDSP Engine",
+      "tags": [
+        "synthetic_physics",
+        "ambient"
+      ],
+      "license": "RainAI-FC-Proprietary-License",
+      "license_tier": "ProjectProprietary",
+      "sha256": "b89043f9a243396b170a692e3266cbbd37304a3f9696d28f8110fad204b0a606",
+      "file_size_bytes": 5760068,
+      "quality": null
+    },
+    {
+      "filename": "synth_window_rain.wav",
+      "source_url": "local://data/rain/Synthetic/synth_window_rain.wav",
+      "source_platform": "RainAI Physics DDSP Engine",
+      "tags": [
+        "synthetic_physics",
+        "ambient"
+      ],
+      "license": "RainAI-FC-Proprietary-License",
+      "license_tier": "ProjectProprietary",
+      "sha256": "eff82876357415c3962c8f3987e15dcd9b0376b337029aa10255e5082e0cc848",
+      "file_size_bytes": 5760068,
+      "quality": null
+    },
+    {
+      "filename": "synth_wood_deck.wav",
+      "source_url": "local://data/rain/Synthetic/synth_wood_deck.wav",
+      "source_platform": "RainAI Physics DDSP Engine",
+      "tags": [
+        "synthetic_physics",
+        "ambient"
+      ],
+      "license": "RainAI-FC-Proprietary-License",
+      "license_tier": "ProjectProprietary",
+      "sha256": "eb4a2b3fd477ab5799c90259b32f1ebb34d4743da089475d36ad4f640adb04eb",
+      "file_size_bytes": 5760068,
+      "quality": null
+    },
+    {
+      "filename": "GlassFallsLightVer FS027302.flac",
+      "source_url": "local://data/rain/VIDEVO/GlassFallsLightVer FS027302.flac",
+      "source_platform": "Videvo",
+      "tags": [
+        "field_recording",
+        "rain"
+      ],
+      "license": "CC-BY 3.0",
+      "license_tier": "AttributionOnly",
+      "sha256": "b0ab5426bf32a129b7dd7718f59d91c758976b942c3964fbe0721a93ae9a143c",
+      "file_size_bytes": 184908,
+      "quality": null
+    },
+    {
+      "filename": "JungleSouthAmerica EE201201.flac",
+      "source_url": "local://data/rain/VIDEVO/JungleSouthAmerica EE201201.flac",
+      "source_platform": "Videvo",
+      "tags": [
+        "field_recording",
+        "rain"
+      ],
+      "license": "CC0",
+      "license_tier": "PublicDomain",
+      "sha256": "8974d1c30dbdbe3fd6ef54253d6be758e02e46c1f8392acea18c1199a0e71219",
+      "file_size_bytes": 11161071,
+      "quality": null
+    },
+    {
+      "filename": "LightRainShowerLea PE560502.flac",
+      "source_url": "local://data/rain/VIDEVO/LightRainShowerLea PE560502.flac",
+      "source_platform": "Videvo",
+      "tags": [
+        "field_recording",
+        "rain"
+      ],
+      "license": "CC0",
+      "license_tier": "PublicDomain",
+      "sha256": "23ef7494b2f84ed8b55d8ffd815ebcebf56a5b118bdbb98d99c475d45bdf786d",
+      "file_size_bytes": 23007550,
+      "quality": null
+    },
+    {
+      "filename": "RainFallMedium PE1005201.flac",
+      "source_url": "local://data/rain/VIDEVO/RainFallMedium PE1005201.flac",
+      "source_platform": "Videvo",
+      "tags": [
+        "field_recording",
+        "rain"
+      ],
+      "license": "CC0",
+      "license_tier": "PublicDomain",
+      "sha256": "4448ff32c8110702fcd38aba9490081621e22af86b7406800f6f5bdfb5eadf6a",
+      "file_size_bytes": 8168447,
+      "quality": null
+    },
+    {
+      "filename": "RainHeavyOnGlass PE051501.flac",
+      "source_url": "local://data/rain/VIDEVO/RainHeavyOnGlass PE051501.flac",
+      "source_platform": "Videvo",
+      "tags": [
+        "field_recording",
+        "rain"
+      ],
+      "license": "CC0",
+      "license_tier": "PublicDomain",
+      "sha256": "2615ef97db6f4d834cbcd90dd4553611efc0e09f0dffaa380bd41b4c336f503e",
+      "file_size_bytes": 17166135,
+      "quality": null
+    },
+    {
+      "filename": "ThunderClap4HvyC SDT2042602.flac",
+      "source_url": "local://data/rain/VIDEVO/ThunderClap4HvyC SDT2042602.flac",
+      "source_platform": "Videvo",
+      "tags": [
+        "field_recording",
+        "rain"
+      ],
+      "license": "CC0",
+      "license_tier": "PublicDomain",
+      "sha256": "6435a88bbdc3c993bc07a77d61665113cd6662f5978313ac2aea397167c3d4ca",
+      "file_size_bytes": 621348,
+      "quality": null
+    },
+    {
+      "filename": "Good thunderstorm Sept 8 2022.ogg",
+      "source_url": "local://data/rain/Wikimedia/Good thunderstorm Sept 8 2022.ogg",
+      "source_platform": "Wikimedia Commons",
+      "tags": [
+        "field_recording",
+        "thunderstorm"
+      ],
+      "license": "CC-BY-SA 4.0",
+      "license_tier": "ShareAlike",
+      "sha256": "b620ae31fbcb12b5ba7defc19346a8fb3edee1fc4048ed1ee6c8f337466eb38f",
+      "file_size_bytes": 39282117,
+      "quality": null
+    },
+    {
+      "filename": "Rain and wind in London 2026 08 28.wav",
+      "source_url": "local://data/rain/Wikimedia/Rain and wind in London 2026 08 28.wav",
+      "source_platform": "Wikimedia Commons",
+      "tags": [
+        "field_recording",
+        "thunderstorm"
+      ],
+      "license": "Public Domain",
+      "license_tier": "PublicDomain",
+      "sha256": "21f958d0842eee1dfa938dc62758eaca3415fe3f54caa15af16288d88d26e59d",
+      "file_size_bytes": 6050714,
+      "quality": null
+    },
+    {
+      "filename": "Severe thunderstorm warning Minnesota.ogg",
+      "source_url": "local://data/rain/Wikimedia/Severe thunderstorm warning Minnesota.ogg",
+      "source_platform": "Wikimedia Commons",
+      "tags": [
+        "field_recording",
+        "thunderstorm"
+      ],
+      "license": "Public Domain",
+      "license_tier": "PublicDomain",
+      "sha256": "c798f71a5f21cd06ddaceac16abaedb53dad8747a80bc6cc36ef9f870fd6ec3b",
+      "file_size_bytes": 1393169,
+      "quality": null
+    },
+    {
+      "filename": "Sound of light rainfall.ogg",
+      "source_url": "local://data/rain/Wikimedia/Sound of light rainfall.ogg",
+      "source_platform": "Wikimedia Commons",
+      "tags": [
+        "field_recording",
+        "thunderstorm"
+      ],
+      "license": "CC0",
+      "license_tier": "PublicDomain",
+      "sha256": "e0233652d8173650149adcf3d6e5ddc01b73e8a93ce61b8d7809abfe582251a8",
+      "file_size_bytes": 647064,
+      "quality": null
+    },
+    {
+      "filename": "Spring thunderstorm in surburbs.ogg",
+      "source_url": "local://data/rain/Wikimedia/Spring thunderstorm in surburbs.ogg",
+      "source_platform": "Wikimedia Commons",
+      "tags": [
+        "field_recording",
+        "thunderstorm"
+      ],
+      "license": "CC-BY-SA 4.0",
+      "license_tier": "ShareAlike",
+      "sha256": "7c4383ce2c8987f6e9cbb87525dc159aef53dc66d1d39a9468c0522bf1bad4cd",
+      "file_size_bytes": 22133559,
+      "quality": null
+    },
+    {
+      "filename": "Summer thunderstorm in the woods.ogg",
+      "source_url": "local://data/rain/Wikimedia/Summer thunderstorm in the woods.ogg",
+      "source_platform": "Wikimedia Commons",
+      "tags": [
+        "field_recording",
+        "thunderstorm"
+      ],
+      "license": "CC-BY-SA 4.0",
+      "license_tier": "ShareAlike",
+      "sha256": "11392c60ac9690ca20d9d0d0779c4ccec0c2b2b81ed45d64aad296d56cc7179b",
+      "file_size_bytes": 10805836,
+      "quality": null
+    },
+    {
+      "filename": "wikimedia_barish_rain.ogg",
+      "source_url": "local://data/rain/Wikimedia/wikimedia_barish_rain.ogg",
+      "source_platform": "Wikimedia Commons",
+      "tags": [
+        "field_recording",
+        "thunderstorm"
+      ],
+      "license": "CC0",
+      "license_tier": "PublicDomain",
+      "sha256": "8dc4c2b7bc080e2535b4850730f193e3b4408cfc95af994cfedce3e4e57c0869",
+      "file_size_bytes": 11570,
+      "quality": null
+    },
+    {
+      "filename": "bigsoundbank_asphalt_roadway_heavy_0812.mp3",
+      "source_url": "local://data/rain/bigsoundbank_asphalt_roadway_heavy_0812.mp3",
+      "source_platform": "BigSoundBank",
+      "tags": [
+        "environmental",
+        "rain"
+      ],
+      "license": "CC0",
+      "license_tier": "PublicDomain",
+      "sha256": "bf9a06f897e6402fddf2eb52b37a3a6be5f2126913eaabfad46839cc27d6efd5",
+      "file_size_bytes": 131072,
+      "quality": null
+    },
+    {
+      "filename": "bigsoundbank_pavement_terracotta_1142.mp3",
+      "source_url": "local://data/rain/bigsoundbank_pavement_terracotta_1142.mp3",
+      "source_platform": "BigSoundBank",
+      "tags": [
+        "environmental",
+        "rain"
+      ],
+      "license": "CC0",
+      "license_tier": "PublicDomain",
+      "sha256": "ec83935f3640fde236cd85af822ed941c424eccc3295c30071cf2dd295102c25",
+      "file_size_bytes": 260388,
+      "quality": null
+    },
+    {
+      "filename": "bigsoundbank_rain_pavement_1019.mp3",
+      "source_url": "local://data/rain/bigsoundbank_rain_pavement_1019.mp3",
+      "source_platform": "BigSoundBank",
+      "tags": [
+        "environmental",
+        "rain"
+      ],
+      "license": "CC0",
+      "license_tier": "PublicDomain",
+      "sha256": "b3050713d6303cde08379b0e45db568a216ca9d8068d2b93eb37c38a3edbe979",
+      "file_size_bytes": 6271908,
+      "quality": null
+    },
+    {
+      "filename": "bigsoundbank_rain_thunder_0740.mp3",
+      "source_url": "local://data/rain/bigsoundbank_rain_thunder_0740.mp3",
+      "source_platform": "BigSoundBank",
+      "tags": [
+        "environmental",
+        "rain"
+      ],
+      "license": "CC0",
+      "license_tier": "PublicDomain",
+      "sha256": "056c5296303887b650e62a6dc3282f327f8a8560c061acbf577c5e0734acdb6e",
+      "file_size_bytes": 6320768,
+      "quality": null
+    },
+    {
+      "filename": "bigsoundbank_rain_window_0124.mp3",
+      "source_url": "local://data/rain/bigsoundbank_rain_window_0124.mp3",
+      "source_platform": "BigSoundBank",
+      "tags": [
+        "environmental",
+        "rain"
+      ],
+      "license": "CC0",
+      "license_tier": "PublicDomain",
+      "sha256": "102f5ef7cf5a8b15d2f4bcd806291b5aeafbe1409109f1a35410f319d1238fdf",
+      "file_size_bytes": 1715746,
+      "quality": null
+    },
+    {
+      "filename": "bigsoundbank_wood_deck_patio_0654.mp3",
+      "source_url": "local://data/rain/bigsoundbank_wood_deck_patio_0654.mp3",
+      "source_platform": "BigSoundBank",
+      "tags": [
+        "environmental",
+        "rain"
+      ],
+      "license": "CC0",
+      "license_tier": "PublicDomain",
+      "sha256": "b56826931063d4e91f6e07de0477ea9e5d49cf9b8d95e810499a48846e787076",
+      "file_size_bytes": 233408,
+      "quality": null
+    },
+    {
+      "filename": "mixkit_light_rain_loop.mp3",
+      "source_url": "local://data/rain/mixkit_light_rain_loop.mp3",
+      "source_platform": "Mixkit",
+      "tags": [
+        "drizzle",
+        "ambient"
+      ],
+      "license": "Mixkit Free License",
+      "license_tier": "AttributionOnly",
+      "sha256": "471d76dda9cd64ffd11056dbde24c87e434a862c25664c3db4e7dd6b4681a1be",
+      "file_size_bytes": 1364549,
+      "quality": null
+    },
+    {
+      "filename": "soundbible_thunder_clap.mp3",
+      "source_url": "local://data/rain/soundbible_thunder_clap.mp3",
+      "source_platform": "SoundBible",
+      "tags": [
+        "thunder",
+        "storm"
+      ],
+      "license": "Public Domain",
+      "license_tier": "PublicDomain",
+      "sha256": "ee42bebc04f14fa79a172b0852d167dfaef6b5e03a5fa99c5cc7ccd49e7cfe83",
+      "file_size_bytes": 351117,
+      "quality": null
+    }
+  ]
+}

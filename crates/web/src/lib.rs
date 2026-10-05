@@ -250,10 +250,8 @@ impl WasmInferenceNode {
         Ok(self.stereo_buffer[..total].to_vec())
     }
 
-    /// Dynamically adjust the active MoE experts to throttle CPU usage.
-    pub fn set_active_experts(&mut self, experts: usize) {
-        self.runner.set_active_experts(experts);
-    }
+    /// Deprecated no-op: expert pruning has been removed in favor of dense recurrence.
+    pub fn set_active_experts(&mut self, _experts: usize) {}
 
     /// Toggle neural AI modulation on or off (falls back to pure procedural DSP).
     pub fn set_neural_enabled(&mut self, enabled: bool) {

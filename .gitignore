@@ -25,25 +25,28 @@ __pycache__/
 htmlcov/
 
 # ------------------------------------------------------------------------------
-# 3. Model Weights & Generated Inference Assets
+# 3. Model Weights & Training Checkpoints
 # ------------------------------------------------------------------------------
-checkpoints/
+# Ignore ephemeral scratch builds
 ai/checkpoints/
 crates/inference/data/wasm/*
 !crates/inference/data/wasm/.gitkeep
-training_session.json
+
+# Track canonical Candle checkpoints, sessions, and Safetensors weights
+# (Binary weights are tracked via Git LFS as specified in .gitattributes)
+!crates/inference/data/candle/
+!crates/inference/data/candle/**
+!checkpoints/**
+!**/training_session.json
 
 # ------------------------------------------------------------------------------
-# 4. Data Directories, Audio Datasets & Large Binary Media
+# 4. Data Directories, Audio Datasets & Score Ledgers
 # ------------------------------------------------------------------------------
-# Ignore contents of root and workspace data directories, but allow .gitkeep files
-/data/*/*
-!/data/rain/ATTRIBUTIONS.txt
-!/Data/rain/ATTRIBUTIONS.txt
-!/data/rain/attributions.bin
-!**/attributions.bin
+# Ignore transient rolling cache audio chunks (up to 15 GB local ceiling)
+/data/processed/*.wav
+/Data/processed/*.wav
 
-# Global exclusions for audio and binary model artifacts
+# Global exclusions for audio and binary model artifacts outside canonical datasets
 *.flac
 *.wav
 *.ogg
@@ -53,6 +56,36 @@ training_session.json
 *.onnx.data
 *.bin
 *.pt
+
+# Allow canonical audio training datasets in git (handled via Git LFS in .gitattributes)
+!/data/rain/**
+!/Data/rain/**
+!/data/rain/**/*.wav
+!/data/rain/**/*.mp3
+!/data/rain/**/*.flac
+!/data/rain/**/*.ogg
+!/data/rain/*.wav
+!/data/rain/*.mp3
+!/data/rain/*.flac
+!/data/rain/*.ogg
+!/Data/rain/**/*.wav
+!/Data/rain/**/*.mp3
+!/Data/rain/**/*.flac
+!/Data/rain/**/*.ogg
+!/Data/rain/*.wav
+!/Data/rain/*.mp3
+!/Data/rain/*.flac
+!/Data/rain/*.ogg
+
+# Allow data quality score ledgers, manifests, provenance, and attribution dictionaries in git
+!**/data_utility_ledger.json
+!**/manifest.json
+!**/manifest_provenance.json
+!**/sources.json
+!**/ATTRIBUTIONS.txt
+!**/attributions.bin
+!crates/inference/data/candle/*.safetensors
+!checkpoints/*.safetensors
 
 # ------------------------------------------------------------------------------
 # 5. Frontend UI, Web & Edge Cloud Deployments

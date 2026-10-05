@@ -7,7 +7,7 @@
 //! # Architecture & Modules
 //!
 //! - [`rain`]: Core physical domain model representing 9 distinct surface profiles, drop size
-//!   distributions, wind coupling vectors, hardware governor telemetry, and 554-dimensional conditioning vectors.
+//!   distributions, wind coupling vectors, hardware governor telemetry, and 64-dimensional conditioning vectors.
 //! - [`preset`]: Built-in factory presets (e.g., Attic Tin Roof, Amazon Canopy, Concrete Courtyard,
 //!   Cabin Lake Pier) with instant serialization and interpolation curves.
 //! - [`export`]: Lossless audio render configurations supporting sample rates up to 96 kHz, bit depths

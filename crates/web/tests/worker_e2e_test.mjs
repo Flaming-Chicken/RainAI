@@ -496,7 +496,89 @@ async function runE2ETests() {
     assert(res.headers.get("Cross-Origin-Opener-Policy") === "same-origin", "SPA fallback preserves COOP header");
   }
 
+  console.log("\n--- Testing Edge Rate Limiting & Zero-Cost Quota Guards ---");
 
+  // 19. Payload Size Protection: 413 for oversized metadata and audio blobs
+  {
+    const bigMetaReq = new Request("https://staging.rainai.app/api/contribute/submit-record", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": (600 * 1024).toString(), // 600 KB > 512 KB
+      },
+      body: JSON.stringify({}),
+    });
+    const bigMetaRes = await worker.fetch(bigMetaReq, env, {});
+    assert(bigMetaRes.status === 413, "Metadata record > 512KB rejected with 413 Payload Too Large");
+
+    const bigBlobReq = new Request(`https://staging.rainai.app/api/contribute/upload-blob/oversized_sha`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "audio/flac",
+        "Content-Length": (55 * 1024 * 1024).toString(), // 55 MB > 50 MB
+      },
+      body: Buffer.from("big"),
+    });
+    const bigBlobRes = await worker.fetch(bigBlobReq, env, {});
+    assert(bigBlobRes.status === 413, "Audio blob > 50MB rejected with 413 Payload Too Large");
+  }
+
+  // 20. Rate Limiting: 429 Too Many Requests when write threshold exceeded (15/min)
+  {
+    const spamIp = "198.51.100.42";
+    let reached429 = false;
+    for (let i = 0; i < 20; i++) {
+      const dummyReq = new Request(`https://staging.rainai.app/api/contribute/ack-ingested`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "CF-Connecting-IP": spamIp,
+        },
+        body: JSON.stringify({ sha256_list: [] }),
+      });
+      const res = await worker.fetch(dummyReq, env, {});
+      if (res.status === 429) {
+        reached429 = true;
+        assert(res.headers.get("Retry-After") === "60", "Rate limit response includes Retry-After header");
+        const json = await res.json();
+        assert(json.category === "write", "Rate limit category identified as write");
+        break;
+      }
+    }
+    assert(reached429, "Client exceeding 15 writes/min blocked with 429 Too Many Requests");
+  }
+
+  // 21. Audio Blob Download Endpoint for Local Maintenance & Git Sync
+  {
+    const sampleSha = "downloadable_sample_sha_123456789";
+    const sampleAudio = Buffer.from("RIFF....WAVEfmt ....test_downloadable_audio_stream");
+    await bucket.put(`ingest/approved/${sampleSha}.flac`, sampleAudio, {
+      httpMetadata: { contentType: "audio/flac" },
+    });
+
+    const downloadReq = new Request(`https://staging.rainai.app/api/contribute/blob/${sampleSha}`, {
+      method: "GET",
+      headers: { "CF-Connecting-IP": "192.0.2.1" },
+    });
+    const downloadRes = await worker.fetch(downloadReq, env, {});
+    assert(downloadRes.status === 200, "Audio blob retrieval returns 200 OK");
+    assert(downloadRes.headers.get("X-SHA256") === sampleSha, "Audio blob X-SHA256 header matches");
+    const downloadedBuf = Buffer.from(await downloadRes.arrayBuffer());
+    assert(downloadedBuf.equals(sampleAudio), "Downloaded binary audio matches uploaded bytes exactly");
+  }
+
+  // 22. List Capping and Pagination Limits
+  {
+    const listReq = new Request("https://staging.rainai.app/api/contribute/approved-list?limit=25&offset=0", {
+      method: "GET",
+      headers: { "CF-Connecting-IP": "192.0.2.2" },
+    });
+    const listRes = await worker.fetch(listReq, env, {});
+    assert(listRes.status === 200, "Approved list with pagination returns 200 OK");
+    const json = await listRes.json();
+    assert(json.limit === 25, "List pagination respects requested limit of 25");
+    assert(json.offset === 0, "List pagination respects offset of 0");
+  }
 
   console.log(`\nResults: ${passed} passed, ${failed} failed.\n`);
   if (failed > 0) {

@@ -1200,3 +1200,632 @@ fn find_audio_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     }
     Ok(())
 }
+
+/// Extracted or sidecar metadata for contributed precipitation audio assets.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ExtractedAudioMetadata {
+    pub license: Option<String>,
+    pub author: Option<String>,
+    pub title: Option<String>,
+    pub surface_tag: Option<String>,
+    pub tags: Vec<String>,
+    pub descriptions: Vec<String>,
+    pub notes: Option<String>,
+}
+
+impl ExtractedAudioMetadata {
+    pub fn merge_with(&mut self, other: ExtractedAudioMetadata) {
+        if other.license.is_some() {
+            self.license = other.license;
+        }
+        if other.author.is_some() {
+            self.author = other.author;
+        }
+        if other.title.is_some() {
+            self.title = other.title;
+        }
+        if other.surface_tag.is_some() {
+            self.surface_tag = other.surface_tag;
+        }
+        if other.notes.is_some() {
+            self.notes = other.notes;
+        }
+        for tag in other.tags {
+            if !self.tags.contains(&tag) {
+                self.tags.push(tag);
+            }
+        }
+        for desc in other.descriptions {
+            if !self.descriptions.contains(&desc) {
+                self.descriptions.push(desc);
+            }
+        }
+    }
+}
+
+/// Extracts metadata from sidecar files (.json, .toml, .yaml, .yml, .txt) matching the audio file stem.
+pub fn extract_sidecar_metadata(audio_path: &Path) -> Result<Option<ExtractedAudioMetadata>> {
+    let parent = audio_path.parent().unwrap_or_else(|| Path::new("."));
+    let stem = audio_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    if stem.is_empty() {
+        return Ok(None);
+    }
+
+    let candidates = [
+        parent.join(format!("{}.json", stem)),
+        parent.join(format!("{}.toml", stem)),
+        parent.join(format!("{}.yaml", stem)),
+        parent.join(format!("{}.yml", stem)),
+        parent.join(format!("{}.txt", stem)),
+        parent.join("metadata.json"),
+        parent.join("metadata.txt"),
+    ];
+
+    for candidate in &candidates {
+        if candidate.exists() && candidate.is_file() {
+            if let Ok(content) = fs::read_to_string(candidate) {
+                if candidate.extension().is_some_and(|ext| ext == "json") {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                        let mut meta = ExtractedAudioMetadata::default();
+                        if let Some(lic) = val.get("license").and_then(|v| v.as_str()) {
+                            meta.license = Some(lic.to_string());
+                        }
+                        if let Some(auth) = val
+                            .get("author")
+                            .or_else(|| val.get("artist"))
+                            .or_else(|| val.get("contributor"))
+                            .and_then(|v| v.as_str())
+                        {
+                            meta.author = Some(auth.to_string());
+                        }
+                        if let Some(surf) = val
+                            .get("surface")
+                            .or_else(|| val.get("surface_tag"))
+                            .and_then(|v| v.as_str())
+                        {
+                            meta.surface_tag = Some(surf.to_string());
+                            meta.tags.push(surf.to_string());
+                        }
+                        if let Some(tags_val) = val.get("tags") {
+                            if let Some(arr) = tags_val.as_array() {
+                                for t in arr.iter().filter_map(|x| x.as_str()) {
+                                    if !meta.tags.contains(&t.to_string()) {
+                                        meta.tags.push(t.to_string());
+                                    }
+                                }
+                            } else if let Some(s) = tags_val.as_str() {
+                                for part in s.split(',').map(|s| s.trim()).filter(|s| !s.is_empty())
+                                {
+                                    if !meta.tags.contains(&part.to_string()) {
+                                        meta.tags.push(part.to_string());
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(descs_val) = val.get("descriptions") {
+                            if let Some(arr) = descs_val.as_array() {
+                                for d in arr.iter().filter_map(|x| x.as_str()) {
+                                    meta.descriptions.push(d.to_string());
+                                }
+                            }
+                        } else if let Some(desc) = val
+                            .get("description")
+                            .or_else(|| val.get("notes"))
+                            .and_then(|v| v.as_str())
+                        {
+                            meta.descriptions.push(desc.to_string());
+                            meta.notes = Some(desc.to_string());
+                        }
+                        return Ok(Some(meta));
+                    }
+                } else {
+                    // Line-by-line parsing for .txt, .toml, .yaml
+                    let mut meta = ExtractedAudioMetadata::default();
+                    for line in content.lines() {
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() || trimmed.starts_with('#') {
+                            continue;
+                        }
+                        let parts: Vec<&str> = if trimmed.contains(':') {
+                            trimmed.splitn(2, ':').collect()
+                        } else if trimmed.contains('=') {
+                            trimmed.splitn(2, '=').collect()
+                        } else {
+                            continue;
+                        };
+                        if parts.len() == 2 {
+                            let key = parts[0].trim().to_lowercase();
+                            let val = parts[1].trim().trim_matches('"').trim_matches('\'').trim();
+                            if !val.is_empty() {
+                                match key.as_str() {
+                                    "license" => meta.license = Some(val.to_string()),
+                                    "author" | "artist" | "contributor" => {
+                                        meta.author = Some(val.to_string())
+                                    }
+                                    "surface" | "surface_tag" => {
+                                        meta.surface_tag = Some(val.to_string());
+                                        if !meta.tags.contains(&val.to_string()) {
+                                            meta.tags.push(val.to_string());
+                                        }
+                                    }
+                                    "tags" | "tag" => {
+                                        for t in val
+                                            .split(',')
+                                            .map(|s| s.trim())
+                                            .filter(|s| !s.is_empty())
+                                        {
+                                            if !meta.tags.contains(&t.to_string()) {
+                                                meta.tags.push(t.to_string());
+                                            }
+                                        }
+                                    }
+                                    "description" | "comment" | "notes" => {
+                                        meta.descriptions.push(val.to_string());
+                                        meta.notes = Some(val.to_string());
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                    if meta.license.is_some() || meta.author.is_some() || !meta.tags.is_empty() {
+                        return Ok(Some(meta));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+/// Extracts embedded metadata tags and comments directly from the audio file using Symphonia.
+pub fn extract_audio_embedded_metadata(audio_path: &Path) -> Result<ExtractedAudioMetadata> {
+    let mut meta = ExtractedAudioMetadata::default();
+    let file = fs::File::open(audio_path)?;
+    let mss = symphonia::core::io::MediaSourceStream::new(Box::new(file), Default::default());
+    let mut hint = symphonia::core::probe::Hint::new();
+    if let Some(ext) = audio_path.extension().and_then(|s| s.to_str()) {
+        hint.with_extension(ext);
+    }
+
+    if let Ok(probed) =
+        symphonia::default::get_probe().format(&hint, mss, &Default::default(), &Default::default())
+    {
+        let mut format = probed.format;
+        if let Some(metadata) = format.metadata().current() {
+            for tag in metadata.tags() {
+                let val_str = tag.value.to_string();
+                let key_lower = tag.key.to_lowercase();
+                if key_lower.contains("license")
+                    || tag.std_key == Some(symphonia::core::meta::StandardTagKey::License)
+                {
+                    meta.license = Some(val_str.clone());
+                } else if key_lower.contains("artist")
+                    || key_lower.contains("author")
+                    || tag.std_key == Some(symphonia::core::meta::StandardTagKey::Artist)
+                {
+                    meta.author = Some(val_str.clone());
+                } else if key_lower.contains("title")
+                    || tag.std_key == Some(symphonia::core::meta::StandardTagKey::TrackTitle)
+                {
+                    meta.title = Some(val_str.clone());
+                } else if key_lower.contains("genre")
+                    || key_lower.contains("tag")
+                    || key_lower.contains("surface")
+                    || tag.std_key == Some(symphonia::core::meta::StandardTagKey::Genre)
+                {
+                    if !meta.tags.contains(&val_str) {
+                        meta.tags.push(val_str.clone());
+                    }
+                } else if key_lower.contains("comment")
+                    || key_lower.contains("desc")
+                    || tag.std_key == Some(symphonia::core::meta::StandardTagKey::Comment)
+                {
+                    if !meta.descriptions.contains(&val_str) {
+                        meta.descriptions.push(val_str.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(meta)
+}
+
+/// Decodes any input audio file (WAV, FLAC, MP3, OGG, M4A) and standardizes it to 48 kHz stereo 32-bit Float WAV.
+/// Computes SHA-256 of the resulting audio file, along with acoustic quality metrics.
+pub fn standardize_audio_file(
+    src_path: &Path,
+    dest_path: &Path,
+    thresholds: &AudioQualityThresholds,
+) -> Result<(AcousticQualityMetrics, String, f32)> {
+    if !src_path.exists() {
+        bail!("Source audio file does not exist: {:?}", src_path);
+    }
+
+    let file = fs::File::open(src_path)
+        .with_context(|| format!("Failed opening {:?} for standardization", src_path))?;
+    let mss = symphonia::core::io::MediaSourceStream::new(Box::new(file), Default::default());
+    let mut hint = symphonia::core::probe::Hint::new();
+    if let Some(ext) = src_path.extension().and_then(|s| s.to_str()) {
+        hint.with_extension(ext);
+    }
+
+    let probed = symphonia::default::get_probe()
+        .format(&hint, mss, &Default::default(), &Default::default())
+        .with_context(|| format!("Unsupported audio format in {:?}", src_path))?;
+    let mut format = probed.format;
+    let track = format
+        .default_track()
+        .or_else(|| format.tracks().first())
+        .context("No audio track found in file")?;
+
+    let track_id = track.id;
+    let codec_params = track.codec_params.clone();
+    let src_rate = codec_params.sample_rate.unwrap_or(48000);
+    let src_channels = codec_params.channels.map(|c| c.count() as u16).unwrap_or(2);
+
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&codec_params, &Default::default())
+        .with_context(|| format!("Unsupported codec in {:?}", src_path))?;
+
+    let mut sample_buf: Option<symphonia::core::audio::SampleBuffer<f32>> = None;
+    let mut left_samples: Vec<f32> = Vec::new();
+    let mut right_samples: Vec<f32> = Vec::new();
+
+    while let Ok(packet) = format.next_packet() {
+        if packet.track_id() != track_id {
+            continue;
+        }
+        match decoder.decode(&packet) {
+            Ok(decoded) => {
+                if sample_buf.is_none() {
+                    let spec = *decoded.spec();
+                    let duration = decoded.capacity() as u64;
+                    sample_buf = Some(symphonia::core::audio::SampleBuffer::new(duration, spec));
+                }
+                if let Some(buf) = sample_buf.as_mut() {
+                    buf.copy_interleaved_ref(decoded);
+                    let samples = buf.samples();
+                    let ch = src_channels as usize;
+                    for frame in samples.chunks_exact(ch) {
+                        if ch == 1 {
+                            left_samples.push(frame[0]);
+                            right_samples.push(frame[0]);
+                        } else {
+                            left_samples.push(frame[0]);
+                            right_samples.push(frame[1]);
+                        }
+                    }
+                }
+            }
+            Err(symphonia::core::errors::Error::DecodeError(_)) => continue,
+            Err(e) => bail!("Decoding error in {:?}: {}", src_path, e),
+        }
+    }
+
+    if left_samples.is_empty() {
+        bail!("Audio file contains 0 audio samples (empty file)");
+    }
+
+    // Resample to 48000 Hz if necessary
+    let target_rate = 48000u32;
+    let (final_left, final_right) = if src_rate == target_rate {
+        (left_samples, right_samples)
+    } else {
+        let ratio = src_rate as f64 / target_rate as f64;
+        let out_len = ((left_samples.len() as f64) / ratio).round() as usize;
+        let mut r_left = Vec::with_capacity(out_len);
+        let mut r_right = Vec::with_capacity(out_len);
+
+        for i in 0..out_len {
+            let src_idx = i as f64 * ratio;
+            let idx0 = src_idx.floor() as usize;
+            let idx1 = (idx0 + 1).min(left_samples.len().saturating_sub(1));
+            let alpha = (src_idx - idx0 as f64) as f32;
+
+            let l0 = left_samples[idx0];
+            let l1 = left_samples[idx1];
+            r_left.push((1.0 - alpha) * l0 + alpha * l1);
+
+            let r0 = right_samples[idx0];
+            let r1 = right_samples[idx1];
+            r_right.push((1.0 - alpha) * r0 + alpha * r1);
+        }
+        (r_left, r_right)
+    };
+
+    if let Some(parent) = dest_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    // Write standardized 48kHz stereo float WAV
+    let spec = hound::WavSpec {
+        channels: 2,
+        sample_rate: target_rate,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+    let mut writer = hound::WavWriter::create(dest_path, spec)?;
+    for i in 0..final_left.len() {
+        writer.write_sample(final_left[i])?;
+        writer.write_sample(final_right[i])?;
+    }
+    writer.finalize()?;
+
+    // Perform objective acoustic screening on standardized WAV
+    let (metrics, sha256, duration) = validate_audio_file(dest_path, thresholds)?;
+    Ok((metrics, sha256, duration))
+}
+
+/// Quarantine log entry for rejected/incomplete contributions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuarantineRecord {
+    pub filename: String,
+    pub original_path: String,
+    pub sha256: String,
+    pub status: String,
+    pub quarantine_reason: String,
+    pub extracted_metadata: ExtractedAudioMetadata,
+    pub created_at: String,
+}
+
+/// Result summary of processing the local drop input folder.
+#[derive(Debug, Clone, Default)]
+pub struct LocalDropResult {
+    pub total_scanned: usize,
+    pub quarantined_count: usize,
+    pub standardized_count: usize,
+    pub standardized_files: Vec<PathBuf>,
+    pub quarantined_files: Vec<PathBuf>,
+}
+
+/// Automatically processes audio files dropped into the input folder.
+/// Validates ethical licenses and DSP acoustic criteria:
+/// - Incomplete / unapproved licenses or corrupted audio are safely moved to the local quarantine folder.
+/// - Valid files are standardized to 48kHz stereo WAV in the target directory, indexed in the
+///   Persistent Data Utility Ledger and Provenance Manifest, and prepared for Git tracking.
+pub fn process_input_drop_folder(
+    input_dir: &Path,
+    quarantine_dir: &Path,
+    target_dir: &Path,
+    ledger_path: &Path,
+    manifest_provenance_path: &Path,
+) -> Result<LocalDropResult> {
+    if !input_dir.exists() {
+        fs::create_dir_all(input_dir)?;
+        return Ok(LocalDropResult::default());
+    }
+
+    fs::create_dir_all(quarantine_dir)?;
+    fs::create_dir_all(target_dir)?;
+
+    let mut result = LocalDropResult::default();
+    let default_thresholds = AudioQualityThresholds::default();
+
+    let mut audio_files = Vec::new();
+    for entry in fs::read_dir(input_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file() {
+            if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+                let ext_lower = ext.to_lowercase();
+                if ["wav", "mp3", "flac", "ogg", "m4a"].contains(&ext_lower.as_str()) {
+                    audio_files.push(path);
+                }
+            }
+        }
+    }
+
+    result.total_scanned = audio_files.len();
+    if audio_files.is_empty() {
+        return Ok(result);
+    }
+
+    info!(
+        "[*] Processing local input drop folder ({:?}): {} audio files discovered",
+        input_dir,
+        audio_files.len()
+    );
+
+    let mut ledger = crate::data_worker::DataUtilityLedger::load_or_create(ledger_path);
+    let mut prov_manifest = if manifest_provenance_path.exists() {
+        fs::read_to_string(manifest_provenance_path)
+            .ok()
+            .and_then(|c| serde_json::from_str::<ProvenanceManifest>(&c).ok())
+            .unwrap_or_default()
+    } else {
+        ProvenanceManifest::default()
+    };
+
+    for audio_path in audio_files {
+        let filename = audio_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let stem = audio_path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
+        // 1. Extract metadata from sidecar (.json, .toml, .yaml, .txt) and internal tags
+        let sidecar_meta = extract_sidecar_metadata(&audio_path).unwrap_or(None);
+        let embedded_meta = extract_audio_embedded_metadata(&audio_path).unwrap_or_default();
+        let mut meta = embedded_meta;
+        if let Some(s) = sidecar_meta {
+            meta.merge_with(s);
+        }
+
+        // 2. Validate Ethical License
+        let license_str = meta.license.as_deref().unwrap_or("Unknown");
+        let (license_approved, license_tier, license_reason) = LicenseVerifier::verify(license_str);
+
+        if !license_approved {
+            // Quarantine: Missing or unapproved license
+            let file_sha =
+                compute_file_sha256(&audio_path).unwrap_or_else(|_| format!("unknown_{}", stem));
+            let quar_dest = quarantine_dir.join(&filename);
+            let _ = fs::rename(&audio_path, &quar_dest);
+
+            let quar_json_path = quarantine_dir.join(format!("{}_quarantine.json", stem));
+            let quar_record = QuarantineRecord {
+                filename: filename.clone(),
+                original_path: audio_path.display().to_string(),
+                sha256: file_sha,
+                status: "QUARANTINE".to_string(),
+                quarantine_reason: format!("UNAPPROVED_OR_MISSING_LICENSE: {}", license_reason),
+                extracted_metadata: meta.clone(),
+                created_at: crate::ingest::chrono_lite_timestamp(),
+            };
+            let _ = atomic_write(
+                &quar_json_path,
+                serde_json::to_string_pretty(&quar_record)?.as_bytes(),
+            );
+
+            warn!(
+                "  [!] Quarantined {:?}: Unapproved or missing license ({})",
+                filename, license_reason
+            );
+            result.quarantined_count += 1;
+            result.quarantined_files.push(quar_dest);
+            continue;
+        }
+
+        // 3. License is approved: attempt audio standardization to 48kHz stereo WAV
+        let temp_std_path = target_dir.join(format!("temp_std_{}.wav", stem));
+        match standardize_audio_file(&audio_path, &temp_std_path, &default_thresholds) {
+            Ok((metrics, std_sha256, duration_secs)) => {
+                let final_filename = format!("std_{}_{}.wav", &std_sha256[..12], stem);
+                let final_std_path = target_dir.join(&final_filename);
+                let _ = fs::rename(&temp_std_path, &final_std_path);
+
+                // Determine surface tag
+                let surface_tag = meta
+                    .surface_tag
+                    .clone()
+                    .or_else(|| meta.tags.first().cloned())
+                    .unwrap_or_else(|| "ambient_broadband".to_string());
+                let canonical_surf = shared::surface::CanonicalSurface::from_tag(&surface_tag);
+                let material_props = canonical_surf.material_properties().to_array();
+
+                let q_score = metrics.spectral_flatness.clamp(0.0, 1.0) * 0.4
+                    + (1.0 - metrics.clipping_ratio).clamp(0.0, 1.0) * 0.3
+                    + (metrics.rms_energy * 10.0).clamp(0.0, 1.0) * 0.3;
+
+                let utility_score = crate::data_worker::compute_geometric_utility_score(
+                    q_score, 1.0, 1.0, 1.2, 0, 0.0,
+                );
+                let retrain_priority =
+                    crate::data_worker::compute_retraining_priority(q_score, 1.0, 1.0, 1.2);
+
+                // Register in Data Utility Ledger
+                let utility_record = crate::data_worker::DataChunkUtilityRecord {
+                    chunk_id: format!("{}_chunk000", stem),
+                    sha256: std_sha256.clone(),
+                    source_id: final_filename.clone(),
+                    surface_tag: surface_tag.clone(),
+                    material_properties: material_props,
+                    acoustic_quality_score: q_score,
+                    loss_ema: 1.0,
+                    gradient_norm_ema: 1.0,
+                    times_trained: 0,
+                    last_trained_timestamp: 0,
+                    information_novelty: 1.0,
+                    current_utility_score: utility_score,
+                    retraining_priority: retrain_priority,
+                    is_cached_locally: true,
+                };
+                ledger.upsert_record(utility_record);
+
+                // Register in Provenance Manifest
+                let prov_record = ProvenanceRecord {
+                    filename: final_filename.clone(),
+                    source_url: format!("local_drop://{}", filename),
+                    source_platform: format!(
+                        "Local Drop Intake ({})",
+                        meta.author.as_deref().unwrap_or("Contributor")
+                    ),
+                    tags: if meta.tags.is_empty() {
+                        vec![surface_tag.clone()]
+                    } else {
+                        meta.tags.clone()
+                    },
+                    license: meta.license.clone(),
+                    license_tier,
+                    sha256: std_sha256.clone(),
+                    file_size_bytes: fs::metadata(&final_std_path).map(|m| m.len()).unwrap_or(0),
+                    quality: Some(metrics),
+                    descriptions: meta.descriptions.clone(),
+                    alternate_licenses: Vec::new(),
+                    contributors: meta.author.clone().map(|a| vec![a]).unwrap_or_default(),
+                };
+                prov_manifest.records.push(prov_record);
+                prov_manifest.total_sources = prov_manifest.records.len();
+                *prov_manifest
+                    .tags_distribution
+                    .entry(surface_tag)
+                    .or_insert(0) += 1;
+
+                // Remove original audio and any sidecar from input_dir
+                let _ = fs::remove_file(&audio_path);
+                for ext in &["json", "toml", "yaml", "yml", "txt"] {
+                    let sidecar = input_dir.join(format!("{}.{}", stem, ext));
+                    if sidecar.exists() {
+                        let _ = fs::remove_file(sidecar);
+                    }
+                }
+
+                info!(
+                    "  [+] Standardized {:?} -> {:?} (SHA-256: {}, {:.1}s)",
+                    filename, final_filename, std_sha256, duration_secs
+                );
+                result.standardized_count += 1;
+                result.standardized_files.push(final_std_path);
+            }
+            Err(e) => {
+                // Audio standardization or DSP screening failed -> Quarantine
+                let _ = fs::remove_file(&temp_std_path);
+                let file_sha = compute_file_sha256(&audio_path)
+                    .unwrap_or_else(|_| format!("unknown_{}", stem));
+                let quar_dest = quarantine_dir.join(&filename);
+                let _ = fs::rename(&audio_path, &quar_dest);
+
+                let quar_json_path = quarantine_dir.join(format!("{}_quarantine.json", stem));
+                let quar_record = QuarantineRecord {
+                    filename: filename.clone(),
+                    original_path: audio_path.display().to_string(),
+                    sha256: file_sha,
+                    status: "QUARANTINE".to_string(),
+                    quarantine_reason: format!("ACOUSTIC_SCREENING_FAILED: {}", e),
+                    extracted_metadata: meta.clone(),
+                    created_at: crate::ingest::chrono_lite_timestamp(),
+                };
+                let _ = atomic_write(
+                    &quar_json_path,
+                    serde_json::to_string_pretty(&quar_record)?.as_bytes(),
+                );
+
+                warn!(
+                    "  [!] Quarantined {:?}: Acoustic screening failed: {}",
+                    filename, e
+                );
+                result.quarantined_count += 1;
+                result.quarantined_files.push(quar_dest);
+            }
+        }
+    }
+
+    // Persist updated ledger and provenance manifest
+    let _ = ledger.save_to_file(ledger_path);
+    if let Ok(json) = serde_json::to_string_pretty(&prov_manifest) {
+        let _ = atomic_write(manifest_provenance_path, json.as_bytes());
+    }
+
+    Ok(result)
+}

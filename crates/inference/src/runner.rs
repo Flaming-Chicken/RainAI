@@ -3,7 +3,7 @@
 use crate::asset_manager::{AssetManager, ExecutionPath};
 use crate::engram::EngramBank;
 use crate::kernels;
-use crate::model::{MoeExecutionMode, QuantizedLayer, QuantizedModelManifest};
+use crate::model::{QuantizedLayer, QuantizedModelManifest};
 use crate::weight_cache_manager::WeightCacheManager;
 use crate::weight_loader::{LoadedLayer, WeightBuffer, WeightCache};
 
@@ -31,7 +31,6 @@ pub struct InferenceRunner {
     pub manifest: Option<QuantizedModelManifest>,
     pub min_bit_width: f32,
     pub max_bit_width: f32,
-    pub active_experts: usize,
     pub diffusion_bypass: bool,
     pub weight_cache: WeightCache,
     pub _layers: Vec<QuantizedLayer>,
@@ -41,7 +40,6 @@ pub struct InferenceRunner {
     pub thinking_steps: usize,
     pub use_consistency_jump: bool,
     pub ssm_momentum_alpha: f32,
-    pub moe_mode: MoeExecutionMode,
     pub cached_cond_hash: u64,
     pub cond_cache_valid: bool,
     pub engram_bank: Option<EngramBank>,
@@ -137,7 +135,6 @@ impl InferenceRunner {
             manifest,
             min_bit_width: min_bits,
             max_bit_width: max_bits,
-            active_experts: 8,
             diffusion_bypass: false,
             weight_cache,
             _layers: Vec::new(),
@@ -147,7 +144,6 @@ impl InferenceRunner {
             thinking_steps: 3,
             use_consistency_jump: false,
             ssm_momentum_alpha: 0.10,
-            moe_mode: MoeExecutionMode::SparseDynamic,
             cached_cond_hash: 0,
             cond_cache_valid: false,
             engram_bank: Some(EngramBank::new()),
@@ -155,16 +151,6 @@ impl InferenceRunner {
             stochastic_brown_driver: [0.0; 64],
             rng_state: 88172645463325252,
         }
-    }
-
-    /// Sets the MoE execution pathway (e.g. SparseDynamic vs DenseSoupDynamic)
-    pub fn set_moe_mode(&mut self, mode: MoeExecutionMode) {
-        self.moe_mode = mode;
-    }
-
-    /// Gets active MoE execution mode
-    pub fn moe_mode(&self) -> MoeExecutionMode {
-        self.moe_mode
     }
 
     /// Sets the SSM state momentum damping coefficient (clamped 0.0..=0.5).
@@ -187,11 +173,6 @@ impl InferenceRunner {
                     0.25 * original[i - 1][d] + 0.50 * original[i][d] + 0.25 * original[i + 1][d];
             }
         }
-    }
-
-    /// Set active MoE experts (clamped 2..=8) for dynamic expert shedding
-    pub fn set_active_experts(&mut self, experts: usize) {
-        self.active_experts = experts.clamp(2, 8);
     }
 
     /// Set latent deliberation thinking steps (clamped 1..=5)
@@ -227,14 +208,9 @@ impl InferenceRunner {
 
     #[inline]
     fn ensure_conditioning_projection(&mut self, conditioning: &[f32; CONDITION_DIM]) {
-        // Fast hash-check for conditioning gateway cache validity
-        // Hashes dynamic weather/environmental parameters (512..554) and semantic embedding sample (0..8)
+        // Fast hash-check for conditioning gateway cache validity over the 64-dimensional vector
         let mut cond_hash = 14695981039346656037u64;
-        for (i, &v) in conditioning[512..]
-            .iter()
-            .chain(conditioning[..8].iter())
-            .enumerate()
-        {
+        for (i, &v) in conditioning.iter().enumerate() {
             cond_hash = (cond_hash ^ (v.to_bits() as u64).wrapping_mul((i + 1) as u64))
                 .wrapping_mul(1099511628211);
         }
@@ -354,7 +330,7 @@ impl InferenceRunner {
         }
     }
 
-    /// Run one step of inference given the 554-dim conditioning vector
+    /// Run one step of inference given the 64-dim conditioning vector
     /// Returns 4-channel FOA values (W, X, Y, Z)
     pub fn step(&mut self, conditioning: &[f32; CONDITION_DIM]) -> (f32, f32, f32, f32) {
         if self.use_consistency_jump && self.has_consistency_jump_head() {
@@ -383,14 +359,10 @@ impl InferenceRunner {
             *u += b * 0.08;
         }
 
-        // 2. Mamba2 Recurrence & MoE Dispatch across Thinking Deliberation Steps (1..=5)
+        // 2. Mamba2 Recurrence across Thinking Deliberation Steps (1..=5)
         let iterations = self.thinking_steps.clamp(1, 5);
-        let tau_moe = 0.75f32; // Continuous temperature for smooth softmax routing
-        let decay_factor = 0.85; // Unselected expert state decay floor
-        let gamma_delib = if iterations > 1 { 0.40f32 } else { 0.0f32 };
-        let mut delib_history = [0.0f32; 16];
 
-        for iter in 0..iterations {
+        for _ in 0..iterations {
             let prev_latent = self.latent_state;
 
             if let (Some(a_diag), Some(b_diag)) = (
@@ -420,42 +392,6 @@ impl InferenceRunner {
                 let alpha = self.ssm_momentum_alpha;
                 for (curr, &prev) in self.latent_state.iter_mut().zip(prev_latent.iter()) {
                     *curr = prev * alpha + *curr * (1.0 - alpha);
-                }
-            }
-
-            if let Some(router) = self.weight_cache.get("moe.router.weight") {
-                let mut step_weights = [0.0f32; 16];
-                match self.moe_mode {
-                    MoeExecutionMode::SparseDynamic => {
-                        kernels::route_and_decay_with_history(
-                            &mut self.latent_state,
-                            &router.weights,
-                            8, // Total experts
-                            tau_moe,
-                            decay_factor,
-                            if iter > 0 { Some(&delib_history) } else { None },
-                            gamma_delib,
-                            Some(&mut step_weights),
-                        );
-                    }
-                    MoeExecutionMode::DenseSoupDynamic | MoeExecutionMode::DenseSoupStatic => {
-                        // In dense soup mode, state is preserved without sparse decay
-                    }
-                    MoeExecutionMode::DualMacroSoup => {
-                        kernels::route_and_decay_with_history(
-                            &mut self.latent_state,
-                            &router.weights,
-                            8,
-                            tau_moe * 0.5, // Sharpened specialist focus + shared base
-                            decay_factor,
-                            if iter > 0 { Some(&delib_history) } else { None },
-                            gamma_delib,
-                            Some(&mut step_weights),
-                        );
-                    }
-                }
-                for e in 0..8 {
-                    delib_history[e] += step_weights[e];
                 }
             }
         }

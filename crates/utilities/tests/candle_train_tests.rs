@@ -352,7 +352,7 @@ fn test_candle_manifest_dataset() {
             .expect("Failed sampling batch from real manifest dataset");
 
         assert_eq!(batch.audio_features.dims(), &[4, LATENT_DIM]);
-        assert_eq!(batch.conditioning.dims(), &[4, 554]);
+        assert_eq!(batch.conditioning.dims(), &[4, 64]);
         assert_eq!(batch.target_bands.dims(), &[4, 16]);
         assert_eq!(batch.z_target.dims(), &[4, LATENT_DIM]);
 
@@ -439,11 +439,11 @@ fn test_candle_thinking_block() {
     let vs = VarBuilder::from_varmap(&varmap, DType::F32, &device);
 
     let thinking =
-        utilities::candle_train::CandleThinkingBlock::new(LATENT_DIM, 554, vs.pp("thinking"))
+        utilities::candle_train::CandleThinkingBlock::new(LATENT_DIM, 64, vs.pp("thinking"))
             .expect("Failed building CandleThinkingBlock");
 
     let z_init = Tensor::randn(0.0f32, 1.0f32, (2, LATENT_DIM), &device).unwrap();
-    let cond = Tensor::randn(0.0f32, 0.5f32, (2, 554), &device).unwrap();
+    let cond = Tensor::randn(0.0f32, 0.5f32, (2, 64), &device).unwrap();
 
     let (z_refined, steps_taken, halting_probs) = thinking
         .forward_thinking(&z_init, &cond, 4, 0.001)
@@ -865,7 +865,7 @@ fn test_temporal_tabu_and_expert_diversity_loss() {
     let mamba = CandleMamba2MoE::new(vs).unwrap();
 
     let z_prev = Tensor::randn(0.0f32, 1.0f32, (2, LATENT_DIM), &device).unwrap();
-    let cond = Tensor::randn(0.0f32, 1.0f32, (2, 554), &device).unwrap();
+    let cond = Tensor::randn(0.0f32, 1.0f32, (2, 64), &device).unwrap();
     let h_prev = Tensor::zeros((2, 128), DType::F32, &device).unwrap();
 
     // Prior activation history heavily using expert 0
@@ -952,11 +952,11 @@ fn test_consistency_jump_head_distillation() {
     let varmap = VarMap::new();
     let vs = VarBuilder::from_varmap(&varmap, DType::F32, &device);
 
-    let head = CandleConsistencyHead::new(LATENT_DIM + 554, LATENT_DIM, vs.pp("consistency"))
+    let head = CandleConsistencyHead::new(LATENT_DIM + 64, LATENT_DIM, vs.pp("consistency"))
         .expect("Failed creating CandleConsistencyHead");
 
     let z_0 = Tensor::randn(0.0f32, 1.0f32, (2, LATENT_DIM), &device).unwrap();
-    let cond = Tensor::randn(0.0f32, 1.0f32, (2, 554), &device).unwrap();
+    let cond = Tensor::randn(0.0f32, 1.0f32, (2, 64), &device).unwrap();
     let z_converged = Tensor::randn(0.0f32, 1.0f32, (2, LATENT_DIM), &device).unwrap();
 
     let z_fast = head
@@ -1463,7 +1463,7 @@ fn test_sparse_dirichlet_surface_mixtures() {
 
     for _ in 0..20 {
         let mixture = utilities::candle_train::sample_sparse_dirichlet_surfaces(&mut rng, 0.25);
-        assert_eq!(mixture.len(), 8);
+        assert_eq!(mixture.len(), 9);
 
         let mut sum = 0.0f32;
         let mut non_zero_count = 0;
