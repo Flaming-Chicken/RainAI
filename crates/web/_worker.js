@@ -98,6 +98,41 @@ async function ensureDbSchema(db) {
   }
 }
 
+// Rate Limiter configuration for zero-cost Cloudflare Free Tier preservation
+// Cloudflare Free Tier: 100k D1 writes/day, 1M R2 Class A ops/month, 10 GB storage
+// Enforce:
+// - Writes (submit-record, upload-blob, ack-ingested): max 15 requests/min per IP
+// - Reads (quarantine-list, approved-list): max 60 requests/min per IP
+const rateLimitStore = new Map();
+const RATE_LIMIT_CLEANUP_INTERVAL = 60000;
+let lastRateLimitCleanup = Date.now();
+
+function isRateLimited(ip, category) {
+  const now = Date.now();
+  if (now - lastRateLimitCleanup > RATE_LIMIT_CLEANUP_INTERVAL) {
+    for (const [k, timestamps] of rateLimitStore.entries()) {
+      const valid = timestamps.filter(t => now - t < 60000);
+      if (valid.length === 0) {
+        rateLimitStore.delete(k);
+      } else {
+        rateLimitStore.set(k, valid);
+      }
+    }
+    lastRateLimitCleanup = now;
+  }
+
+  const key = `${ip || "global"}:${category}`;
+  const timestamps = (rateLimitStore.get(key) || []).filter(t => now - t < 60000);
+  const maxAllowed = category === "write" ? 15 : 60;
+
+  if (timestamps.length >= maxAllowed) {
+    return true;
+  }
+  timestamps.push(now);
+  rateLimitStore.set(key, timestamps);
+  return false;
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -142,6 +177,30 @@ export default {
       return new Response("Not Found", { status: 404, headers: corsHeaders });
     }
 
+    // IP Extraction & Edge Rate Limiting (Zero Cost Guarantee)
+    const clientIp = request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "127.0.0.1";
+    const isWriteOp = request.method === "POST" || request.method === "PUT" || request.method === "DELETE";
+    const rateLimitCategory = isWriteOp ? "write" : "read";
+
+    if (url.pathname.startsWith("/api/contribute/") && url.pathname !== "/api/contribute/health") {
+      if (isRateLimited(clientIp, rateLimitCategory)) {
+        return new Response(
+          JSON.stringify({
+            error: "Rate limit exceeded. To protect serverless edge quotas, write requests are capped at 15/min and read queries at 60/min.",
+            category: rateLimitCategory,
+          }),
+          {
+            status: 429,
+            headers: {
+              ...corsHeaders,
+              "Content-Type": "application/json",
+              "Retry-After": "60",
+            },
+          }
+        );
+      }
+    }
+
     try {
       if (env.DB) {
         await ensureDbSchema(env.DB);
@@ -165,6 +224,17 @@ export default {
 
       // 2. Submit Contribution Metadata Record (D1 Transaction / R2 Sidecar)
       if (url.pathname === "/api/contribute/submit-record" && request.method === "POST") {
+        const contentLength = parseInt(request.headers.get("Content-Length") || "0", 10);
+        if (contentLength > 512 * 1024) {
+          return new Response(
+            JSON.stringify({ error: "Payload Too Large: Metadata records must not exceed 512 KB." }),
+            {
+              status: 413,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            }
+          );
+        }
+
         const body = await request.json();
 
         // Turnstile Verification
@@ -411,8 +481,19 @@ export default {
         );
       }
 
-      // 3. Direct Binary Audio Blob Upload to R2
+      // 3. Direct Binary Audio Blob Upload to R2 (Capped at 50 MB to prevent cost spikes)
       if (url.pathname.startsWith("/api/contribute/upload-blob/") && request.method === "PUT") {
+        const contentLength = parseInt(request.headers.get("Content-Length") || "0", 10);
+        if (contentLength > 50 * 1024 * 1024) {
+          return new Response(
+            JSON.stringify({ error: "Payload Too Large: Audio files must not exceed 50 MB." }),
+            {
+              status: 413,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            }
+          );
+        }
+
         const sha256 = url.pathname.replace("/api/contribute/upload-blob/", "");
         const targetStatus = request.headers.get("X-Target-Status") || "approved";
         const fileExt = request.headers.get("X-File-Extension") || "flac";
@@ -427,7 +508,6 @@ export default {
         }
 
         // If D1 is bound, update file_size_bytes if known
-        const contentLength = parseInt(request.headers.get("Content-Length") || "0", 10);
         if (env.DB && contentLength > 0 && sha256) {
           await env.DB.prepare(
             "UPDATE records SET file_size_bytes = ?, updated_at = datetime('now') WHERE sha256 = ?"
@@ -442,11 +522,39 @@ export default {
         );
       }
 
-      // 4. Maintainer Triage: List Quarantined Records
+      // 3b. Retrieve Audio Blob from R2 for Local Maintenance / Automatic Pipeline Ingestion
+      if (url.pathname.startsWith("/api/contribute/blob/") && request.method === "GET") {
+        const sha256 = url.pathname.replace("/api/contribute/blob/", "");
+        if (!env.DATA_BUCKET || !sha256) {
+          return new Response("Not Found", { status: 404, headers: corsHeaders });
+        }
+        for (const ext of ["flac", "wav", "m4a", "opus", "mp3"]) {
+          for (const prefix of ["ingest/approved", "ingest/quarantine", "ingest/blobs"]) {
+            const blobKey = `${prefix}/${sha256}.${ext}`;
+            const obj = await env.DATA_BUCKET.get(blobKey);
+            if (obj) {
+              const headers = new Headers(corsHeaders);
+              headers.set("Content-Type", obj.httpMetadata?.contentType || `audio/${ext}`);
+              if (obj.size) {
+                headers.set("Content-Length", obj.size.toString());
+              }
+              headers.set("X-SHA256", sha256);
+              return new Response(obj.body, { headers });
+            }
+          }
+        }
+        return new Response("Blob Not Found", { status: 404, headers: corsHeaders });
+      }
+
+      // 4. Maintainer Triage: List Quarantined Records (Capped at 50 to avoid high D1/R2 scan fees)
       if (url.pathname === "/api/contribute/quarantine-list" && request.method === "GET") {
+        const urlLimit = parseInt(url.searchParams.get("limit") || "50", 10);
+        const limit = Math.min(Math.max(urlLimit || 50, 1), 50);
+        const offset = Math.max(parseInt(url.searchParams.get("offset") || "0", 10), 0);
+
         if (env.DB) {
-          const sql = "SELECT * FROM records WHERE status = 'QUARANTINE' ORDER BY updated_at DESC";
-          const stmt = env.DB.prepare(sql);
+          const sql = "SELECT * FROM records WHERE status = 'QUARANTINE' ORDER BY updated_at DESC LIMIT ? OFFSET ?";
+          const stmt = env.DB.prepare(sql).bind(limit, offset);
           const res = await stmt.all();
           const records = (res.results || []).map((r) => ({
             sha256: r.sha256,
@@ -467,7 +575,7 @@ export default {
             created_at: r.created_at,
             updated_at: r.updated_at,
           }));
-          return new Response(JSON.stringify({ records, total: records.length }), {
+          return new Response(JSON.stringify({ records, total: records.length, limit, offset }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
@@ -476,7 +584,7 @@ export default {
           return new Response(JSON.stringify({ records: [] }), { headers: corsHeaders });
         }
 
-        const listed = await env.DATA_BUCKET.list({ prefix: `ingest/quarantine/` });
+        const listed = await env.DATA_BUCKET.list({ prefix: `ingest/quarantine/`, limit });
         const jsonKeys = listed.objects.filter((obj) => obj.key.endsWith(".json"));
         const records = [];
 
@@ -488,16 +596,20 @@ export default {
           }
         }
 
-        return new Response(JSON.stringify({ records, total: records.length }), {
+        return new Response(JSON.stringify({ records, total: records.length, limit, offset }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
-      // 5. Maintainer Pull-Approved: List Approved Records
+      // 5. Maintainer Pull-Approved: List Approved Records (Capped at 50 to avoid high D1/R2 scan fees)
       if (url.pathname === "/api/contribute/approved-list" && request.method === "GET") {
+        const urlLimit = parseInt(url.searchParams.get("limit") || "50", 10);
+        const limit = Math.min(Math.max(urlLimit || 50, 1), 50);
+        const offset = Math.max(parseInt(url.searchParams.get("offset") || "0", 10), 0);
+
         if (env.DB) {
-          const sql = "SELECT * FROM records WHERE status = 'APPROVED' ORDER BY updated_at DESC";
-          const stmt = env.DB.prepare(sql);
+          const sql = "SELECT * FROM records WHERE status = 'APPROVED' ORDER BY updated_at DESC LIMIT ? OFFSET ?";
+          const stmt = env.DB.prepare(sql).bind(limit, offset);
           const res = await stmt.all();
           const records = (res.results || []).map((r) => ({
             sha256: r.sha256,
@@ -518,7 +630,7 @@ export default {
             created_at: r.created_at,
             updated_at: r.updated_at,
           }));
-          return new Response(JSON.stringify({ records, total: records.length }), {
+          return new Response(JSON.stringify({ records, total: records.length, limit, offset }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
@@ -527,7 +639,7 @@ export default {
           return new Response(JSON.stringify({ records: [] }), { headers: corsHeaders });
         }
 
-        const listed = await env.DATA_BUCKET.list({ prefix: `ingest/approved/` });
+        const listed = await env.DATA_BUCKET.list({ prefix: `ingest/approved/`, limit });
         const jsonKeys = listed.objects.filter((obj) => obj.key.endsWith(".json"));
         const records = [];
 
@@ -539,7 +651,7 @@ export default {
           }
         }
 
-        return new Response(JSON.stringify({ records, total: records.length }), {
+        return new Response(JSON.stringify({ records, total: records.length, limit, offset }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }

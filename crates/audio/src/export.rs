@@ -5,10 +5,7 @@
 
 use crate::decoder::{AmbisonicDecoder, DecodeMode, FoaFrame};
 use crate::procedural::ProceduralSynthesizer;
-use shared::rain::{
-    GovernorOptimizationProfile, HardwareStressProfile, MetaControllerInterceptionMode,
-    QualityTier, RainState,
-};
+use shared::rain::{MetaControllerInterceptionMode, QualityTier, RainState};
 use std::io::{self, Write};
 
 pub const CHUNK_FRAMES: usize = 2048;
@@ -80,22 +77,10 @@ pub fn render_wav_stream<W: Write>(
 
     // Decouple Offline Export: OfflineMaxQuality unlocks infinite headroom and K=5 deliberation
     if state.meta_mediation_mode == MetaControllerInterceptionMode::OfflineMaxQuality {
-        let mut gov = crate::meta_governor::MetaGovernor::new();
-        let action = gov.evaluate(
-            &state.telemetry,
-            QualityTier::StudioFp32,
-            false,
-            GovernorOptimizationProfile::StudioMaster,
-            HardwareStressProfile::NominalDesktop,
-            MetaControllerInterceptionMode::OfflineMaxQuality,
-            state.user_thinking_steps,
-            0.1,
-        );
         runner.set_target_tier(QualityTier::StudioFp32);
-        runner.set_thinking_steps(action.thinking_steps);
-        runner.set_active_experts(action.active_experts);
-        runner.set_diffusion_bypass(action.diffusion_bypass);
-        runner.update_quantization_bounds(action.min_bits, action.max_bits);
+        runner.set_thinking_steps(state.user_thinking_steps.unwrap_or(5));
+        runner.set_diffusion_bypass(false);
+        runner.update_quantization_bounds(32.0, 32.0);
         runner.set_use_consistency_jump(false);
         active_state.telemetry.synthesis_blend = 0.0;
     } else {

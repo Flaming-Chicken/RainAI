@@ -23,6 +23,7 @@ tracing-subscriber = { workspace = true }
 shared = { workspace = true }
 audio = { workspace = true }
 inference = { workspace = true }
+hound = { workspace = true }
 bson = { workspace = true }
 miniz_oxide = { workspace = true }
 base64 = { workspace = true }

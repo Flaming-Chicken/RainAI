@@ -6,7 +6,7 @@ use inference::kernels::{dense_projection, step_recurrence_f32, ternary_matmul_s
 fn bench_workspace_kernels(c: &mut Criterion) {
     let mut group = c.benchmark_group("RainAI Workspace Kernels");
 
-    let in_dim = 554;
+    let in_dim = 64;
     let out_dim = 64;
     let input = vec![0.5f32; in_dim];
     let weights_f32 = vec![0.1f32; out_dim * in_dim];

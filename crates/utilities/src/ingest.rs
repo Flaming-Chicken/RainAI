@@ -672,7 +672,7 @@ impl ProvenanceRecord {
 }
 
 /// Complete dataset provenance audit manifest.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProvenanceManifest {
     pub generated_at_utc: String,
     pub total_sources: usize,

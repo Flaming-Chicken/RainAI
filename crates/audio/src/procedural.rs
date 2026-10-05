@@ -309,11 +309,25 @@ impl ProceduralSynthesizer {
     }
 
     /// Synthesizes one 4-channel FOA frame based on current RainState dynamically modulated
-    /// by optional neural-parametric control signals from the local Mamba2-MoE model.
+    /// by optional neural-parametric control signals.
     pub fn process_frame_modulated(
         &mut self,
         state: &RainState,
         modulation: Option<&NeuralParametricControl>,
+    ) -> FoaFrame {
+        self.process_frame_partitioned(state, modulation, false)
+    }
+
+    /// Synthesizes one 4-channel FOA frame with explicit partitioning control.
+    /// When `suppress_droplets` is true, procedural discrete Poisson droplet bursts
+    /// (bands 0..=9/10 droplet impacts) are muted, dedicating this engine strictly to
+    /// ambient wash, wind, and mist to prevent double-triggering acoustic mud against
+    /// the physical raindrop synthesizer.
+    pub fn process_frame_partitioned(
+        &mut self,
+        state: &RainState,
+        modulation: Option<&NeuralParametricControl>,
+        suppress_droplets: bool,
     ) -> FoaFrame {
         if !state.is_playing {
             return FoaFrame::default();
@@ -401,13 +415,18 @@ impl ProceduralSynthesizer {
         let downpipe_sound =
             self.filterbank.filters[9].process(runoff_drive) * 1.3 * self.smoothed_gains[9];
 
-        // Discrete rain droplet Poisson impacts
-        let droplet_prob = (state.weather.intensity * 0.04 * droplet_rate_scale).clamp(0.001, 0.4);
-        let droplet_burst = if self.rng.next_unit_f32() < droplet_prob {
-            let droplet_pitch = 0.5 + self.rng.next_unit_f32() * 0.5;
-            self.rng.next_f32() * droplet_pitch * 0.35 * droplet_energy_scale
-        } else {
+        // Discrete rain droplet Poisson impacts (suppressed if physical raindrops layer is active)
+        let droplet_burst = if suppress_droplets {
             0.0
+        } else {
+            let droplet_prob =
+                (state.weather.intensity * 0.04 * droplet_rate_scale).clamp(0.001, 0.4);
+            if self.rng.next_unit_f32() < droplet_prob {
+                let droplet_pitch = 0.5 + self.rng.next_unit_f32() * 0.5;
+                self.rng.next_f32() * droplet_pitch * 0.35 * droplet_energy_scale
+            } else {
+                0.0
+            }
         };
 
         let bubble_sound = self.filterbank.filters[10].process(droplet_burst)

@@ -154,7 +154,7 @@ impl Default for PersistentSessionState {
             },
             active_preset_name: "Gentle Summer Rain".to_string(),
             master_volume: 0.60,
-            decode_mode: DecodeMode::BinauralHeadphones,
+            decode_mode: DecodeMode::StereoSpeakers, // Desktop speakers default
             noise_masking_enabled: false,
             noise_masking_threshold_db: -40.0,
             hrtf_profile: "Kemar-Compact-Standard".to_string(),
@@ -162,6 +162,84 @@ impl Default for PersistentSessionState {
             show_advanced_inspector: false,
             show_spectrogram: true,
             custom_ir_hash: None,
+        }
+    }
+}
+
+pub const SETTINGS_STORAGE_KEY: &str = "rainai_settings_state_v1";
+
+pub fn load_settings_state(
+    storage: Option<&dyn eframe::Storage>,
+) -> crate::settings::SettingsState {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(window) = web_sys::window() {
+            if let Ok(Some(local_storage)) = window.local_storage() {
+                if let Ok(Some(content)) = local_storage.get_item(SETTINGS_STORAGE_KEY) {
+                    if let Ok(settings) =
+                        serde_json::from_str::<crate::settings::SettingsState>(&content)
+                    {
+                        return settings;
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(storage) = storage {
+        if let Some(raw) = storage.get_string(SETTINGS_STORAGE_KEY) {
+            if let Ok(settings) = serde_json::from_str::<crate::settings::SettingsState>(&raw) {
+                return settings;
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let path = std::env::temp_dir().join(SETTINGS_STORAGE_KEY);
+        if let Ok(content) = std::fs::read_to_string(path) {
+            if let Ok(settings) = serde_json::from_str::<crate::settings::SettingsState>(&content) {
+                return settings;
+            }
+        }
+    }
+
+    // Migration fallback: check older PersistentSessionState
+    let session = load_session_state(storage);
+    let mut defaults = crate::settings::SettingsState::default();
+    defaults.master_volume = session.master_volume;
+    defaults.noise_masking_enabled = session.noise_masking_enabled;
+    defaults.noise_masking_threshold_db = session.noise_masking_threshold_db;
+    defaults.hrtf_profile = session.hrtf_profile;
+    defaults.custom_ir_hash = session.custom_ir_hash;
+    defaults.show_spectrogram = session.show_spectrogram;
+    defaults.show_advanced_settings = session.show_advanced_inspector;
+    defaults.active_preset_name = session.active_preset_name;
+    defaults
+}
+
+pub fn save_settings_state(
+    storage: Option<&mut dyn eframe::Storage>,
+    settings: &crate::settings::SettingsState,
+) {
+    if let Ok(json_str) = serde_json::to_string(settings) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(window) = web_sys::window() {
+                if let Ok(Some(local_storage)) = window.local_storage() {
+                    let _ = local_storage.set_item(SETTINGS_STORAGE_KEY, &json_str);
+                }
+            }
+        }
+
+        if let Some(storage) = storage {
+            storage.set_string(SETTINGS_STORAGE_KEY, json_str.clone());
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let path = std::env::temp_dir().join(SETTINGS_STORAGE_KEY);
+            let _ = std::fs::write(path, json_str);
         }
     }
 }

@@ -567,4 +567,107 @@ impl AutoPilotTrainer {
 
         Ok(())
     }
+
+    /// Evaluates if all sources in sources.json have been ingested and accounted for,
+    /// enabling the transition from raw intake to high-yield replay buffer training.
+    pub fn check_catalogue_exhaustion(
+        &self,
+        sources_path: &std::path::Path,
+        manifest_path: &std::path::Path,
+    ) -> CatalogueExhaustionStatus {
+        detect_catalogue_exhaustion(sources_path, manifest_path)
+    }
+
+    /// Samples the top high-yield candidates (boundary cases & high-uncertainty samples)
+    /// from the persistent ledger for targeted retraining.
+    pub fn sample_replay_buffer(
+        &self,
+        manifest_path: &std::path::Path,
+        count: usize,
+    ) -> Vec<crate::data_worker::DataChunkUtilityRecord> {
+        let ledger_path = crate::data_worker::ledger_path_for_manifest(manifest_path);
+        sample_high_yield_replay_batch(&ledger_path, count)
+    }
+}
+
+/// Status report for data catalog ingestion and replay readiness.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CatalogueExhaustionStatus {
+    pub is_exhausted: bool,
+    pub total_sources: usize,
+    pub ingested_sources: usize,
+    pub total_ledger_records: usize,
+    pub high_yield_replay_candidates: usize,
+}
+
+/// Standalone function to detect whether all upstream sources have been ingested.
+pub fn detect_catalogue_exhaustion(
+    sources_path: &std::path::Path,
+    manifest_path: &std::path::Path,
+) -> CatalogueExhaustionStatus {
+    let mut total_sources = 0usize;
+    let mut ingested_sources = 0usize;
+
+    if sources_path.exists() {
+        if let Ok(file) = std::fs::File::open(sources_path) {
+            if let Ok(sources) = serde_json::from_reader::<_, Vec<serde_json::Value>>(file) {
+                total_sources = sources.len();
+                if manifest_path.exists() {
+                    if let Ok(m_file) = std::fs::File::open(manifest_path) {
+                        if let Ok(manifest) =
+                            serde_json::from_reader::<_, HashMap<String, serde_json::Value>>(m_file)
+                        {
+                            for s in &sources {
+                                if let Some(filename) = s.get("filename").and_then(|f| f.as_str()) {
+                                    let base = filename
+                                        .replace(".mp3", "")
+                                        .replace(".wav", "")
+                                        .replace(".ogg", "")
+                                        .replace(".flac", "");
+                                    let found = manifest.keys().any(|k| k.contains(&base))
+                                        || manifest.values().any(|v| {
+                                            v.get("filename")
+                                                .and_then(|f| f.as_str())
+                                                .map(|f| f.contains(&base))
+                                                .unwrap_or(false)
+                                        });
+                                    if found {
+                                        ingested_sources += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let ledger_path = crate::data_worker::ledger_path_for_manifest(manifest_path);
+    let ledger = crate::data_worker::DataUtilityLedger::load_or_create(&ledger_path);
+    let total_ledger_records = ledger.records.len();
+    let high_yield_replay_candidates = ledger
+        .records
+        .values()
+        .filter(|r| r.retraining_priority > 0.5)
+        .count();
+
+    let is_exhausted = total_sources > 0 && ingested_sources >= total_sources;
+
+    CatalogueExhaustionStatus {
+        is_exhausted,
+        total_sources,
+        ingested_sources,
+        total_ledger_records,
+        high_yield_replay_candidates,
+    }
+}
+
+/// Standalone function to sample high-yield replay batches from the persistent ledger.
+pub fn sample_high_yield_replay_batch(
+    ledger_path: &std::path::Path,
+    count: usize,
+) -> Vec<crate::data_worker::DataChunkUtilityRecord> {
+    let ledger = crate::data_worker::DataUtilityLedger::load_or_create(ledger_path);
+    ledger.top_retraining_candidates(count)
 }

@@ -236,6 +236,7 @@ dependencies = [
  "bson",
  "eframe",
  "egui",
+ "hound",
  "inference",
  "js-sys",
  "miniz_oxide",

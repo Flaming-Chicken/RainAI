@@ -81,7 +81,7 @@ fn test_box_cox_inversion_precision() {
 fn test_mamba2_moe_recurrence_drift() {
     let golden = load_golden_vectors();
     assert_eq!(golden.latent_dim, 64);
-    assert_eq!(golden.condition_dim, 554);
+    assert_eq!(golden.condition_dim, 64);
     assert_eq!(golden.num_experts, 8);
     assert!(!golden.trace.is_empty());
 }

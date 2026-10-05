@@ -129,6 +129,33 @@ impl SurfaceMixture {
         }
     }
 
+    /// Converts the current surface mixture into continuous physical material properties
+    pub fn to_material_properties(&self) -> crate::surface::PhysicalMaterialProperties {
+        let norm = self.normalized();
+        let surfaces = crate::surface::CanonicalSurface::ALL;
+        let mut props = crate::surface::PhysicalMaterialProperties {
+            hardness: 0.0,
+            resonance_freq: 0.0,
+            damping: 0.0,
+            acoustic_impedance: 0.0,
+            roughness: 0.0,
+            water_depth: 0.0,
+            cavity_hollowness: 0.0,
+        };
+        for (i, &surf) in surfaces.iter().enumerate() {
+            let weight = norm[i];
+            let p = surf.material_properties();
+            props.hardness += p.hardness * weight;
+            props.resonance_freq += p.resonance_freq * weight;
+            props.damping += p.damping * weight;
+            props.acoustic_impedance += p.acoustic_impedance * weight;
+            props.roughness += p.roughness * weight;
+            props.water_depth += p.water_depth * weight;
+            props.cavity_hollowness += p.cavity_hollowness * weight;
+        }
+        props
+    }
+
     pub fn set_preset_forest(&mut self) {
         self.tin = 0.0;
         self.leaves_broad = 0.45;
@@ -292,6 +319,7 @@ pub struct EngineTelemetry {
     pub cpu_headroom: f32,
     pub gpu_headroom: f32,
     pub delta_t_ms: f32,
+    #[serde(default)]
     pub active_experts: usize,
     pub panic_factor: f32,
     pub jitter_factor: f32,
@@ -299,6 +327,7 @@ pub struct EngineTelemetry {
     pub synthesis_blend: f32,
     pub effective_quant_floor: f32,
     pub effective_quant_ceiling: f32,
+    #[serde(default)]
     pub governor_status: String,
     pub active_path_label: String,
     pub active_quantization_format: String,
@@ -361,28 +390,30 @@ impl Default for EngineTelemetry {
     }
 }
 
-/// Interception and mediation mode for the Meta-Controller
+/// Audio DSP smoothing and parameter interpolation mode
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum MetaControllerInterceptionMode {
+pub enum DspSmoothingMode {
     #[default]
-    MediatedLive, // Live play: Smooths intent, enforces physical limits & thermal headroom
-    DirectBypass,      // Direct raw parameter application without governor intervention
-    OfflineMaxQuality, // Non-realtime export: Latency budget = inf, Headroom = 100%, Max Fidelity
+    MediatedLive, // Live play: Smooths physical parameters & prevents clicks
+    DirectBypass,      // Direct raw parameter application without interpolation
+    OfflineMaxQuality, // Non-realtime export: Maximum sample fidelity, unconstrained headroom
 }
 
-impl MetaControllerInterceptionMode {
+pub type MetaControllerInterceptionMode = DspSmoothingMode;
+
+impl DspSmoothingMode {
     pub fn label(self) -> &'static str {
         match self {
-            Self::MediatedLive => "Meta-Controller Mediated (Live Acoustic Physics)",
+            Self::MediatedLive => "Physical Acoustic Smoothing (Live Physics)",
             Self::DirectBypass => "Direct Parameter Control (Manual Raw Bypass)",
-            Self::OfflineMaxQuality => "Offline Master Quality (Unlimited Headroom, K=5)",
+            Self::OfflineMaxQuality => "Offline Studio Master Quality (Max Headroom)",
         }
     }
 }
 
-/// Operational optimization profiles for the Meta-Governor
+/// Operational performance and latency profiles
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum GovernorOptimizationProfile {
+pub enum PerformanceProfile {
     EcoBatterySaver,
     LowLatencyInteractive,
     #[default]
@@ -391,13 +422,15 @@ pub enum GovernorOptimizationProfile {
     BluetoothA2DPSink,
 }
 
-impl GovernorOptimizationProfile {
+pub type GovernorOptimizationProfile = PerformanceProfile;
+
+impl PerformanceProfile {
     pub fn label(self) -> &'static str {
         match self {
-            Self::EcoBatterySaver => "Eco Battery Saver (<0.5W, ≤4b, 2 Exp)",
+            Self::EcoBatterySaver => "Eco Battery Saver (<0.5W, High Efficiency)",
             Self::LowLatencyInteractive => "Low-Latency Interactive (15ms Buffer, Snappy)",
-            Self::BalancedAdaptive => "Balanced Adaptive (45ms, 1.2s Hysteresis)",
-            Self::StudioMaster => "Studio Master (≥16b Floor, 8 Exp, 120ms)",
+            Self::BalancedAdaptive => "Balanced Adaptive (45ms Buffer, Optimal)",
+            Self::StudioMaster => "Studio Master (120ms Buffer, High Fidelity)",
             Self::BluetoothA2DPSink => "Bluetooth A2DP Sink (150ms Safety Reserve)",
         }
     }
@@ -422,32 +455,22 @@ impl GovernorOptimizationProfile {
         }
     }
 
-    pub fn max_experts(self) -> usize {
-        match self {
-            Self::EcoBatterySaver => 2,
-            Self::LowLatencyInteractive => 4,
-            Self::BalancedAdaptive => 6,
-            Self::StudioMaster => 8,
-            Self::BluetoothA2DPSink => 6,
-        }
-    }
-
     pub fn description(self) -> &'static str {
         match self {
             Self::EcoBatterySaver => {
-                "Extreme power saving mode capping bit-width at ≤4b, using 2 MoE experts, and keeping 50% procedural blend for thermal budget under 0.5W."
+                "Power-saving profile prioritizing thermal efficiency and minimal battery drain under 0.5W."
             }
             Self::LowLatencyInteractive => {
-                "Ultra-fast response with a tight 15ms buffer and quick fallback recovery for live real-time slider scrubbing."
+                "Ultra-fast response with a tight 15ms buffer for responsive real-time slider interaction."
             }
             Self::BalancedAdaptive => {
-                "Default operational profile with 45ms target buffer, 6 experts, and 1.2s anti-hunting hysteresis."
+                "Default operational profile balancing robust buffer headroom with low audio latency (45ms target)."
             }
             Self::StudioMaster => {
-                "Pristine audio priority locking a ≥16b precision floor, all 8 MoE experts, 0% procedural blend, and 120ms buffer reserve."
+                "Maximum fidelity priority locking 120ms buffer reserve for pristine playback."
             }
             Self::BluetoothA2DPSink => {
-                "Extended 150ms safety reserve with jitter damping to prevent underruns on high-latency wireless audio sinks."
+                "Extended 150ms safety reserve with jitter damping to prevent underruns on wireless Bluetooth audio sinks."
             }
         }
     }
@@ -582,7 +605,7 @@ pub enum SynthesisMode {
 impl SynthesisMode {
     pub fn label(self) -> &'static str {
         match self {
-            Self::NeuralAi => "Neural AI (Mamba2-MoE + VAE)",
+            Self::NeuralAi => "Neural AI (Mamba2-MoE + VAE) (Preview)",
             Self::PhysicalSynth => "Physical Fluid Dynamics (Synth-Rain)",
             Self::ProceduralFilterbank => "Subtractive Procedural (16-Band)",
             Self::HybridAdaptive => "Hybrid Adaptive (Governor Dynamic Blend)",
@@ -591,7 +614,7 @@ impl SynthesisMode {
 
     pub fn short_label(self) -> &'static str {
         match self {
-            Self::NeuralAi => "Neural AI",
+            Self::NeuralAi => "Neural AI (Preview)",
             Self::PhysicalSynth => "Synth-Rain",
             Self::ProceduralFilterbank => "Procedural",
             Self::HybridAdaptive => "Hybrid",
@@ -616,12 +639,44 @@ impl SynthesisMode {
     }
 }
 
+/// User-selectable sound layers (replaces opaque synthesis mode dropdown)
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SoundLayers {
+    /// Discrete particle impacts against physical surface resonators (tin, foliage, glass, etc.)
+    pub raindrops: bool,
+    /// Continuous ambient pink/brown noise wash, wind gusts, and distant rainfall
+    pub rain_wash: bool,
+    /// Generative neural DDSP texture (incoming / training)
+    pub ai_texture: bool,
+}
+
+impl Default for SoundLayers {
+    fn default() -> Self {
+        Self {
+            raindrops: true,
+            rain_wash: true,
+            ai_texture: false, // OFF by default (models training)
+        }
+    }
+}
+
+impl SoundLayers {
+    /// Enforces the guardrail that at least one rain layer must remain active.
+    pub fn ensure_valid(&mut self) {
+        if !self.raindrops && !self.rain_wash && !self.ai_texture {
+            self.rain_wash = true;
+        }
+    }
+}
+
 /// Complete RainAI engine state
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct RainState {
     pub is_playing: bool,
     pub master_volume: f32,
     pub synthesis_mode: SynthesisMode,
+    #[serde(default)]
+    pub sound_layers: SoundLayers,
     pub quality_tier: QualityTier,
     pub noise_color: NoiseColor,
     pub evolve_enabled: bool,
@@ -642,7 +697,15 @@ pub struct RainState {
     #[serde(default)]
     pub user_thinking_steps: Option<usize>,
     #[serde(default)]
-    pub meta_mediation_mode: MetaControllerInterceptionMode,
+    pub conditioning_prompt: String,
+    #[serde(default)]
+    pub conditioning_audio_file: Option<String>,
+    #[serde(skip)]
+    pub custom_latent_embedding: Option<[f32; 24]>,
+    #[serde(skip)]
+    pub custom_clap_embedding: Option<[f32; 18]>,
+    #[serde(default)]
+    pub meta_mediation_mode: DspSmoothingMode,
     #[serde(default = "default_true")]
     pub history_recording_enabled: bool,
     #[serde(skip)]
@@ -662,10 +725,11 @@ impl Default for RainState {
         Self {
             is_playing: false,
             master_volume: 0.8,
-            synthesis_mode: SynthesisMode::NeuralAi,
+            synthesis_mode: SynthesisMode::PhysicalSynth,
+            sound_layers: SoundLayers::default(),
             quality_tier: QualityTier::AdaptiveMinimum,
             noise_color: NoiseColor::Pink,
-            evolve_enabled: true,
+            evolve_enabled: false, // Off by default
             evolve_speed: 0.2,
             auto_quantize: true,
             drift_time: 0.0,
@@ -679,6 +743,10 @@ impl Default for RainState {
             thinking_steps: 3,
             use_consistency_jump: false,
             user_thinking_steps: None,
+            conditioning_prompt: String::new(),
+            conditioning_audio_file: None,
+            custom_latent_embedding: None,
+            custom_clap_embedding: None,
             meta_mediation_mode: MetaControllerInterceptionMode::default(),
             history_recording_enabled: true,
             telemetry: EngineTelemetry::default(),
@@ -712,22 +780,21 @@ impl RainState {
         }
     }
 
-    /// Converts current UI parameters into the 554-dim conditioning vector as a fixed array without heap allocation
+    /// Converts current UI parameters into the 64-dim conditioning vector as a fixed array without heap allocation
     pub fn to_conditioning_array(&self) -> [f32; CONDITION_DIM] {
-        let clap = [1.0 / (512.0f32).sqrt(); 512];
-        let base_controls = [
+        let macro_atmosphere = [
             self.weather.intensity,
-            self.wind.speed,
-            0.5,  // wind_azimuth
-            0.33, // legacy_surface
             self.weather.runoff,
-            self.weather.temperature,
+            (self.weather.temperature - 0.5) * 2.0, // thermal deviation [-1.0 freezing to +1.0 tropical]
             self.weather.humidity,
-            self.weather.pitch_angle,
+            self.weather.pitch_angle, // inclination [-1.0 downward to +1.0 upward]
             self.weather.distance,
             self.weather.enclosure,
+            (1.0 - self.weather.humidity) * 0.5, // air_absorption
+            self.wind.speed,
+            0.0, // wind_azimuth [-1.0 to +1.0]
         ];
-        let surfaces = self.surfaces.normalized();
+        let material_props = self.surfaces.to_material_properties().to_array();
         let wind_dynamics = [
             self.wind.speed,
             self.wind.gustiness,
@@ -756,17 +823,54 @@ impl RainState {
         ];
         let drift = 0.2;
 
+        let (acoustic_metrics, semantic_projection) = if let Some(custom) =
+            self.custom_latent_embedding
+        {
+            let mut m = [0.0f32; 6];
+            let mut s = [0.0f32; 18];
+            m.copy_from_slice(&custom[0..6]);
+            s.copy_from_slice(&custom[6..24]);
+            (m, s)
+        } else {
+            let spectral_centroid =
+                (1500.0 + material_props[0] * 3500.0 + self.weather.intensity * 1000.0) / 8000.0;
+            let spectral_spread = (0.3 + self.wind.turbulence * 0.4).clamp(0.0, 1.0);
+            let spectral_skewness = (material_props[0] - material_props[2]).clamp(-1.0, 1.0); // [-1.0 dark thud to +1.0 bright ring]
+            let transient_density =
+                (self.weather.intensity * (material_props[0] + 0.3)).clamp(0.0, 1.0);
+            let rms_energy = (self.weather.intensity * 0.8 + 0.1).clamp(0.0, 1.0);
+            let diffuseness =
+                (self.weather.distance * 0.7 + self.weather.enclosure * 0.3).clamp(0.0, 1.0);
+            let m = [
+                spectral_centroid,
+                spectral_spread,
+                spectral_skewness,
+                transient_density,
+                rms_energy,
+                diffuseness,
+            ];
+            let s = if let Some(custom_clap) = self.custom_clap_embedding {
+                custom_clap
+            } else if !self.conditioning_prompt.trim().is_empty() {
+                crate::conditioning::compute_text_semantic_projection(&self.conditioning_prompt)
+            } else {
+                [1.0 / (18.0f32).sqrt(); 18]
+            };
+            (m, s)
+        };
+
         crate::conditioning::encode_conditioning_vector(
-            &clap,
-            &base_controls,
-            &surfaces,
+            &macro_atmosphere,
+            &material_props,
             &wind_dynamics,
             &side_sounds,
             drift,
+            &acoustic_metrics,
+            &semantic_projection,
         )
     }
 
-    /// Converts the current UI parameters into the exact 554-dimensional conditioning vector u
+    /// Converts the current UI parameters into the exact 64-dimensional conditioning vector u
     pub fn to_conditioning_vector(&self) -> Vec<f32> {
         self.to_conditioning_array().to_vec()
     }

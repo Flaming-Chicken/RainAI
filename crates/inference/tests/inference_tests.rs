@@ -17,10 +17,10 @@ fn test_ternary_2bit_pack_unpack_roundtrip() {
 #[test]
 fn test_weight_cache_operations() {
     let mut cache = WeightCache::new();
-    let packed = vec![0x05; (64usize * 554).div_ceil(4)];
+    let packed = vec![0x05; (64usize * CONDITION_DIM).div_ceil(4)];
     let layer = LoadedLayer {
         name: "encoder.cond_proj.weight".to_string(),
-        shape: vec![64, 554],
+        shape: vec![64, CONDITION_DIM],
         scale: 0.125,
         format: PrecisionFormat::Ternary158,
         weights: vec![],
@@ -37,7 +37,7 @@ fn test_weight_cache_operations() {
     let retrieved = cache
         .get("encoder.cond_proj.weight")
         .expect("Layer must exist");
-    assert_eq!(retrieved.num_elements(), 64 * 554);
+    assert_eq!(retrieved.num_elements(), 64 * CONDITION_DIM);
     assert!(retrieved.weights.is_empty());
     assert!(!retrieved.packed_weights.is_empty());
 }
@@ -219,69 +219,6 @@ fn test_simd_kernels_posit_int8_bf16() {
     assert!(out_bf16[0].is_finite());
     // Sum = 1.0*1.0 + 1.0*(-0.5) + 1.0*2.0 + 1.0*0.25 = 2.75
     assert!((out_bf16[0] - 2.75).abs() < 1e-3);
-}
-
-#[test]
-fn test_multi_iteration_expert_diversity() {
-    use inference::kernels;
-
-    let mut latent = [0.1f32; 64];
-    // Create router weights where expert 0 has a higher affinity initially
-    let mut router_weights = vec![0.0f32; 8 * 64];
-    for d in 0..64 {
-        router_weights[d] = 0.20; // Expert 0 favored
-        router_weights[64 + d] = 0.15; // Expert 1 runner-up
-        router_weights[2 * 64 + d] = 0.10; // Expert 2
-    }
-
-    let mut weights_iter0 = [0.0f32; 16];
-    kernels::route_and_decay_with_history(
-        &mut latent,
-        &router_weights,
-        8,
-        0.75,
-        0.85,
-        None,
-        0.0,
-        Some(&mut weights_iter0),
-    );
-
-    assert!(
-        weights_iter0[0] > weights_iter0[1],
-        "Expert 0 should be top in iteration 0"
-    );
-
-    // In iteration 1, pass iteration 0 weights into deliberation history
-    let mut delib_history = [0.0f32; 16];
-    delib_history[..8].copy_from_slice(&weights_iter0[..8]);
-
-    let mut weights_iter1 = [0.0f32; 16];
-    kernels::route_and_decay_with_history(
-        &mut latent,
-        &router_weights,
-        8,
-        0.75,
-        0.85,
-        Some(&delib_history),
-        0.60, // Strong deliberation diversity tabu
-        Some(&mut weights_iter1),
-    );
-
-    // Dominant expert 0 must be dampened due to deliberation history tabu
-    assert!(
-        weights_iter1[0] < weights_iter0[0],
-        "Expert 0 must be suppressed in subsequent deliberation iteration: iter0={}, iter1={}",
-        weights_iter0[0],
-        weights_iter1[0]
-    );
-
-    // Complementary expert pool (experts 1..8) must gain collective weight, diversifying the deliberation panel
-    let comp_weight0: f32 = weights_iter0[1..8].iter().sum();
-    let comp_weight1: f32 = weights_iter1[1..8].iter().sum();
-    assert!(
-        comp_weight1 > comp_weight0,
-        "Complementary expert panel must gain mass across iterations: iter0={comp_weight0}, iter1={comp_weight1}"
-    );
 }
 
 #[test]

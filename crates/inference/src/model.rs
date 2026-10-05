@@ -138,35 +138,6 @@ impl PrecisionFormat {
     }
 }
 
-/// Execution mode for Mixture of Experts (MoE) neural layers
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub enum MoeExecutionMode {
-    /// Full dynamic Top-K sparse routing across specialized experts
-    #[default]
-    SparseDynamic,
-    /// Static single-pass dense soup (cold-start / instant zero-overhead initialization)
-    DenseSoupStatic,
-    /// On-the-fly dynamically collapsed dense soup derived from router probabilities
-    DenseSoupDynamic,
-    /// Dual macro-ensemble combining base invariant expert with dominant specialist
-    DualMacroSoup,
-}
-
-impl MoeExecutionMode {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::SparseDynamic => "Sparse Dynamic (Top-K Routed Experts)",
-            Self::DenseSoupStatic => "Dense Soup Static (Cold-Start Single Matmul)",
-            Self::DenseSoupDynamic => "Dense Soup Dynamic (On-the-Fly Router Merged)",
-            Self::DualMacroSoup => "Dual Macro Ensemble (Base + Specialist)",
-        }
-    }
-
-    pub fn is_dense_soup(self) -> bool {
-        matches!(self, Self::DenseSoupStatic | Self::DenseSoupDynamic)
-    }
-}
-
 /// Structural role of a neural/acoustic layer, dictating its optimal unquantized representation
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LayerRole {

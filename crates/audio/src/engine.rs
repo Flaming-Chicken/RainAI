@@ -3,12 +3,12 @@
 //! Provides native low-latency output via `cpal` on desktop, and `web-sys` WebAudio
 //! integration on WebAssembly, with lock-free state synchronization from the UI thread.
 
+use crate::buffer_guard::BufferGuard;
 use crate::decoder::{AmbisonicDecoder, DecodeMode};
 use crate::history::AcousticHistoryBuffer;
-use crate::meta_governor::{LivePreferenceMediator, MetaGovernor};
 use crate::physical::PhysicalRainSynthesizer;
 use crate::procedural::ProceduralSynthesizer;
-use shared::rain::{EngineTelemetry, MetaControllerInterceptionMode, RainState, SynthesisMode};
+use shared::rain::{EngineTelemetry, RainState};
 use std::sync::{Arc, RwLock};
 use thiserror::Error;
 
@@ -337,8 +337,7 @@ impl DesktopAudioEngine {
         let mut runner = inference::runner::InferenceRunner::new(quality_tier, weight_cache);
 
         let mut decoder = AmbisonicDecoder::new(mode);
-        let mut governor = MetaGovernor::new();
-        let mut mediator = LivePreferenceMediator::new();
+        let mut buffer_guard = BufferGuard::new(sample_rate, 45.0);
         let mut crest_governor = CrestFactorGovernor::new(sample_rate);
         let mut cached_rain = cached_rain;
         let mut rb = AudioRingBuffer::new(12000);
@@ -408,130 +407,69 @@ impl DesktopAudioEngine {
                             decoder.set_orientation(ori[0], ori[1], ori[2]);
                         }
 
-                        // Mediate live preferences with physical momentum
-                        let mediated_rain = if rain.meta_mediation_mode
-                            == MetaControllerInterceptionMode::MediatedLive
-                        {
-                            mediator.mediate_step(&rain, dt)
-                        } else {
-                            rain.clone()
-                        };
+                        buffer_guard
+                            .set_target_buffer_ms(rain.optimization_profile.target_buffer_ms());
+                        let action = buffer_guard.update(rb.available_frames(), frames_needed, dt);
 
-                        // Evaluate autonomous governor with active optimization and stress profiles
-                        let action = governor.evaluate(
-                            &rain.telemetry,
-                            rain.quality_tier,
-                            rain.auto_quantize,
-                            rain.optimization_profile,
-                            rain.stress_profile,
-                            rain.meta_mediation_mode,
-                            rain.user_thinking_steps,
-                            dt,
-                        );
-                        rain.telemetry.effective_quant_floor = action.min_bits;
-                        rain.telemetry.effective_quant_ceiling = action.max_bits;
-                        rain.telemetry.governor_status = action.status_label.into();
-                        rain.telemetry.active_path_label = action.recommended_path.label().into();
-                        rain.telemetry.active_quantization_format =
-                            action.recommended_format.label().into();
+                        rain.telemetry.buffer_health_ms = action.buffer_health_ms;
                         rain.telemetry.synthesis_blend = action.synthesis_blend;
-                        rain.telemetry.active_experts = action.active_experts;
-                        rain.telemetry.diffusion_bypassed = action.diffusion_bypass;
-                        rain.telemetry.ambisonic_order_reduced = action.ambisonic_order_reduced;
-                        rain.telemetry.active_optimization_profile =
-                            rain.optimization_profile.label().into();
-                        rain.telemetry.active_stress_profile = rain.stress_profile.label().into();
-                        rain.telemetry.panic_factor = action.simulated_panic_factor;
-                        rain.telemetry.jitter_factor = action.simulated_jitter_factor;
-                        rain.telemetry.cpu_headroom = action.simulated_cpu_headroom;
-                        rain.telemetry.dynamic_buffer_bytes = action.dynamic_buffer_bytes;
-                        rain.telemetry.env_max_buffer_bytes = action.env_max_buffer_bytes;
+                        rain.telemetry.cpu_headroom = 1.0 - action.compute_deficit;
                         rain.telemetry.buffer_capacity_ms =
                             (rb.capacity_frames() as f32 / sample_rate.max(1.0)) * 1000.0;
-                        rain.telemetry.buffer_resize_cooldown = action.buffer_resize_cooldown;
-                        rain.telemetry.quant_macro_cooldown = action.quant_macro_cooldown;
-                        rain.telemetry.buffer_resizes_count = action.buffer_resizes_count;
-                        rain.telemetry.quant_swaps_count = action.quant_swaps_count;
-                        rain.telemetry.user_thinking_steps_override =
-                            rain.user_thinking_steps.is_some();
-                        rain.telemetry.is_offline_export_mode = rain.meta_mediation_mode
-                            == MetaControllerInterceptionMode::OfflineMaxQuality;
+                        rain.telemetry.is_prebuffered =
+                            rb.available_frames() >= action.target_headroom_frames;
 
-                        if rain.auto_quantize && rain.user_thinking_steps.is_none() {
-                            rain.thinking_steps = action.thinking_steps;
-                            rain.use_consistency_jump = action.use_consistency_jump;
-                        } else if let Some(steps) = rain.user_thinking_steps {
-                            rain.thinking_steps = steps;
-                        }
-                        rain.telemetry.thinking_steps = rain.thinking_steps;
-                        rain.telemetry.consistency_jump_active =
-                            rain.use_consistency_jump && runner.has_consistency_jump_head();
-
-                        let target_headroom_frames =
-                            ((action.target_buffer_ms / 1000.0) * sample_rate) as usize;
-
-                        // Autonomous dynamic buffer resizing commanded by MetaGovernor
-                        if action.resize_commanded {
-                            rb.resize_relative_to_performance(action.target_capacity_frames);
-                            rain.telemetry.buffer_capacity_ms =
-                                (rb.capacity_frames() as f32 / sample_rate.max(1.0)) * 1000.0;
-                        }
-
-                        // 1. Generation: pre-buffer ahead up to target headroom even when paused!
-                        let frames_to_generate = if rb.available_frames() < target_headroom_frames {
-                            (target_headroom_frames - rb.available_frames())
-                                .min(frames_needed.max(256) * 4)
-                        } else {
-                            0
-                        };
+                        let frames_to_generate =
+                            action.frames_to_generate.min(frames_needed.max(256) * 4);
 
                         if frames_to_generate > 0 {
                             runner.set_target_tier(rain.quality_tier);
-                            runner.set_active_experts(action.active_experts);
-                            runner.set_moe_mode(action.recommended_moe_mode);
-                            runner.set_diffusion_bypass(action.diffusion_bypass);
-                            runner.update_quantization_bounds(action.min_bits, action.max_bits);
                             runner.set_thinking_steps(rain.thinking_steps);
                             runner.set_use_consistency_jump(rain.use_consistency_jump);
 
                             // Condition synthesis as active to prime the buffer
-                            let mut synth_state = mediated_rain.clone();
+                            let mut synth_state = rain.clone();
                             synth_state.is_playing = true;
-                            let blend = action.synthesis_blend;
                             let cond = synth_state.to_conditioning_array();
 
                             for _ in 0..frames_to_generate {
-                                let foa_neural_mod = synth.process_frame_modulated(
-                                    &synth_state,
-                                    latest_neural_ctrl.as_ref(),
-                                );
-                                let foa_pure_proc = synth.process_frame(&synth_state);
+                                let layers = rain.sound_layers;
+                                let suppress_droplets = layers.raindrops;
 
-                                let foa = match rain.synthesis_mode {
-                                    SynthesisMode::PhysicalSynth => physical_synth
-                                        .process_frame_modulated(
-                                            &synth_state,
-                                            latest_neural_ctrl.as_ref(),
-                                        ),
-                                    SynthesisMode::ProceduralFilterbank => foa_pure_proc,
-                                    SynthesisMode::NeuralAi => foa_neural_mod,
-                                    SynthesisMode::HybridAdaptive => {
-                                        if blend >= 0.999 {
-                                            foa_pure_proc
-                                        } else {
-                                            crate::decoder::FoaFrame::new(
-                                                foa_pure_proc.w * blend
-                                                    + foa_neural_mod.w * (1.0 - blend),
-                                                foa_pure_proc.x * blend
-                                                    + foa_neural_mod.x * (1.0 - blend),
-                                                foa_pure_proc.y * blend
-                                                    + foa_neural_mod.y * (1.0 - blend),
-                                                foa_pure_proc.z * blend
-                                                    + foa_neural_mod.z * (1.0 - blend),
-                                            )
-                                        }
-                                    }
+                                let phys_foa = if layers.raindrops {
+                                    physical_synth.process_frame_modulated(
+                                        &synth_state,
+                                        latest_neural_ctrl.as_ref(),
+                                    )
+                                } else {
+                                    crate::decoder::FoaFrame::default()
                                 };
+
+                                let proc_foa = if layers.rain_wash {
+                                    synth.process_frame_partitioned(
+                                        &synth_state,
+                                        latest_neural_ctrl.as_ref(),
+                                        suppress_droplets,
+                                    )
+                                } else {
+                                    crate::decoder::FoaFrame::default()
+                                };
+
+                                let ai_foa = if layers.ai_texture {
+                                    synth.process_frame_modulated(
+                                        &synth_state,
+                                        latest_neural_ctrl.as_ref(),
+                                    )
+                                } else {
+                                    crate::decoder::FoaFrame::default()
+                                };
+
+                                let foa = crate::decoder::FoaFrame::new(
+                                    phys_foa.w + proc_foa.w + ai_foa.w,
+                                    phys_foa.x + proc_foa.x + ai_foa.x,
+                                    phys_foa.y + proc_foa.y + ai_foa.y,
+                                    phys_foa.z + proc_foa.z + ai_foa.z,
+                                );
 
                                 // Record into AcousticHistoryBuffer if recording is enabled
                                 if rain.history_recording_enabled {
@@ -540,15 +478,7 @@ impl DesktopAudioEngine {
                                     }
                                 }
 
-                                let stereo = if action.ambisonic_order_reduced {
-                                    // Shed ambisonic order to lightweight stereo pass-through
-                                    crate::decoder::StereoFrame {
-                                        left: foa.w * 0.707 + foa.y * 0.5,
-                                        right: foa.w * 0.707 - foa.y * 0.5,
-                                    }
-                                } else {
-                                    decoder.decode_stereo(foa)
-                                };
+                                let stereo = decoder.decode_stereo(foa);
 
                                 let (crest_l, crest_r) =
                                     crest_governor.process(stereo.left, stereo.right);
@@ -564,7 +494,7 @@ impl DesktopAudioEngine {
                         let buffer_ms = (current_available as f32 / sample_rate) * 1000.0;
                         rain.telemetry.buffer_health_ms = buffer_ms;
                         rain.telemetry.buffer_health_ratio =
-                            rb.relative_health_ratio(target_headroom_frames);
+                            rb.relative_health_ratio(action.target_headroom_frames);
                         if let Ok(hist) = audio_state.history.try_read() {
                             rain.telemetry.history_seconds_available = hist.available_seconds();
                         }
@@ -597,7 +527,8 @@ impl DesktopAudioEngine {
                                 *s = 0.0;
                             }
 
-                            if current_available >= target_headroom_frames.saturating_sub(64) {
+                            if current_available >= action.target_headroom_frames.saturating_sub(64)
+                            {
                                 rain.telemetry.is_prebuffered = true;
                                 rain.telemetry.governor_status =
                                     "Pre-Buffered & Ready (Happy)".into();
@@ -605,7 +536,7 @@ impl DesktopAudioEngine {
                                 rain.telemetry.is_prebuffered = false;
                                 rain.telemetry.governor_status = format!(
                                     "Pre-Buffering... ({:.0}ms / {:.0}ms)",
-                                    buffer_ms, action.target_buffer_ms
+                                    buffer_ms, buffer_guard.target_buffer_ms
                                 );
                             }
                         }
@@ -719,8 +650,7 @@ impl WebAudioEngine {
         let mut runner = inference::runner::InferenceRunner::new(quality_tier, weight_cache);
 
         let mut decoder = AmbisonicDecoder::new(mode);
-        let mut governor = MetaGovernor::new();
-        let mut mediator = LivePreferenceMediator::new();
+        let mut buffer_guard = BufferGuard::new(sample_rate, 45.0);
         let mut crest_governor = CrestFactorGovernor::new(sample_rate);
         let mut cached_rain = cached_rain;
         let mut rb = AudioRingBuffer::new(12000);
@@ -754,119 +684,65 @@ impl WebAudioEngine {
                 decoder.set_orientation(ori[0], ori[1], ori[2]);
             }
 
-            // Mediate live preferences with physical momentum
-            let mediated_rain =
-                if rain.meta_mediation_mode == MetaControllerInterceptionMode::MediatedLive {
-                    mediator.mediate_step(&rain, dt)
-                } else {
-                    rain.clone()
-                };
+            buffer_guard.set_target_buffer_ms(rain.optimization_profile.target_buffer_ms());
+            let action = buffer_guard.update(rb.available_frames(), frames_needed, dt);
 
-            let action = governor.evaluate(
-                &rain.telemetry,
-                rain.quality_tier,
-                rain.auto_quantize,
-                rain.optimization_profile,
-                rain.stress_profile,
-                rain.meta_mediation_mode,
-                rain.user_thinking_steps,
-                dt,
-            );
-
-            rain.telemetry.effective_quant_floor = action.min_bits;
-            rain.telemetry.effective_quant_ceiling = action.max_bits;
-            rain.telemetry.governor_status = action.status_label.into();
-            rain.telemetry.active_path_label = action.recommended_path.label().into();
-            rain.telemetry.active_quantization_format = action.recommended_format.label().into();
+            rain.telemetry.buffer_health_ms = action.buffer_health_ms;
             rain.telemetry.synthesis_blend = action.synthesis_blend;
-            rain.telemetry.active_experts = action.active_experts;
-            rain.telemetry.diffusion_bypassed = action.diffusion_bypass;
-            rain.telemetry.ambisonic_order_reduced = action.ambisonic_order_reduced;
-            rain.telemetry.active_optimization_profile = rain.optimization_profile.label().into();
-            rain.telemetry.active_stress_profile = rain.stress_profile.label().into();
-            rain.telemetry.panic_factor = action.simulated_panic_factor;
-            rain.telemetry.jitter_factor = action.simulated_jitter_factor;
-            rain.telemetry.cpu_headroom = action.simulated_cpu_headroom;
-            rain.telemetry.dynamic_buffer_bytes = action.dynamic_buffer_bytes;
-            rain.telemetry.env_max_buffer_bytes = action.env_max_buffer_bytes;
+            rain.telemetry.cpu_headroom = 1.0 - action.compute_deficit;
             rain.telemetry.buffer_capacity_ms =
                 (rb.capacity_frames() as f32 / sample_rate.max(1.0)) * 1000.0;
-            rain.telemetry.buffer_resize_cooldown = action.buffer_resize_cooldown;
-            rain.telemetry.quant_macro_cooldown = action.quant_macro_cooldown;
-            rain.telemetry.buffer_resizes_count = action.buffer_resizes_count;
-            rain.telemetry.quant_swaps_count = action.quant_swaps_count;
-            rain.telemetry.user_thinking_steps_override = rain.user_thinking_steps.is_some();
-            rain.telemetry.is_offline_export_mode =
-                rain.meta_mediation_mode == MetaControllerInterceptionMode::OfflineMaxQuality;
-
-            if rain.auto_quantize && rain.user_thinking_steps.is_none() {
-                rain.thinking_steps = action.thinking_steps;
-                rain.use_consistency_jump = action.use_consistency_jump;
-            } else if let Some(steps) = rain.user_thinking_steps {
-                rain.thinking_steps = steps;
-            }
-            rain.telemetry.thinking_steps = rain.thinking_steps;
-            rain.telemetry.consistency_jump_active =
-                rain.use_consistency_jump && runner.has_consistency_jump_head();
-
-            let target_headroom_frames =
-                ((action.target_buffer_ms / 1000.0) * sample_rate) as usize;
-
-            // Autonomous dynamic buffer resizing commanded by MetaGovernor
-            if action.resize_commanded {
-                rb.resize_relative_to_performance(action.target_capacity_frames);
-                rain.telemetry.buffer_capacity_ms =
-                    (rb.capacity_frames() as f32 / sample_rate.max(1.0)) * 1000.0;
-            }
+            rain.telemetry.is_prebuffered = rb.available_frames() >= action.target_headroom_frames;
 
             // Incremental headroom budgeting: clamp generation to frames_needed + 128 to prevent main thread spikes
             let max_batch = frames_needed + 128;
-            let frames_to_generate = if rb.available_frames() < target_headroom_frames {
-                (target_headroom_frames - rb.available_frames()).min(max_batch)
-            } else {
-                0
-            };
+            let frames_to_generate = action.frames_to_generate.min(max_batch);
 
             if frames_to_generate > 0 {
                 runner.set_target_tier(rain.quality_tier);
-                runner.set_active_experts(action.active_experts);
-                runner.set_diffusion_bypass(action.diffusion_bypass);
-                runner.update_quantization_bounds(action.min_bits, action.max_bits);
                 runner.set_thinking_steps(rain.thinking_steps);
                 runner.set_use_consistency_jump(rain.use_consistency_jump);
 
-                let mut synth_state = mediated_rain.clone();
+                let mut synth_state = rain.clone();
                 synth_state.is_playing = true;
-                let blend = action.synthesis_blend;
+                let _blend = action.synthesis_blend;
                 let cond = synth_state.to_conditioning_array();
 
                 // Evaluate neural-parametric control at block rate (~50-100Hz)
                 let neural_ctrl = runner.step_parametric(&cond);
 
                 for _ in 0..frames_to_generate {
-                    let foa_neural_mod =
-                        synth.process_frame_modulated(&synth_state, Some(&neural_ctrl));
-                    let foa_pure_proc = synth.process_frame(&synth_state);
+                    let layers = rain.sound_layers;
+                    let suppress_droplets = layers.raindrops;
 
-                    let foa = match rain.synthesis_mode {
-                        SynthesisMode::PhysicalSynth => {
-                            physical_synth.process_frame_modulated(&synth_state, Some(&neural_ctrl))
-                        }
-                        SynthesisMode::ProceduralFilterbank => foa_pure_proc,
-                        SynthesisMode::NeuralAi => foa_neural_mod,
-                        SynthesisMode::HybridAdaptive => {
-                            if blend >= 0.999 {
-                                foa_pure_proc
-                            } else {
-                                crate::decoder::FoaFrame::new(
-                                    foa_pure_proc.w * blend + foa_neural_mod.w * (1.0 - blend),
-                                    foa_pure_proc.x * blend + foa_neural_mod.x * (1.0 - blend),
-                                    foa_pure_proc.y * blend + foa_neural_mod.y * (1.0 - blend),
-                                    foa_pure_proc.z * blend + foa_neural_mod.z * (1.0 - blend),
-                                )
-                            }
-                        }
+                    let phys_foa = if layers.raindrops {
+                        physical_synth.process_frame_modulated(&synth_state, Some(&neural_ctrl))
+                    } else {
+                        crate::decoder::FoaFrame::default()
                     };
+
+                    let proc_foa = if layers.rain_wash {
+                        synth.process_frame_partitioned(
+                            &synth_state,
+                            Some(&neural_ctrl),
+                            suppress_droplets,
+                        )
+                    } else {
+                        crate::decoder::FoaFrame::default()
+                    };
+
+                    let ai_foa = if layers.ai_texture {
+                        synth.process_frame_modulated(&synth_state, Some(&neural_ctrl))
+                    } else {
+                        crate::decoder::FoaFrame::default()
+                    };
+
+                    let foa = crate::decoder::FoaFrame::new(
+                        phys_foa.w + proc_foa.w + ai_foa.w,
+                        phys_foa.x + proc_foa.x + ai_foa.x,
+                        phys_foa.y + proc_foa.y + ai_foa.y,
+                        phys_foa.z + proc_foa.z + ai_foa.z,
+                    );
 
                     // Record into AcousticHistoryBuffer if recording is enabled
                     if rain.history_recording_enabled {
@@ -875,14 +751,7 @@ impl WebAudioEngine {
                         }
                     }
 
-                    let stereo = if action.ambisonic_order_reduced {
-                        crate::decoder::StereoFrame {
-                            left: foa.w * 0.707 + foa.y * 0.5,
-                            right: foa.w * 0.707 - foa.y * 0.5,
-                        }
-                    } else {
-                        decoder.decode_stereo(foa)
-                    };
+                    let stereo = decoder.decode_stereo(foa);
 
                     let (crest_l, crest_r) = crest_governor.process(stereo.left, stereo.right);
                     let limited_l = soft_limit(crest_l);
@@ -896,7 +765,8 @@ impl WebAudioEngine {
             let current_available = rb.available_frames();
             let buffer_ms = (current_available as f32 / sample_rate) * 1000.0;
             rain.telemetry.buffer_health_ms = buffer_ms;
-            rain.telemetry.buffer_health_ratio = rb.relative_health_ratio(target_headroom_frames);
+            rain.telemetry.buffer_health_ratio =
+                rb.relative_health_ratio(action.target_headroom_frames);
             if let Ok(hist) = audio_state.history.try_read() {
                 rain.telemetry.history_seconds_available = hist.available_seconds();
             }
@@ -918,14 +788,14 @@ impl WebAudioEngine {
                     right_out[i] = 0.0;
                 }
 
-                if current_available >= target_headroom_frames.saturating_sub(64) {
+                if current_available >= action.target_headroom_frames.saturating_sub(64) {
                     rain.telemetry.is_prebuffered = true;
                     rain.telemetry.governor_status = "Pre-Buffered & Ready (Happy)".into();
                 } else {
                     rain.telemetry.is_prebuffered = false;
                     rain.telemetry.governor_status = format!(
                         "Pre-Buffering... ({:.0}ms / {:.0}ms)",
-                        buffer_ms, action.target_buffer_ms
+                        buffer_ms, buffer_guard.target_buffer_ms
                     );
                 }
             }

@@ -6,6 +6,7 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fs,
@@ -22,6 +23,295 @@ use std::{
 use crate::autopilot::{CANONICAL_SURFACES, SurfaceEntropyAuditor, SurfaceQuota};
 
 pub const MAX_DATASET_BYTES: u64 = 15 * 1024 * 1024 * 1024; // 15 GB rolling disk ceiling
+
+/// Persistent utility and retraining priority record for an acoustic audio chunk.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataChunkUtilityRecord {
+    pub chunk_id: String,
+    pub sha256: String,
+    pub source_id: String,
+    pub surface_tag: String,
+    pub material_properties: [f32; 7],
+    pub acoustic_quality_score: f32, // Static acoustic fidelity Q in [0, 1]
+    pub loss_ema: f32,               // Exponential moving average of sample loss
+    pub gradient_norm_ema: f32,      // Impact on model weight updates
+    pub times_trained: usize,        // Training epoch exposure count
+    pub last_trained_timestamp: u64, // Staleness metric (seconds / epoch)
+    pub information_novelty: f32,    // Distance in feature space from cluster centroids
+    pub current_utility_score: f32,  // Composite multiplicative utility metric
+    pub retraining_priority: f32,    // Priority ranking for replay passes
+    pub is_cached_locally: bool,     // Whether the audio WAV currently exists on disk
+}
+
+/// Persistent Data Utility Ledger tracking training utility, metadata, and historical scores.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DataUtilityLedger {
+    pub records: HashMap<String, DataChunkUtilityRecord>,
+    pub total_samples_ever_indexed: usize,
+    pub last_pruned_timestamp: u64,
+}
+
+impl DataUtilityLedger {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Loads the ledger from a JSON file, or creates an empty ledger if not found.
+    pub fn load_or_create<P: AsRef<Path>>(path: P) -> Self {
+        let p = path.as_ref();
+        if p.exists() {
+            if let Ok(file) = fs::File::open(p) {
+                if let Ok(ledger) = serde_json::from_reader(file) {
+                    return ledger;
+                }
+            }
+        }
+        Self::default()
+    }
+
+    /// Atomically persists the ledger to disk using a temporary file.
+    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        let p = path.as_ref();
+        if let Some(parent) = p.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let tmp = p.with_extension("json.tmp");
+        let file = fs::File::create(&tmp)?;
+        serde_json::to_writer_pretty(file, self)?;
+        fs::rename(&tmp, p)?;
+        Ok(())
+    }
+
+    /// Upserts a utility record into the ledger.
+    pub fn upsert_record(&mut self, record: DataChunkUtilityRecord) {
+        if !self.records.contains_key(&record.chunk_id) {
+            self.total_samples_ever_indexed += 1;
+        }
+        self.records.insert(record.chunk_id.clone(), record);
+    }
+
+    /// Updates online training feedback for a chunk (loss, gradient norm, timestamp).
+    pub fn update_training_feedback(
+        &mut self,
+        chunk_id: &str,
+        loss: f32,
+        grad_norm: f32,
+        timestamp: u64,
+        surface_rarity: f32,
+    ) {
+        if let Some(record) = self.records.get_mut(chunk_id) {
+            let ema_alpha = 0.2f32;
+            record.loss_ema = (1.0 - ema_alpha) * record.loss_ema + ema_alpha * loss;
+            record.gradient_norm_ema =
+                (1.0 - ema_alpha) * record.gradient_norm_ema + ema_alpha * grad_norm;
+            record.times_trained += 1;
+            record.last_trained_timestamp = timestamp;
+            record.current_utility_score = compute_geometric_utility_score(
+                record.acoustic_quality_score,
+                record.loss_ema,
+                record.information_novelty,
+                surface_rarity,
+                record.times_trained,
+                0.0,
+            );
+            record.retraining_priority = compute_retraining_priority(
+                record.acoustic_quality_score,
+                record.loss_ema,
+                record.information_novelty,
+                surface_rarity,
+            );
+        }
+    }
+
+    /// Marks a chunk as evicted from local cache (audio WAV deleted), but preserves score history.
+    pub fn mark_evicted(&mut self, chunk_id: &str) {
+        if let Some(record) = self.records.get_mut(chunk_id) {
+            record.is_cached_locally = false;
+        }
+    }
+
+    /// Returns the top K candidates ranked by retraining priority for catalogue replay.
+    pub fn top_retraining_candidates(&self, count: usize) -> Vec<DataChunkUtilityRecord> {
+        let mut candidates: Vec<DataChunkUtilityRecord> = self.records.values().cloned().collect();
+        candidates.sort_by(|a, b| {
+            b.retraining_priority
+                .partial_cmp(&a.retraining_priority)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        candidates.truncate(count);
+        candidates
+    }
+
+    /// Seeds or synchronizes the ledger from an audio manifest and/or provenance manifest,
+    /// ensuring all cataloged files have computed data quality scores and retraining priorities
+    /// stored in Git.
+    pub fn seed_from_provenance_or_manifest(
+        manifest_path: Option<&Path>,
+        provenance_path: Option<&Path>,
+    ) -> Result<Self> {
+        let mut ledger = Self::default();
+
+        // 1. Ingest records from manifest.json if present
+        if let Some(m_path) = manifest_path {
+            if m_path.exists() {
+                if let Ok(file) = fs::File::open(m_path) {
+                    if let Ok(entries) = serde_json::from_reader::<
+                        _,
+                        HashMap<String, crate::features::AudioMetadata>,
+                    >(file)
+                    {
+                        for (key, meta) in entries {
+                            let q = compute_acoustic_quality_score(&meta);
+                            let canonical_surf =
+                                shared::surface::CanonicalSurface::from_tag(&meta.surface_tag);
+                            let material_props = canonical_surf.material_properties().to_array();
+                            let u_score = compute_geometric_utility_score(q, 1.0, 1.0, 1.0, 0, 0.0);
+                            let priority = compute_retraining_priority(q, 1.0, 1.0, 1.0);
+
+                            let rec = DataChunkUtilityRecord {
+                                chunk_id: key.clone(),
+                                sha256: String::new(),
+                                source_id: meta.filename.clone(),
+                                surface_tag: meta.surface_tag.clone(),
+                                material_properties: material_props,
+                                acoustic_quality_score: q,
+                                loss_ema: 1.0,
+                                gradient_norm_ema: 1.0,
+                                times_trained: 0,
+                                last_trained_timestamp: 0,
+                                information_novelty: 1.0,
+                                current_utility_score: u_score,
+                                retraining_priority: priority,
+                                is_cached_locally: Path::new(&meta.path).exists(),
+                            };
+                            ledger.upsert_record(rec);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Ingest records from manifest_provenance.json if present
+        if let Some(p_path) = provenance_path {
+            if p_path.exists() {
+                if let Ok(file) = fs::File::open(p_path) {
+                    if let Ok(val) = serde_json::from_reader::<_, serde_json::Value>(file) {
+                        if let Some(records) = val.get("records").and_then(|r| r.as_array()) {
+                            for r in records {
+                                if let Some(filename) = r.get("filename").and_then(|f| f.as_str()) {
+                                    let chunk_id = filename
+                                        .replace(".wav", "")
+                                        .replace(".mp3", "")
+                                        .replace(".flac", "")
+                                        .replace(".ogg", "");
+
+                                    if !ledger.records.contains_key(&chunk_id) {
+                                        let sha256 = r
+                                            .get("sha256")
+                                            .and_then(|s| s.as_str())
+                                            .unwrap_or("")
+                                            .to_string();
+                                        let tags = r
+                                            .get("tags")
+                                            .and_then(|t| t.as_array())
+                                            .and_then(|arr| arr.first())
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("pavement");
+
+                                        let canonical_surf =
+                                            shared::surface::CanonicalSurface::from_tag(tags);
+                                        let material_props =
+                                            canonical_surf.material_properties().to_array();
+
+                                        let q = 0.80f32; // Default baseline verified quality
+                                        let u_score = compute_geometric_utility_score(
+                                            q, 1.0, 1.0, 1.0, 0, 0.0,
+                                        );
+                                        let priority =
+                                            compute_retraining_priority(q, 1.0, 1.0, 1.0);
+
+                                        let rec = DataChunkUtilityRecord {
+                                            chunk_id: chunk_id.clone(),
+                                            sha256,
+                                            source_id: filename.to_string(),
+                                            surface_tag: tags.to_string(),
+                                            material_properties: material_props,
+                                            acoustic_quality_score: q,
+                                            loss_ema: 1.0,
+                                            gradient_norm_ema: 1.0,
+                                            times_trained: 0,
+                                            last_trained_timestamp: 0,
+                                            information_novelty: 1.0,
+                                            current_utility_score: u_score,
+                                            retraining_priority: priority,
+                                            is_cached_locally: true,
+                                        };
+                                        ledger.upsert_record(rec);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(ledger)
+    }
+}
+
+/// Resolves standard path for the persistent data utility ledger given a manifest path.
+pub fn ledger_path_for_manifest(manifest_path: &Path) -> PathBuf {
+    manifest_path
+        .parent()
+        .unwrap_or_else(|| Path::new("data/rain"))
+        .join("data_utility_ledger.json")
+}
+
+/// Multiplicative / Geometric utility score for training sample selection with Zero-Veto.
+///
+/// Formulation:
+/// U(x) = Q(x)^alpha * (epsilon + L(x))^beta * N(x)^gamma * R(surface)^delta * exp(-lambda * times_trained) * (1 - C(x))
+///
+/// Zero-Veto Property: If acoustic quality Q <= 1e-4 (severe corruption, mic bump, digital clipping,
+/// near-silence), utility is immediately 0.0 regardless of how high reconstruction loss L(x) is.
+pub fn compute_geometric_utility_score(
+    quality: f32,
+    loss: f32,
+    novelty: f32,
+    rarity: f32,
+    times_trained: usize,
+    redundancy: f32,
+) -> f32 {
+    if quality <= 1e-4 {
+        return 0.0;
+    }
+
+    let q = quality.clamp(0.0, 1.0);
+    let epsilon = 0.01f32;
+    let l = (epsilon + loss.max(0.0)).powf(0.5);
+    let n = novelty.clamp(0.05, 2.0).powf(0.5);
+    let r = rarity.clamp(0.2, 5.0).powf(0.5);
+    let satiation = (-0.15f32 * times_trained as f32).exp();
+    let redundancy_factor = 1.0f32 - redundancy.clamp(0.0, 0.95);
+
+    q * l * n * r * satiation * redundancy_factor
+}
+
+/// Computes the priority for targeted replay when external catalogs are exhausted.
+/// Difficult boundary cases (high loss) with high acoustic fidelity (high Q) receive the highest priority.
+pub fn compute_retraining_priority(quality: f32, loss: f32, novelty: f32, rarity: f32) -> f32 {
+    if quality <= 1e-4 {
+        return 0.0;
+    }
+    let q = quality.clamp(0.0, 1.0);
+    let epsilon = 0.01f32;
+    let l = (epsilon + loss.max(0.0)).powf(0.6);
+    let n = novelty.clamp(0.05, 2.0).powf(0.4);
+    let r = rarity.clamp(0.2, 5.0).powf(0.4);
+
+    q * l * n * r
+}
 
 /// Live telemetry message from the database health worker.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -151,6 +441,36 @@ impl DatabaseHealthWorker {
                     .parent()
                     .unwrap_or_else(|| Path::new("data/processed"));
 
+                // 1b. Check local input drop folder (data/input -> data/quarantine or data/rain)
+                let input_dir = Path::new("data/input");
+                let quarantine_dir = Path::new("data/quarantine");
+                let target_dir = Path::new("data/rain");
+                let ledger_file = ledger_path_for_manifest(&manifest_path);
+                let prov_file = Path::new("data/rain/manifest_provenance.json");
+                if input_dir.exists() {
+                    if let Ok(drop_res) = crate::contribute::process_input_drop_folder(
+                        input_dir,
+                        quarantine_dir,
+                        target_dir,
+                        &ledger_file,
+                        prov_file,
+                    ) {
+                        if drop_res.standardized_count > 0 {
+                            let _ = git_sync_standardized_data(
+                                &drop_res.standardized_files,
+                                &format!(
+                                    "data(ingest): standardize {} input drop files",
+                                    drop_res.standardized_count
+                                ),
+                            );
+                            telemetry.last_action = format!(
+                                "Standardized {} files from drop folder (Quarantined: {})",
+                                drop_res.standardized_count, drop_res.quarantined_count
+                            );
+                        }
+                    }
+                }
+
                 // 2. Trickle in & categorise new data
                 if auto_balance || force_freshen {
                     iteration += 1;
@@ -190,9 +510,14 @@ impl DatabaseHealthWorker {
                     telemetry.quotas = new_quotas;
                 }
 
-                // 4. Enforce 15 GB rolling disk ceiling with quality-aware pruning
-                let evicted =
-                    Self::enforce_rolling_quota(proc_dir, &manifest_path, &telemetry.quotas);
+                // 4. Enforce 15 GB rolling disk ceiling with quality-aware smooth pruning
+                let evicted = Self::enforce_rolling_quota_smooth(
+                    proc_dir,
+                    &manifest_path,
+                    &telemetry.quotas,
+                    MAX_DATASET_BYTES,
+                    5, // Smooth small-batch chunk eviction
+                );
                 if evicted > 0 {
                     healed_count += evicted;
                     telemetry.rotated_chunks_count = healed_count;
@@ -201,7 +526,7 @@ impl DatabaseHealthWorker {
                         / MAX_DATASET_BYTES as f64
                         * 100.0) as f32;
                     telemetry.last_action = format!(
-                        "Quality-aware pruning evicted {} lower-quality chunks",
+                        "Quality-aware smooth pruning evicted {} lower-quality chunks",
                         evicted
                     );
                 }
@@ -282,6 +607,28 @@ impl DatabaseHealthWorker {
             .unwrap_or_else(|| Path::new("data/processed"));
         let disk_usage_bytes = Self::calculate_dir_size(processed_dir);
         let disk_usage_pct = (disk_usage_bytes as f64 / MAX_DATASET_BYTES as f64 * 100.0) as f32;
+
+        // Ensure data quality score ledger exists on disk and in git
+        let ledger_file = ledger_path_for_manifest(manifest_path);
+        if !ledger_file.exists() {
+            let prov_candidates = [
+                manifest_path
+                    .parent()
+                    .unwrap_or_else(|| Path::new("data/rain"))
+                    .join("manifest_provenance.json"),
+                PathBuf::from("data/rain/manifest_provenance.json"),
+                PathBuf::from("Data/rain/manifest_provenance.json"),
+            ];
+            let prov_path = prov_candidates.iter().find(|p| p.exists());
+            if let Ok(seeded) = DataUtilityLedger::seed_from_provenance_or_manifest(
+                Some(manifest_path),
+                prov_path.map(|p| p.as_path()),
+            ) {
+                if !seeded.records.is_empty() {
+                    let _ = seeded.save_to_file(&ledger_file);
+                }
+            }
+        }
 
         DataWorkerTelemetry {
             is_running: true,
@@ -465,7 +812,7 @@ impl DatabaseHealthWorker {
             surface_tag: tag.clone(),
         };
 
-        manifest.insert(chunk_id.clone(), meta);
+        manifest.insert(chunk_id.clone(), meta.clone());
 
         // Atomically persist updated manifest
         let tmp_path = manifest_path.with_extension("json.tmp");
@@ -475,6 +822,40 @@ impl DatabaseHealthWorker {
         let f = fs::File::create(&tmp_path)?;
         serde_json::to_writer_pretty(f, &manifest)?;
         fs::rename(&tmp_path, manifest_path)?;
+
+        // Register new chunk in Persistent Data Utility Ledger
+        let file_sha256 = if let Ok(bytes) = fs::read(&wav_path) {
+            format!("{:x}", Sha256::digest(&bytes))
+        } else {
+            String::new()
+        };
+        let q_score = compute_acoustic_quality_score(&meta);
+        let canonical_surf = shared::surface::CanonicalSurface::from_tag(tag);
+        let material_props = canonical_surf.material_properties().to_array();
+        let initial_utility = compute_geometric_utility_score(q_score, 1.0, 1.0, 1.2, 0, 0.0);
+        let initial_priority = compute_retraining_priority(q_score, 1.0, 1.0, 1.2);
+
+        let utility_record = DataChunkUtilityRecord {
+            chunk_id: chunk_id.clone(),
+            sha256: file_sha256,
+            source_id: item.filename.clone(),
+            surface_tag: tag.clone(),
+            material_properties: material_props,
+            acoustic_quality_score: q_score,
+            loss_ema: 1.0,
+            gradient_norm_ema: 1.0,
+            times_trained: 0,
+            last_trained_timestamp: 0,
+            information_novelty: 1.0,
+            current_utility_score: initial_utility,
+            retraining_priority: initial_priority,
+            is_cached_locally: true,
+        };
+
+        let ledger_path = ledger_path_for_manifest(manifest_path);
+        let mut ledger = DataUtilityLedger::load_or_create(&ledger_path);
+        ledger.upsert_record(utility_record);
+        let _ = ledger.save_to_file(&ledger_path);
 
         // Log provenance to ATTRIBUTIONS.txt
         let (_, tier, _) = crate::ingest::LicenseVerifier::verify(&item.license);
@@ -527,7 +908,7 @@ impl DatabaseHealthWorker {
         )
     }
 
-    /// Enforces a specific byte ceiling with quality-aware pruning.
+    /// Enforces a specific byte ceiling with quality-aware pruning and persistent ledger retention.
     pub fn enforce_rolling_quota_with_ceiling(
         processed_dir: &Path,
         manifest_path: &Path,
@@ -555,9 +936,11 @@ impl DatabaseHealthWorker {
         }
 
         let mut evicted = 0usize;
+        let ledger_path = ledger_path_for_manifest(manifest_path);
+        let mut ledger = DataUtilityLedger::load_or_create(&ledger_path);
 
         if !manifest_entries.is_empty() {
-            // Collect entries matching overrepresented surfaces
+            // Collect entries matching overrepresented surfaces ranked by composite geometric utility score
             let mut candidates: Vec<(String, f32, PathBuf)> = Vec::new();
             for (key, meta) in &manifest_entries {
                 let surf = meta.surface_tag.to_lowercase();
@@ -566,21 +949,49 @@ impl DatabaseHealthWorker {
                     .any(|o| surf.contains(o) || o.contains(&surf));
                 if is_overrep {
                     let q = Self::compute_acoustic_quality_score(meta);
+                    let utility_score = if let Some(r) = ledger.records.get(key) {
+                        r.current_utility_score
+                    } else {
+                        let canonical_surf =
+                            shared::surface::CanonicalSurface::from_tag(&meta.surface_tag);
+                        let material_props = canonical_surf.material_properties().to_array();
+                        let initial_u = compute_geometric_utility_score(q, 1.0, 1.0, 1.0, 0, 0.0);
+                        let initial_p = compute_retraining_priority(q, 1.0, 1.0, 1.0);
+                        ledger.upsert_record(DataChunkUtilityRecord {
+                            chunk_id: key.clone(),
+                            sha256: String::new(),
+                            source_id: meta.filename.clone(),
+                            surface_tag: meta.surface_tag.clone(),
+                            material_properties: material_props,
+                            acoustic_quality_score: q,
+                            loss_ema: 1.0,
+                            gradient_norm_ema: 1.0,
+                            times_trained: 0,
+                            last_trained_timestamp: 0,
+                            information_novelty: 1.0,
+                            current_utility_score: initial_u,
+                            retraining_priority: initial_p,
+                            is_cached_locally: true,
+                        });
+                        initial_u
+                    };
+
                     let file_path = if Path::new(&meta.path).exists() {
                         PathBuf::from(&meta.path)
                     } else {
                         processed_dir.join(&meta.filename)
                     };
-                    candidates.push((key.clone(), q, file_path));
+                    candidates.push((key.clone(), utility_score, file_path));
                 }
             }
 
-            // Sort ascending by quality score Q: lowest quality evicted first
+            // Sort ascending by utility score: lowest utility evicted first
             candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
-            for (key, _q, file_path) in candidates {
+            for (key, _score, file_path) in candidates {
                 let _ = fs::remove_file(&file_path);
                 manifest_entries.remove(&key);
+                ledger.mark_evicted(&key);
                 evicted += 1;
 
                 if Self::calculate_dir_size(processed_dir) < (max_bytes * 95 / 100) {
@@ -588,7 +999,7 @@ impl DatabaseHealthWorker {
                 }
             }
 
-            // Atomically write updated manifest
+            // Atomically write updated manifest and ledger
             if evicted > 0 {
                 let tmp_path = manifest_path.with_extension("json.tmp");
                 if let Ok(f) = fs::File::create(&tmp_path) {
@@ -596,6 +1007,12 @@ impl DatabaseHealthWorker {
                         let _ = fs::rename(&tmp_path, manifest_path);
                     }
                 }
+
+                ledger.last_pruned_timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let _ = ledger.save_to_file(&ledger_path);
             }
         } else if let Ok(entries) = fs::read_dir(processed_dir) {
             // Fallback for directory without manifest
@@ -621,6 +1038,250 @@ impl DatabaseHealthWorker {
         }
 
         evicted
+    }
+
+    /// Smooth rolling cache eviction in configurable small/medium chunk batches.
+    /// Uses a soft hysteresis ceiling (90% of max_bytes) to prevent cliff drops,
+    /// evicting lowest composite utility score chunks while retaining their score history.
+    pub fn enforce_rolling_quota_smooth(
+        processed_dir: &Path,
+        manifest_path: &Path,
+        quotas: &[SurfaceQuota],
+        max_bytes: u64,
+        chunk_batch_limit: usize,
+    ) -> usize {
+        let current_bytes = Self::calculate_dir_size(processed_dir);
+        let soft_ceiling = (max_bytes as f64 * 0.90) as u64; // 90% soft ceiling (13.5 GB on 15 GB ceiling)
+        if current_bytes <= soft_ceiling {
+            return 0;
+        }
+
+        let over_represented: Vec<String> = quotas
+            .iter()
+            .filter(|q| q.proportion > q.target_proportion * 1.10)
+            .map(|q| q.surface.to_lowercase())
+            .collect();
+
+        let mut manifest_entries: HashMap<String, crate::features::AudioMetadata> = HashMap::new();
+        if manifest_path.exists() {
+            if let Ok(file) = fs::File::open(manifest_path) {
+                if let Ok(entries) = serde_json::from_reader(file) {
+                    manifest_entries = entries;
+                }
+            }
+        }
+
+        let mut evicted = 0usize;
+        let ledger_path = ledger_path_for_manifest(manifest_path);
+        let mut ledger = DataUtilityLedger::load_or_create(&ledger_path);
+
+        if !manifest_entries.is_empty() {
+            let mut candidates: Vec<(String, f32, PathBuf)> = Vec::new();
+            for (key, meta) in &manifest_entries {
+                let surf = meta.surface_tag.to_lowercase();
+                let is_overrep = over_represented.is_empty()
+                    || over_represented
+                        .iter()
+                        .any(|o| surf.contains(o) || o.contains(&surf));
+                if is_overrep {
+                    let q = Self::compute_acoustic_quality_score(meta);
+                    let score = ledger
+                        .records
+                        .get(key)
+                        .map(|r| r.current_utility_score)
+                        .unwrap_or(q);
+                    let file_path = if Path::new(&meta.path).exists() {
+                        PathBuf::from(&meta.path)
+                    } else {
+                        processed_dir.join(&meta.filename)
+                    };
+                    candidates.push((key.clone(), score, file_path));
+                }
+            }
+
+            // Lowest utility evicted first
+            candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+            for (key, _score, file_path) in candidates {
+                if fs::remove_file(&file_path).is_ok() {
+                    manifest_entries.remove(&key);
+                    ledger.mark_evicted(&key);
+                    evicted += 1;
+                }
+
+                if evicted >= chunk_batch_limit
+                    || Self::calculate_dir_size(processed_dir) < soft_ceiling
+                {
+                    break;
+                }
+            }
+
+            if evicted > 0 {
+                let tmp_path = manifest_path.with_extension("json.tmp");
+                if let Ok(f) = fs::File::create(&tmp_path) {
+                    if serde_json::to_writer_pretty(f, &manifest_entries).is_ok() {
+                        let _ = fs::rename(&tmp_path, manifest_path);
+                    }
+                }
+                ledger.last_pruned_timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let _ = ledger.save_to_file(&ledger_path);
+            }
+        }
+
+        evicted
+    }
+
+    /// Automatically ingests approved records and audio blobs from Cloudflare Edge Worker,
+    /// standardizes them into local storage, indexes them into the Persistent Ledger and Git,
+    /// and acknowledges them via /api/contribute/ack-ingested to purge edge D1 and R2 holding buffers.
+    pub fn sync_edge_staging_buffer(
+        edge_base_url: &str,
+        target_dir: &Path,
+        ledger_path: &Path,
+        _manifest_provenance_path: &Path,
+    ) -> Result<usize> {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()?;
+
+        let approved_url = format!(
+            "{}/api/contribute/approved-list?limit=50",
+            edge_base_url.trim_end_matches('/')
+        );
+        let resp = match client.get(&approved_url).send() {
+            Ok(r) => r,
+            Err(_) => return Ok(0),
+        };
+
+        if !resp.status().is_success() {
+            return Ok(0);
+        }
+
+        let body: serde_json::Value = match resp.json() {
+            Ok(b) => b,
+            Err(_) => return Ok(0),
+        };
+
+        let records = match body.get("records").and_then(|r| r.as_array()) {
+            Some(recs) => recs,
+            None => return Ok(0),
+        };
+
+        if records.is_empty() {
+            return Ok(0);
+        }
+
+        let mut ledger = DataUtilityLedger::load_or_create(ledger_path);
+        let mut ack_shas = Vec::new();
+        let mut newly_standardized = Vec::new();
+
+        for rec in records {
+            let sha256 = match rec.get("sha256").and_then(|s| s.as_str()) {
+                Some(s) => s.to_string(),
+                None => continue,
+            };
+
+            let already_indexed = ledger.records.values().any(|r| r.sha256 == sha256);
+            if already_indexed {
+                ack_shas.push(sha256);
+                continue;
+            }
+
+            let blob_url = format!(
+                "{}/api/contribute/blob/{}",
+                edge_base_url.trim_end_matches('/'),
+                sha256
+            );
+            if let Ok(blob_resp) = client.get(&blob_url).send() {
+                if blob_resp.status().is_success() {
+                    if let Ok(bytes) = blob_resp.bytes() {
+                        let temp_blob = target_dir
+                            .join(format!("edge_raw_{}.bin", &sha256[..12.min(sha256.len())]));
+                        if fs::write(&temp_blob, &bytes).is_ok() {
+                            let thresh = crate::contribute::AudioQualityThresholds::default();
+                            let std_dest = target_dir
+                                .join(format!("edge_std_{}.wav", &sha256[..12.min(sha256.len())]));
+                            if let Ok((metrics, std_sha, _)) =
+                                crate::contribute::standardize_audio_file(
+                                    &temp_blob, &std_dest, &thresh,
+                                )
+                            {
+                                let tag = rec
+                                    .get("tags")
+                                    .and_then(|t| t.as_array())
+                                    .and_then(|arr| arr.first())
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("ambient_broadband");
+                                let canonical_surf =
+                                    shared::surface::CanonicalSurface::from_tag(tag);
+                                let material_props =
+                                    canonical_surf.material_properties().to_array();
+                                let q_score = metrics.spectral_flatness.clamp(0.0, 1.0) * 0.4
+                                    + (1.0 - metrics.clipping_ratio).clamp(0.0, 1.0) * 0.3
+                                    + (metrics.rms_energy * 10.0).clamp(0.0, 1.0) * 0.3;
+                                let u_score =
+                                    compute_geometric_utility_score(q_score, 1.0, 1.0, 1.2, 0, 0.0);
+                                let priority = compute_retraining_priority(q_score, 1.0, 1.0, 1.2);
+
+                                ledger.upsert_record(DataChunkUtilityRecord {
+                                    chunk_id: format!(
+                                        "edge_{}_chunk000",
+                                        &std_sha[..12.min(std_sha.len())]
+                                    ),
+                                    sha256: std_sha,
+                                    source_id: format!(
+                                        "edge_{}.wav",
+                                        &sha256[..12.min(sha256.len())]
+                                    ),
+                                    surface_tag: tag.to_string(),
+                                    material_properties: material_props,
+                                    acoustic_quality_score: q_score,
+                                    loss_ema: 1.0,
+                                    gradient_norm_ema: 1.0,
+                                    times_trained: 0,
+                                    last_trained_timestamp: 0,
+                                    information_novelty: 1.0,
+                                    current_utility_score: u_score,
+                                    retraining_priority: priority,
+                                    is_cached_locally: true,
+                                });
+                                newly_standardized.push(std_dest);
+                            }
+                            let _ = fs::remove_file(temp_blob);
+                        }
+                    }
+                }
+            }
+            ack_shas.push(sha256);
+        }
+
+        if !ack_shas.is_empty() {
+            let ack_url = format!(
+                "{}/api/contribute/ack-ingested",
+                edge_base_url.trim_end_matches('/')
+            );
+            let _ = client
+                .post(&ack_url)
+                .json(&serde_json::json!({ "sha256_list": ack_shas }))
+                .send();
+        }
+
+        let _ = ledger.save_to_file(ledger_path);
+
+        if !newly_standardized.is_empty() {
+            let _ = git_sync_standardized_data(
+                &newly_standardized,
+                &format!(
+                    "data(ingest): sync {} edge staging records from R2/D1",
+                    newly_standardized.len()
+                ),
+            );
+        }
+
+        Ok(newly_standardized.len())
     }
 
     /// Backfills deficit surfaces using acoustic parameter synthesis.
@@ -656,4 +1317,70 @@ impl Drop for DatabaseHealthWorker {
             let _ = handle.join();
         }
     }
+}
+
+/// Automatically stages and commits newly standardized data files and updated score ledgers to Git.
+pub fn git_sync_standardized_data(files: &[PathBuf], commit_msg: &str) -> Result<bool> {
+    if files.is_empty() {
+        return Ok(false);
+    }
+
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("add");
+    for f in files {
+        cmd.arg(f);
+    }
+    cmd.arg("data/rain/data_utility_ledger.json");
+    cmd.arg("data/rain/manifest_provenance.json");
+    let _ = cmd.output();
+
+    let commit_res = std::process::Command::new("git")
+        .args(["commit", "-m", commit_msg])
+        .output();
+
+    if let Ok(out) = commit_res {
+        if out.status.success() {
+            tracing::info!("[+] Auto-synced data to dev Git: {}", commit_msg);
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+/// Automatically stages and commits model weights and session provenance to Git on reaching training milestones.
+/// Strictly decoupled from data commits.
+pub fn git_sync_model_milestone(
+    weight_files: &[PathBuf],
+    session_file: &Path,
+    milestone_name: &str,
+    loss: f32,
+) -> Result<bool> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("add");
+    for w in weight_files {
+        cmd.arg(w);
+    }
+    cmd.arg(session_file);
+    let _ = cmd.output();
+
+    let commit_msg = format!(
+        "weights(checkpoint): milestone {} loss={:.5}",
+        milestone_name, loss
+    );
+    let commit_res = std::process::Command::new("git")
+        .args(["commit", "-m", &commit_msg])
+        .output();
+
+    if let Ok(out) = commit_res {
+        if out.status.success() {
+            tracing::info!(
+                "[+] Auto-synced model checkpoint to dev Git: {}",
+                commit_msg
+            );
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
