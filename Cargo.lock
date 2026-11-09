@@ -480,12 +480,12 @@ dependencies = [
  "hound",
  "inference",
  "js-sys",
+ "rayon",
  "serde",
  "serde_json",
  "shared",
+ "sml-runtime",
  "spodeian-cache",
- "spodeian-ml-utils",
- "spodeian-parallel",
  "thiserror 2.0.20",
  "tracing",
  "wasm-bindgen",
@@ -2883,7 +2883,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shared",
- "spodeian-ml-utils",
+ "sml-runtime",
  "thiserror 2.0.20",
  "tracing",
  "wasm-bindgen",
@@ -5364,9 +5364,9 @@ dependencies = [
 
 [[package]]
 name = "smallvec"
-version = "1.15.2"
+version = "1.16.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
+checksum = "d0d5d4b1981b8bbbb7aed204cae5726d683d5d6ac7e74ec54122ea28f315e7c8"
 dependencies = [
  "serde",
 ]
@@ -5432,6 +5432,20 @@ dependencies = [
  "libc",
  "smithay-client-toolkit 0.20.0",
  "wayland-backend",
+]
+
+[[package]]
+name = "sml-runtime"
+version = "0.1.0"
+dependencies = [
+ "candle-core",
+ "candle-nn",
+ "safetensors 0.5.3",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "thiserror 2.0.20",
+ "tracing",
 ]
 
 [[package]]
@@ -5502,31 +5516,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "spodeian-ml-utils"
-version = "0.1.0"
-dependencies = [
- "candle-core",
- "candle-nn",
- "safetensors 0.5.3",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "tracing",
-]
-
-[[package]]
-name = "spodeian-parallel"
-version = "1.0.0"
-dependencies = [
- "rayon",
-]
-
-[[package]]
 name = "spodeian-telemetry"
 version = "1.0.0"
 dependencies = [
  "console_error_panic_hook",
- "js-sys",
  "serde",
  "serde_json",
  "tracing",
