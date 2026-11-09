@@ -32,6 +32,8 @@ spodeian-export = { path = "../spodeian-core/crates/spodeian-export", version = 
 spodeian-web-utils = { path = "../spodeian-core/crates/spodeian-web-utils", version = "^1.0.0" }
 spodeian-ui = { path = "../spodeian-core/crates/spodeian-ui", version = "^1.0.0" }
 spodeian-ml-utils = { path = "../spodeian-core/crates/spodeian-ml-utils", version = "^0.1.0" }
+spodeian-parallel = { path = "../spodeian-core/crates/spodeian-parallel", version = "^1.0.0" }
+spodeian-core = { path = "../spodeian-core/crates/spodeian-core", version = "^1.0.0" }
 
 candle-core = "0.11"
 candle-nn = "0.11"

@@ -480,12 +480,12 @@ dependencies = [
  "hound",
  "inference",
  "js-sys",
- "rayon",
  "serde",
  "serde_json",
  "shared",
  "spodeian-cache",
  "spodeian-ml-utils",
+ "spodeian-parallel",
  "thiserror 2.0.20",
  "tracing",
  "wasm-bindgen",
@@ -5515,10 +5515,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "spodeian-parallel"
+version = "1.0.0"
+dependencies = [
+ "rayon",
+]
+
+[[package]]
 name = "spodeian-telemetry"
 version = "1.0.0"
 dependencies = [
  "console_error_panic_hook",
+ "js-sys",
  "serde",
  "serde_json",
  "tracing",

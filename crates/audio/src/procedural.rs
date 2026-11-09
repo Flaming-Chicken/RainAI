@@ -657,7 +657,7 @@ impl ProceduralSynthesizer {
             return;
         }
 
-        use rayon::prelude::*;
+        use spodeian_parallel::prelude::*;
 
         let effective_chunk = chunk_size.max(64);
         let sample_rate = self.sample_rate;
