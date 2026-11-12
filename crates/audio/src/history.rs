@@ -20,12 +20,31 @@ pub struct AcousticHistoryBuffer {
 }
 
 impl AcousticHistoryBuffer {
-    /// Allocate history buffer with given maximum duration (e.g. 30.0 seconds)
+    /// Allocate history buffer with given maximum duration (e.g. 30.0 seconds on native, 3.0 seconds on wasm)
     pub fn new(max_seconds: f32, sample_rate: f32) -> Self {
-        let capacity_frames = (max_seconds * sample_rate).round() as usize;
+        #[cfg(target_arch = "wasm32")]
+        let max_sec = if max_seconds.is_finite() && max_seconds > 0.0 {
+            max_seconds.min(3.0)
+        } else {
+            3.0
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let max_sec = if max_seconds.is_finite() && max_seconds > 0.0 {
+            max_seconds.min(30.0)
+        } else {
+            30.0
+        };
+
+        let safe_sr = if sample_rate.is_finite() && (100.0..=192000.0).contains(&sample_rate) {
+            sample_rate
+        } else {
+            48000.0
+        };
+
+        let capacity_frames = ((max_sec * safe_sr).round() as usize).clamp(1024, 1_440_000);
         Self {
             capacity_frames,
-            sample_rate,
+            sample_rate: safe_sr,
             audio_history: vec![FoaFrame::default(); capacity_frames],
             cond_history: vec![[0.0f32; CONDITION_DIM]; capacity_frames],
             write_pos: 0,
@@ -58,8 +77,8 @@ impl AcousticHistoryBuffer {
 
     /// Extracts past seconds of conditioning trajectory and original FOA audio linearly ordered from oldest to newest.
     pub fn extract_window(&self, seconds: f32) -> (Vec<[f32; CONDITION_DIM]>, Vec<FoaFrame>) {
-        let frames_wanted = ((seconds * self.sample_rate).round() as usize)
-            .min(self.available_frames());
+        let frames_wanted =
+            ((seconds * self.sample_rate).round() as usize).min(self.available_frames());
         if frames_wanted == 0 {
             return (Vec::new(), Vec::new());
         }
@@ -139,7 +158,8 @@ impl AcousticHistoryBuffer {
 
     /// Exports past seconds of audio upgraded to Studio Master into a standard 32-bit float WAV buffer.
     pub fn retro_upgrade_to_wav_buffer(&self, seconds: f32) -> Result<Vec<u8>, std::io::Error> {
-        let weight_cache = inference::weight_loader::WeightLoader::load_embedded_ternary().unwrap_or_default();
+        let weight_cache =
+            inference::weight_loader::WeightLoader::load_embedded_ternary().unwrap_or_default();
         let mut runner = InferenceRunner::new(shared::rain::QualityTier::StudioFp32, weight_cache);
         let mut decoder = AmbisonicDecoder::new(crate::decoder::DecodeMode::BinauralHeadphones);
         let stereo = self.retro_upgrade_window(seconds, &mut runner, &mut decoder);

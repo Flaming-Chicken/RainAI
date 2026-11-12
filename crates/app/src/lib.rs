@@ -14,44 +14,26 @@
 //!   user configurations from browser `localStorage` or native filesystem directories.
 
 pub mod components;
+pub mod settings;
 pub mod storage_manager;
+pub mod task_queue;
 
 pub use components::*;
+pub use settings::*;
 pub use storage_manager::*;
+pub use task_queue::*;
 
-use components::spectrogram::{SpectrogramHistory, render_spectrogram_panel};
-use audio::SharedAudioState;
 #[cfg(not(target_arch = "wasm32"))]
 use audio::DesktopAudioEngine;
+use audio::SharedAudioState;
 #[cfg(target_arch = "wasm32")]
 use audio::WebAudioEngine;
+use components::spectrogram::{SpectrogramHistory, render_spectrogram_panel};
 use eframe::egui;
-use shared::{
-    AppState, ThemeMode, export_to_compressed_bson, export_to_csv, export_to_json,
-};
+use shared::{AppState, ThemeMode, export_to_compressed_bson, export_to_csv};
+pub use spodeian_ui::ScreenConstraints;
 #[allow(unused_imports)]
 use tracing::{error, info, warn};
-
-pub struct ScreenConstraints {
-    pub is_mobile: bool,
-    pub is_mobile_portrait: bool,
-    pub is_tight_height: bool,
-    pub is_ultra_tight: bool,
-}
-
-impl ScreenConstraints {
-    pub fn compute(ui: &egui::Ui) -> Self {
-        let avail_w = ui.available_width();
-        let avail_h = ui.available_height();
-
-        Self {
-            is_mobile: avail_w < 800.0,
-            is_mobile_portrait: avail_w < 650.0,
-            is_tight_height: avail_h < 530.0 || avail_w < 350.0,
-            is_ultra_tight: avail_w < 330.0 || avail_h < 490.0,
-        }
-    }
-}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum ExportFormat {
@@ -71,9 +53,52 @@ impl ExportFormat {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct ContributeModalState {
+    pub submission_mode: usize, // 0: Local File, 1: Remote URL
+    pub file_or_url: String,
+    pub authors: Vec<String>,
+    pub attribution_file_path: String,
+    pub selected_license: String,
+    pub custom_license_text: String,
+    pub custom_license_file_path: String,
+    pub tags_input: String,
+    pub description_input: String,
+    pub description_file_path: String,
+    pub confirmed_rights_warranty: bool,
+    pub auto_proceed_after_processing: bool,
+    pub show_license_details: bool,
+    pub acoustic_feedback: Option<String>,
+    pub status_message: Option<Result<String, String>>,
+}
+
+impl Default for ContributeModalState {
+    fn default() -> Self {
+        Self {
+            submission_mode: 0,
+            file_or_url: String::new(),
+            authors: vec![String::new()],
+            attribution_file_path: String::new(),
+            selected_license: "RainAI-FC-Proprietary-License".to_string(),
+            custom_license_text: String::new(),
+            custom_license_file_path: String::new(),
+            tags_input: "tin_roof, rain_texture".to_string(),
+            description_input: String::new(),
+            description_file_path: String::new(),
+            confirmed_rights_warranty: false,
+            auto_proceed_after_processing: true,
+            show_license_details: false,
+            acoustic_feedback: None,
+            status_message: None,
+        }
+    }
+}
+
 pub struct TemplateApp {
     pub state: AppState,
     pub rain_view: RainView,
+    pub settings: SettingsState,
+    pub task_queue: TaskQueue,
     #[cfg(not(target_arch = "wasm32"))]
     pub desktop_audio: Option<DesktopAudioEngine>,
     #[cfg(target_arch = "wasm32")]
@@ -83,6 +108,16 @@ pub struct TemplateApp {
     pub current_theme: Option<ThemeMode>,
     pub show_reset_dialog: bool,
     pub show_help_dialog: bool,
+    pub show_privacy_dialog: bool,
+    pub show_settings_dialog: bool,
+    pub show_provenance_dialog: bool,
+    pub show_presets_dialog: bool,
+    pub show_audio_export_dialog: bool,
+    pub show_task_queue_tray: bool,
+    pub show_contribute_dialog: bool,
+    pub contribute_state: ContributeModalState,
+    pub preset_state: PresetModalState,
+    pub audio_export_state: AudioExportModalState,
     pub show_import_dialog: bool,
     pub import_text_buffer: String,
     pub import_result_message: Option<Result<String, String>>,
@@ -104,6 +139,8 @@ impl Default for TemplateApp {
         Self {
             state: AppState::default(),
             rain_view: RainView::default(),
+            settings: SettingsState::default(),
+            task_queue: TaskQueue::default(),
             #[cfg(not(target_arch = "wasm32"))]
             desktop_audio: None,
             #[cfg(target_arch = "wasm32")]
@@ -113,6 +150,16 @@ impl Default for TemplateApp {
             current_theme: None,
             show_reset_dialog: false,
             show_help_dialog: false,
+            show_privacy_dialog: false,
+            show_settings_dialog: false,
+            show_provenance_dialog: false,
+            show_presets_dialog: false,
+            show_audio_export_dialog: false,
+            show_task_queue_tray: false,
+            show_contribute_dialog: false,
+            contribute_state: ContributeModalState::default(),
+            preset_state: PresetModalState::default(),
+            audio_export_state: AudioExportModalState::default(),
             show_import_dialog: false,
             import_text_buffer: String::new(),
             import_result_message: None,
@@ -135,22 +182,85 @@ impl TemplateApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         info!("Initializing RainAI Studio...");
 
-        let mut loaded_from_storage = true;
-        #[allow(unused_mut)]
-        let mut state = load_state_multi_tier(cc.storage).unwrap_or_else(|| {
+        let first_launch = is_first_launch(cc.storage);
+        #[allow(unused_variables, unused_mut)]
+        let (mut state, loaded_from_storage) = if first_launch {
+            info!(
+                "First launch detected! Auto-starting Gentle Summer Rain default soundscape at 60% volume."
+            );
+            let mut rain_state = shared::preset::WeatherPreset::gentle_summer_rain().state;
+            rain_state.is_playing = true;
+            rain_state.master_volume = 0.60;
+            let s = shared::AppState {
+                rain: rain_state,
+                ..Default::default()
+            };
+            (s, false)
+        } else if let Some(saved) = load_state_multi_tier(cc.storage) {
+            (saved, true)
+        } else {
             warn!("No saved state found in storage, initializing fresh defaults.");
-            loaded_from_storage = false;
-            AppState::default()
-        });
+            (shared::AppState::default(), false)
+        };
+
+        let settings = load_settings_state(cc.storage);
+        let derived = settings.resolve_parameters();
+
+        let mut rain_view = RainView {
+            flow_solver: derived.flow_solver,
+            decode_mode: settings.listening_setup.to_decode_mode(),
+            webgpu_fp16: true,
+            show_advanced_inspector: settings.show_advanced_settings,
+            show_spectrogram: settings.show_spectrogram,
+            noise_masking_enabled: settings.noise_masking_enabled,
+            hrtf_profile: settings.hrtf_profile.clone(),
+            ..Default::default()
+        };
+        state.rain.sound_layers = settings.layers;
+        state.rain.evolve_enabled = settings.evolve;
+        state.rain.optimization_profile = settings.profile;
+        state.rain.quality_tier = derived.waveshaper_tier;
+
+        if first_launch {
+            rain_view.toast_notification = Some((
+                "Welcome to RainAI! Auto-playing Gentle Summer Rain soundscape.".to_string(),
+                25.0,
+            ));
+        }
+
+        #[allow(unused_variables)]
+        if let Some(ir_hash) = &settings.custom_ir_hash {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let cache_dir = std::path::Path::new("data/cache/ir");
+                if let Ok(cas) = spodeian_cache::ContentAddressedStorage::new(cache_dir) {
+                    if let Ok(bytes) = cas.get(ir_hash) {
+                        let _ = rain_view.load_custom_ir_bytes(
+                            "cached_ir.wav",
+                            &bytes,
+                            Some(cache_dir),
+                        );
+                    }
+                }
+            }
+        }
 
         #[cfg(target_arch = "wasm32")]
         {
-            if !loaded_from_storage {
+            if !loaded_from_storage && !first_launch {
                 if let Some(win) = web_sys::window() {
-                    let inner_w = win.inner_width().ok().and_then(|v| v.as_f64()).unwrap_or(1024.0);
+                    let inner_w = win
+                        .inner_width()
+                        .ok()
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(1024.0);
                     if inner_w < 650.0 {
-                        info!("Detected mobile viewport ({:.0}px), defaulting fresh session to EcoBatterySaver profile", inner_w);
-                        state.rain.optimization_profile = shared::GovernorOptimizationProfile::EcoBatterySaver;
+                        info!(
+                            "Detected mobile viewport ({:.0}px), defaulting fresh session to EcoBatterySaver profile",
+                            inner_w
+                        );
+                        state.rain.optimization_profile =
+                            shared::GovernorOptimizationProfile::EcoBatterySaver;
                         state.rain.thinking_steps = 1;
                         state.rain.use_consistency_jump = true;
                     }
@@ -168,7 +278,9 @@ impl TemplateApp {
                         hash
                     };
                     if !token.is_empty() {
-                        if let Ok(preset) = shared::preset::WeatherPreset::from_shareable_url_hash(token) {
+                        if let Ok(preset) =
+                            shared::preset::WeatherPreset::from_shareable_url_hash(token)
+                        {
                             info!("Restored shared preset '{}' from URL hash", preset.name);
                             state.rain = preset.state;
                         }
@@ -177,13 +289,53 @@ impl TemplateApp {
             }
         }
 
-        Self {
+        #[allow(unused_mut)]
+        let mut app = Self {
             state,
+            rain_view,
+            settings,
             ..Default::default()
+        };
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if first_launch || app.state.rain.is_playing {
+            app.ensure_audio_engine();
         }
+
+        info!("RainAI Studio ready.");
+        app
     }
 
     pub fn persist_state(&mut self) {
+        self.settings.master_volume = self.state.rain.master_volume;
+        self.settings.layers = self.state.rain.sound_layers;
+        self.settings.evolve = self.state.rain.evolve_enabled;
+        self.settings.profile = self.state.rain.optimization_profile;
+        self.settings.show_spectrogram = self.rain_view.show_spectrogram;
+        self.settings.show_advanced_settings = self.rain_view.show_advanced_inspector;
+        save_settings_state(None, &self.settings);
+
+        let session = PersistentSessionState {
+            flow_solver: self.rain_view.flow_solver,
+            active_preset_name: self.settings.active_preset_name.clone(),
+            master_volume: self.state.rain.master_volume,
+            decode_mode: self.rain_view.decode_mode,
+            noise_masking_enabled: self.rain_view.noise_masking_enabled,
+            noise_masking_threshold_db: -40.0,
+            hrtf_profile: self.rain_view.hrtf_profile.clone(),
+            webgpu_fp16_enabled: self.rain_view.webgpu_fp16,
+            show_advanced_inspector: self.rain_view.show_advanced_inspector,
+            show_spectrogram: self.rain_view.show_spectrogram,
+            custom_ir_hash: self
+                .rain_view
+                .custom_ir_meta
+                .as_ref()
+                .map(|m| m.sha256_hash.clone()),
+        };
+        save_session_state(None, &session);
+
+        mark_first_launch_done(None);
+
         if let Ok(json_str) = serde_json::to_string(&self.state) {
             match save_state_multi_tier(DEDICATED_STORAGE_KEY, &json_str) {
                 Ok(backend) => {
@@ -204,14 +356,16 @@ impl TemplateApp {
 
     pub fn open_export_dialog(&mut self, format: ExportFormat) {
         if format == ExportFormat::Bson {
-            if let Ok(bytes) = export_to_compressed_bson(&self.state.collection) {
+            if let Ok(bytes) = export_to_compressed_bson(&self.state.rain) {
                 use base64::{Engine as _, engine::general_purpose};
                 self.export_text_buffer = general_purpose::STANDARD.encode(&bytes);
-                trigger_binary_download("data_backup.bson", &bytes, "application/octet-stream");
+                trigger_binary_download("rain_preset.bson", &bytes, "application/octet-stream");
             }
         } else {
             self.export_text_buffer = match format {
-                ExportFormat::Json => export_to_json(&self.state.collection).unwrap_or_default(),
+                ExportFormat::Json => {
+                    serde_json::to_string_pretty(&self.state.rain).unwrap_or_default()
+                }
                 ExportFormat::Csv => export_to_csv(&self.state.collection),
                 ExportFormat::Bson => unreachable!(),
             };
@@ -225,69 +379,15 @@ impl TemplateApp {
             return;
         }
         self.current_theme = Some(self.state.config.theme);
-
-        let visuals = match self.state.config.theme {
-            ThemeMode::Light => {
-                let mut light = egui::Visuals::light();
-                light.panel_fill = egui::Color32::from_rgb(245, 244, 241);
-                light.window_fill = egui::Color32::from_rgb(252, 250, 246);
-                light.extreme_bg_color = egui::Color32::from_rgb(238, 236, 231);
-                light.widgets.noninteractive.fg_stroke.color = egui::Color32::from_rgb(45, 44, 42);
-                light.widgets.inactive.fg_stroke.color = egui::Color32::from_rgb(55, 54, 52);
-                light.widgets.hovered.fg_stroke.color = egui::Color32::from_rgb(20, 20, 18);
-                light.widgets.active.fg_stroke.color = egui::Color32::from_rgb(0, 0, 0);
-                light.widgets.noninteractive.bg_stroke.color = egui::Color32::from_rgb(222, 220, 215);
-                light.widgets.inactive.bg_stroke.color = egui::Color32::from_rgb(212, 210, 205);
-                light.widgets.inactive.bg_fill = egui::Color32::from_rgb(252, 251, 248);
-                light.widgets.hovered.bg_fill = egui::Color32::from_rgb(236, 234, 229);
-                light.widgets.active.bg_fill = egui::Color32::from_rgb(220, 218, 212);
-                light
-            }
-            ThemeMode::Dark => egui::Visuals::dark(),
-            ThemeMode::HighContrastDark => {
-                let mut hc = egui::Visuals::dark();
-                hc.panel_fill = egui::Color32::BLACK;
-                hc.window_fill = egui::Color32::BLACK;
-                hc.extreme_bg_color = egui::Color32::from_rgb(10, 10, 10);
-                hc.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.5, egui::Color32::WHITE);
-                hc.widgets.inactive.fg_stroke = egui::Stroke::new(1.5, egui::Color32::WHITE);
-                hc.widgets.hovered.fg_stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 255, 0));
-                hc.widgets.active.fg_stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 255, 0));
-                hc.widgets.noninteractive.bg_stroke = egui::Stroke::new(2.0, egui::Color32::WHITE);
-                hc.widgets.inactive.bg_stroke = egui::Stroke::new(2.0, egui::Color32::WHITE);
-                hc.widgets.hovered.bg_stroke = egui::Stroke::new(2.5, egui::Color32::from_rgb(255, 255, 0));
-                hc.widgets.active.bg_stroke = egui::Stroke::new(2.5, egui::Color32::from_rgb(255, 255, 0));
-                hc.widgets.inactive.bg_fill = egui::Color32::BLACK;
-                hc.widgets.hovered.bg_fill = egui::Color32::from_rgb(30, 30, 0);
-                hc.widgets.active.bg_fill = egui::Color32::from_rgb(50, 50, 0);
-                hc
-            }
-            ThemeMode::HighContrastLight => {
-                let mut hc = egui::Visuals::light();
-                hc.panel_fill = egui::Color32::WHITE;
-                hc.window_fill = egui::Color32::WHITE;
-                hc.extreme_bg_color = egui::Color32::WHITE;
-                hc.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.5, egui::Color32::BLACK);
-                hc.widgets.inactive.fg_stroke = egui::Stroke::new(1.5, egui::Color32::BLACK);
-                hc.widgets.hovered.fg_stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(0, 0, 180));
-                hc.widgets.active.fg_stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(0, 0, 220));
-                hc.widgets.noninteractive.bg_stroke = egui::Stroke::new(2.0, egui::Color32::BLACK);
-                hc.widgets.inactive.bg_stroke = egui::Stroke::new(2.0, egui::Color32::BLACK);
-                hc.widgets.hovered.bg_stroke = egui::Stroke::new(2.5, egui::Color32::from_rgb(0, 0, 180));
-                hc.widgets.active.bg_stroke = egui::Stroke::new(2.5, egui::Color32::from_rgb(0, 0, 220));
-                hc.widgets.inactive.bg_fill = egui::Color32::WHITE;
-                hc.widgets.hovered.bg_fill = egui::Color32::from_rgb(230, 235, 255);
-                hc.widgets.active.bg_fill = egui::Color32::from_rgb(210, 220, 255);
-                hc
-            }
-        };
-        ctx.set_visuals(visuals);
+        spodeian_ui::apply_theme(ctx, self.state.config.theme);
     }
 
     fn handle_keyboard_shortcuts(&mut self, ctx: &egui::Context) {
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             if self.show_help_dialog {
                 self.show_help_dialog = false;
+            } else if self.show_contribute_dialog {
+                self.show_contribute_dialog = false;
             } else if self.show_reset_dialog {
                 self.show_reset_dialog = false;
             } else if self.show_storage_modal {
@@ -305,15 +405,26 @@ impl TemplateApp {
 
     pub fn ensure_audio_engine(&mut self) {
         if self.audio_state.is_none() {
+            self.rain_view.audio_status_label = "Initializing Audio Engine...".to_string();
             #[cfg(not(target_arch = "wasm32"))]
             {
-                match DesktopAudioEngine::start(self.state.rain.clone(), self.rain_view.decode_mode) {
+                match DesktopAudioEngine::start(self.state.rain.clone(), self.rain_view.decode_mode)
+                {
                     Ok(engine) => {
                         self.audio_state = Some(engine.state.clone());
                         self.desktop_audio = Some(engine);
+                        self.rain_view.audio_status_label =
+                            "Ready (48kHz Desktop Audio)".to_string();
                     }
                     Err(e) => {
                         error!("Failed to initialize DesktopAudioEngine: {e}");
+                        self.rain_view.audio_status_label = "Audio Fallback Active".to_string();
+                        self.rain_view.toast_notification = Some((
+                            format!(
+                                "Audio engine init error: {e}. Running in visual/procedural fallback mode."
+                            ),
+                            15.0,
+                        ));
                     }
                 }
             }
@@ -323,9 +434,16 @@ impl TemplateApp {
                     Ok(engine) => {
                         self.audio_state = Some(engine.state.clone());
                         self.web_audio = Some(engine);
+                        self.rain_view.audio_status_label =
+                            "Ready (48kHz WebAudio Spatial)".to_string();
                     }
                     Err(e) => {
                         error!("Failed to initialize WebAudioEngine: {e}");
+                        self.rain_view.audio_status_label = "WebAudio Fallback Active".to_string();
+                        self.rain_view.toast_notification = Some((
+                            format!("WebAudio init error: {e}. Running in visual fallback mode."),
+                            15.0,
+                        ));
                     }
                 }
             }
@@ -343,7 +461,7 @@ impl TemplateApp {
 
             let mut current_bins = [0.0f32; 32];
             for (i, bin) in current_bins.iter_mut().enumerate() {
-                let intensity = (self.state.rain.weather.intensity * 0.7 
+                let intensity = (self.state.rain.weather.intensity * 0.7
                     + (i as f32 * 0.25).sin().abs() * 0.3)
                     .clamp(0.0, 1.0);
                 *bin = intensity;
@@ -367,6 +485,34 @@ impl TemplateApp {
 
 impl eframe::App for TemplateApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        self.settings.master_volume = self.state.rain.master_volume;
+        self.settings.layers = self.state.rain.sound_layers;
+        self.settings.evolve = self.state.rain.evolve_enabled;
+        self.settings.profile = self.state.rain.optimization_profile;
+        self.settings.show_spectrogram = self.rain_view.show_spectrogram;
+        self.settings.show_advanced_settings = self.rain_view.show_advanced_inspector;
+        save_settings_state(Some(storage), &self.settings);
+
+        let session = PersistentSessionState {
+            flow_solver: self.rain_view.flow_solver,
+            active_preset_name: self.settings.active_preset_name.clone(),
+            master_volume: self.state.rain.master_volume,
+            decode_mode: self.rain_view.decode_mode,
+            noise_masking_enabled: self.rain_view.noise_masking_enabled,
+            noise_masking_threshold_db: -40.0,
+            hrtf_profile: self.rain_view.hrtf_profile.clone(),
+            webgpu_fp16_enabled: self.rain_view.webgpu_fp16,
+            show_advanced_inspector: self.rain_view.show_advanced_inspector,
+            show_spectrogram: self.rain_view.show_spectrogram,
+            custom_ir_hash: self
+                .rain_view
+                .custom_ir_meta
+                .as_ref()
+                .map(|m| m.sha256_hash.clone()),
+        };
+        save_session_state(Some(storage), &session);
+        mark_first_launch_done(Some(storage));
+
         eframe::set_value(storage, eframe::APP_KEY, &self.state);
 
         if let Ok(json_str) = serde_json::to_string(&self.state) {
@@ -378,7 +524,7 @@ impl eframe::App for TemplateApp {
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.apply_theme(ctx);
-        
+
         let egui_theme = match self.state.config.theme {
             ThemeMode::Light | ThemeMode::HighContrastLight => egui::Theme::Light,
             ThemeMode::Dark | ThemeMode::HighContrastDark => egui::Theme::Dark,
@@ -415,23 +561,66 @@ impl eframe::App for TemplateApp {
         // 1. Render navbar (Top Panel)
         components::navbar::render_navbar(self, ui, &constraints);
 
-        // 2. Render bottom spectrogram waterfall panel
-        render_spectrogram_panel(ui, &self.spectrogram_history);
+        // 2. Render bottom spectrogram waterfall panel (Decoupled, resizable, default visible)
+        if self.rain_view.show_spectrogram {
+            egui::Panel::bottom("spectrogram_bottom_panel")
+                .resizable(true)
+                .default_size(120.0)
+                .min_size(60.0)
+                .max_size(220.0)
+                .show(ui, |ui| {
+                    render_spectrogram_panel(
+                        ui,
+                        &self.spectrogram_history,
+                        &mut self.rain_view.show_spectrogram,
+                    );
+                });
+        }
 
         // 3. Central content area
         egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.group(|ui| {
                     ui.heading("🌧 RainAI Neural Spatial Soundscape Studio");
-                    ui.label("Continuous, non-repetitive procedural rain synthesis conditioned on 554 physical parameters.");
+                    ui.label("Continuous, non-repetitive procedural rain synthesis conditioned on 64 physical parameters.");
                     ui.add_space(8.0);
                     self.rain_view.render(ui, &mut self.state.rain, self.audio_state.as_ref());
                 });
             });
         });
 
-        // 4. Modals and warnings
+        // 4. Modals, warnings, and background task queue dock
         components::modals::render_dialogs(self, ui);
         components::modals::render_warning_banners(self, ui.ctx());
+        components::modals::render_queue_dock(self, ui.ctx());
     }
+}
+
+#[cfg(target_os = "android")]
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+fn android_main(app: winit::platform::android::activity::AndroidApp) {
+    use eframe::NativeOptions;
+    let mut options = NativeOptions::default();
+    options.android_app = Some(app);
+    eframe::run_native(
+        "RainAI",
+        options,
+        Box::new(|cc| Ok(Box::new(TemplateApp::new(cc)))),
+    )
+    .unwrap();
+}
+
+#[cfg(target_os = "ios")]
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "C" fn ios_main() {
+    use eframe::NativeOptions;
+    let _ = audio::IosAudioSessionManager::configure_audio_session();
+    let options = NativeOptions::default();
+    let _ = eframe::run_native(
+        "RainAI",
+        options,
+        Box::new(|cc| Ok(Box::new(TemplateApp::new(cc)))),
+    );
 }

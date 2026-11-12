@@ -2,13 +2,13 @@
 //! execution latency across baseline dense projections, Candle SafeTensors SIMD kernels,
 //! and ONNX-equivalent fused graph recurrence steps.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use inference::kernels::{dense_projection, step_recurrence_f32, ternary_matmul_simd_f32};
 
 fn bench_backend_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("RainAI Multi-Backend Inference Comparison");
 
-    let in_dim = 554;
+    let in_dim = 64;
     let out_dim = 64;
     let input = vec![0.5f32; in_dim];
     let weights_f32 = vec![0.1f32; out_dim * in_dim];
@@ -22,7 +22,7 @@ fn bench_backend_comparison(c: &mut Criterion) {
     });
 
     // 2. Hugging Face Candle / Pure-Rust Tensor Engine (Ternary 1.58-bit SIMD)
-    let packed_weights = vec![0x55u8; (out_dim * in_dim).div_ceil(4)];
+    let packed_weights = vec![0x55u8; out_dim * in_dim.div_ceil(4)];
     let mut ternary_output = vec![0.0f32; out_dim];
     group.bench_function("backend_candle_safetensors_ternary_simd", |b| {
         b.iter(|| {

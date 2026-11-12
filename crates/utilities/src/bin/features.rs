@@ -1,14 +1,13 @@
 use anyhow::Result;
 use rayon::prelude::*;
-use rustfft::num_complex::Complex;
 use rustfft::FftPlanner;
+use rustfft::num_complex::Complex;
 use std::collections::HashMap;
 use std::f32::consts::PI;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use tracing::{error, info};
-use utilities::features::{extract_features, AudioMetadata, FFT_SIZE};
-
+use utilities::features::{AudioMetadata, FFT_SIZE, extract_features};
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
@@ -22,13 +21,17 @@ fn main() -> Result<()> {
     let wav_files: Vec<PathBuf> = fs::read_dir(processed_dir)?
         .filter_map(|e| e.ok().map(|d| d.path()))
         .filter(|p| {
-            p.extension().and_then(|s| s.to_str())
+            p.extension()
+                .and_then(|s| s.to_str())
                 .map(|ext| ext.eq_ignore_ascii_case("wav"))
                 .unwrap_or(false)
         })
         .collect();
 
-    info!("Extracting structural and acoustic features for {} audio chunks...", wav_files.len());
+    info!(
+        "Extracting structural and acoustic features for {} audio chunks...",
+        wav_files.len()
+    );
 
     let results: Vec<(String, AudioMetadata)> = wav_files
         .par_iter()
@@ -53,7 +56,7 @@ fn main() -> Result<()> {
                         None
                     }
                 }
-            }
+            },
         )
         .filter_map(|x| x)
         .collect();

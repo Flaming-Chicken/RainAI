@@ -7,7 +7,7 @@
 //! # Architecture & Modules
 //!
 //! - [`rain`]: Core physical domain model representing 9 distinct surface profiles, drop size
-//!   distributions, wind coupling vectors, hardware governor telemetry, and 554-dimensional conditioning vectors.
+//!   distributions, wind coupling vectors, hardware governor telemetry, and 64-dimensional conditioning vectors.
 //! - [`preset`]: Built-in factory presets (e.g., Attic Tin Roof, Amazon Canopy, Concrete Courtyard,
 //!   Cabin Lake Pier) with instant serialization and interpolation curves.
 //! - [`export`]: Lossless audio render configurations supporting sample rates up to 96 kHz, bit depths
@@ -16,6 +16,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod attribution;
 pub mod conditioning;
 pub mod export;
 pub mod models;
@@ -24,6 +25,7 @@ pub mod preset;
 pub mod rain;
 pub mod surface;
 
+pub use attribution::*;
 pub use conditioning::*;
 pub use export::*;
 pub use models::*;
@@ -32,56 +34,7 @@ pub use preset::*;
 pub use rain::*;
 pub use surface::*;
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum ThemeMode {
-    Light,
-    #[default]
-    Dark,
-    HighContrastDark,
-    HighContrastLight,
-}
-
-impl ThemeMode {
-    #[must_use]
-    pub fn next(self) -> Self {
-        match self {
-            Self::Dark => Self::Light,
-            Self::Light => Self::HighContrastDark,
-            Self::HighContrastDark => Self::HighContrastLight,
-            Self::HighContrastLight => Self::Dark,
-        }
-    }
-
-    #[must_use]
-    pub fn is_dark(self) -> bool {
-        matches!(self, Self::Dark | Self::HighContrastDark)
-    }
-
-    #[must_use]
-    pub fn is_high_contrast(self) -> bool {
-        matches!(self, Self::HighContrastDark | Self::HighContrastLight)
-    }
-
-    #[must_use]
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Dark => "Dark",
-            Self::Light => "Warm Light",
-            Self::HighContrastDark => "HC Dark",
-            Self::HighContrastLight => "HC Light",
-        }
-    }
-
-    #[must_use]
-    pub fn icon(self) -> &'static str {
-        match self {
-            Self::Dark => "🌙",
-            Self::Light => "☀️",
-            Self::HighContrastDark => "⬛",
-            Self::HighContrastLight => "⬜",
-        }
-    }
-}
+pub use spodeian_tokens::ThemeMode;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]

@@ -13,7 +13,8 @@ class RainInferenceProcessor extends AudioWorkletProcessor {
             
             if (type === 'INIT_WASM') {
                 try {
-                    await init(payload.wasmModule);
+                    const wasmExports = await init(payload.wasmModule);
+                    this.wasmMemory = wasmExports?.memory || (typeof wasm_bindgen !== 'undefined' ? wasm_bindgen.memory : null);
                     this.inferenceNode = new WasmInferenceNode();
                     this.initialized = true;
                     this.port.postMessage({ type: 'READY' });
@@ -25,6 +26,16 @@ class RainInferenceProcessor extends AudioWorkletProcessor {
                 this.sharedConditioning = new Float32Array(payload.sharedBuffer);
             } else if (type === 'SET_EXPERTS') {
                 if (this.inferenceNode) this.inferenceNode.set_active_experts(payload.experts);
+            } else if (type === 'SET_NEURAL_ENABLED') {
+                if (this.inferenceNode) this.inferenceNode.set_neural_enabled(payload.enabled);
+            } else if (type === 'SET_USE_PHYSICAL') {
+                if (this.inferenceNode) this.inferenceNode.set_use_physical(payload.use_physical);
+            } else if (type === 'SET_WEATHER') {
+                if (this.inferenceNode) {
+                    if (payload.intensity !== undefined) this.inferenceNode.set_rain_intensity(payload.intensity);
+                    if (payload.wind !== undefined) this.inferenceNode.set_wind_speed(payload.wind);
+                    if (payload.volume !== undefined) this.inferenceNode.set_master_volume(payload.volume);
+                }
             }
         };
     }
@@ -32,28 +43,69 @@ class RainInferenceProcessor extends AudioWorkletProcessor {
     process(inputs, outputs, parameters) {
         const output = outputs[0];
         
-        if (!this.initialized || output.length < 4) {
+        if (!this.initialized || !output || output.length === 0) {
             return true; 
         }
 
-        const [channelW, channelX, channelY, channelZ] = output;
-        const bufferSize = channelW.length;
+        const bufferSize = output[0].length;
 
-        for (let i = 0; i < bufferSize; i++) {
-            if (this.sharedConditioning) {
-                this.conditioningBuffer.set(this.sharedConditioning);
+        if (this.sharedConditioning) {
+            this.conditioningBuffer.set(this.sharedConditioning);
+        }
+
+        try {
+            if (this.wasmMemory && typeof this.inferenceNode.render_block_planar === 'function') {
+                if (output.length >= 4) {
+                    // Ambisonic FOA 4-channel mode: W, X, Y, Z
+                    this.inferenceNode.render_block_planar(this.conditioningBuffer, bufferSize);
+                    const ptr = this.inferenceNode.planar_buffer_ptr();
+                    const planar = new Float32Array(this.wasmMemory.buffer, ptr, bufferSize * 4);
+                    output[0].set(planar.subarray(0, bufferSize));
+                    output[1].set(planar.subarray(bufferSize, bufferSize * 2));
+                    output[2].set(planar.subarray(bufferSize * 2, bufferSize * 3));
+                    output[3].set(planar.subarray(bufferSize * 3, bufferSize * 4));
+                } else if (output.length >= 2) {
+                    // Binaural / Stereo 2-channel mode: Left, Right
+                    this.inferenceNode.render_block_stereo(this.conditioningBuffer, bufferSize);
+                    const ptr = this.inferenceNode.stereo_buffer_ptr();
+                    const stereo = new Float32Array(this.wasmMemory.buffer, ptr, bufferSize * 2);
+                    output[0].set(stereo.subarray(0, bufferSize));
+                    output[1].set(stereo.subarray(bufferSize, bufferSize * 2));
+                } else if (output.length === 1) {
+                    // Mono mode
+                    this.inferenceNode.render_block_stereo(this.conditioningBuffer, bufferSize);
+                    const ptr = this.inferenceNode.stereo_buffer_ptr();
+                    const stereo = new Float32Array(this.wasmMemory.buffer, ptr, bufferSize * 2);
+                    const left = stereo.subarray(0, bufferSize);
+                    const right = stereo.subarray(bufferSize, bufferSize * 2);
+                    for (let i = 0; i < bufferSize; i++) {
+                        output[0][i] = (left[i] + right[i]) * 0.5;
+                    }
+                }
+            } else {
+                // Fallback for environments where direct WASM memory export is disabled
+                if (output.length >= 4) {
+                    const planar = this.inferenceNode.step_block_planar(this.conditioningBuffer, bufferSize);
+                    output[0].set(planar.subarray(0, bufferSize));
+                    output[1].set(planar.subarray(bufferSize, bufferSize * 2));
+                    output[2].set(planar.subarray(bufferSize * 2, bufferSize * 3));
+                    output[3].set(planar.subarray(bufferSize * 3, bufferSize * 4));
+                } else if (output.length >= 2) {
+                    const stereo = this.inferenceNode.step_block_stereo(this.conditioningBuffer, bufferSize);
+                    output[0].set(stereo.subarray(0, bufferSize));
+                    output[1].set(stereo.subarray(bufferSize, bufferSize * 2));
+                } else if (output.length === 1) {
+                    const stereo = this.inferenceNode.step_block_stereo(this.conditioningBuffer, bufferSize);
+                    const left = stereo.subarray(0, bufferSize);
+                    const right = stereo.subarray(bufferSize, bufferSize * 2);
+                    for (let i = 0; i < bufferSize; i++) {
+                        output[0][i] = (left[i] + right[i]) * 0.5;
+                    }
+                }
             }
-
-            try {
-                // Execute the SIMD WASM pipeline for this frame
-                const foaFrame = this.inferenceNode.step_frame(this.conditioningBuffer);
-                
-                channelW[i] = foaFrame[0];
-                channelX[i] = foaFrame[1];
-                channelY[i] = foaFrame[2];
-                channelZ[i] = foaFrame[3];
-            } catch (e) {
-                channelW[i] = channelX[i] = channelY[i] = channelZ[i] = 0.0;
+        } catch (e) {
+            for (let ch = 0; ch < output.length; ch++) {
+                output[ch].fill(0.0);
             }
         }
 

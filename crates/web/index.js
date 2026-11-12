@@ -1,8 +1,101 @@
 // ============================================================================
 // RainAI Neural Audio Engine Initialization & Autoplay Unlocking
 // ============================================================================
-window.__rainAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+window.__rainAudioContext = (function () {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  try {
+    // Explicit 48 kHz: the browser resamples to hardware, so synthesis never runs below the 32 kHz floor.
+    return new Ctx({ sampleRate: 48000, latencyHint: 'interactive' });
+  } catch (_) {
+    return new Ctx();
+  }
+})();
 window.__rainEngine = null;
+
+// ============================================================================
+// Chunked Fetch API & Live ETA Progress Bar Engine
+// ============================================================================
+async function fetchWithChunkedProgress(url, estimatedTotalBytes = 15500000, stepLabel = "Downloading Engine...") {
+  const stepEl = document.getElementById('progress_step');
+  const fillEl = document.getElementById('progress_fill');
+  const pctEl = document.getElementById('progress_pct');
+  const bytesEl = document.getElementById('progress_bytes');
+  const speedEl = document.getElementById('progress_speed');
+  const etaEl = document.getElementById('progress_eta');
+
+  if (stepEl) stepEl.textContent = stepLabel;
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${url}: HTTP ${response.status}`);
+  }
+
+  const contentLength = response.headers.get('content-length');
+  const totalBytes = contentLength ? parseInt(contentLength, 10) : estimatedTotalBytes;
+
+  if (!response.body) {
+    const buf = await response.arrayBuffer();
+    return buf;
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let receivedBytes = 0;
+  const startTime = performance.now();
+  let lastSpeedUpdate = startTime;
+  let lastSpeedBytes = 0;
+  let rollingSpeedBps = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    chunks.push(value);
+    receivedBytes += value.length;
+
+    const now = performance.now();
+    const elapsedSecSinceUpdate = (now - lastSpeedUpdate) / 1000.0;
+
+    if (elapsedSecSinceUpdate >= 0.25 || receivedBytes === totalBytes) {
+      const bytesSinceLast = receivedBytes - lastSpeedBytes;
+      const currentSpeed = bytesSinceLast / Math.max(0.001, elapsedSecSinceUpdate);
+      rollingSpeedBps = rollingSpeedBps === 0 ? currentSpeed : (rollingSpeedBps * 0.7 + currentSpeed * 0.3);
+
+      lastSpeedUpdate = now;
+      lastSpeedBytes = receivedBytes;
+
+      const pct = Math.min(100, Math.round((receivedBytes / totalBytes) * 100));
+      const remainingBytes = Math.max(0, totalBytes - receivedBytes);
+      const etaSeconds = rollingSpeedBps > 1000 ? Math.ceil(remainingBytes / rollingSpeedBps) : 0;
+
+      if (fillEl) fillEl.style.width = `${pct}%`;
+      if (pctEl) pctEl.textContent = `${pct}%`;
+      if (bytesEl) {
+        bytesEl.textContent = `${(receivedBytes / 1048576).toFixed(1)} MB / ${(totalBytes / 1048576).toFixed(1)} MB`;
+      }
+      if (speedEl) {
+        speedEl.textContent = `Speed: ${(rollingSpeedBps / 1048576).toFixed(2)} MB/s`;
+      }
+      if (etaEl) {
+        etaEl.textContent = etaSeconds > 0 ? `ETA: ~${etaSeconds}s` : 'ETA: finalizing...';
+      }
+    }
+  }
+
+  // Concatenate all chunks into a unified Uint8Array
+  const combined = new Uint8Array(receivedBytes);
+  let position = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, position);
+    position += chunk.length;
+  }
+
+  if (fillEl) fillEl.style.width = '100%';
+  if (pctEl) pctEl.textContent = '100%';
+  if (stepEl) stepEl.textContent = 'Engine Ready!';
+
+  return combined.buffer;
+}
 
 async function initializeAudioEngine() {
   if (window.__rainEngine) return window.__rainEngine;
@@ -12,9 +105,8 @@ async function initializeAudioEngine() {
   // 1. Load the AudioWorklet module
   await audioCtx.audioWorklet.addModule('inference_worklet.js');
   
-  // 2. Fetch and compile the WebAssembly binary dynamically
-  const response = await fetch('./pkg/web_bg.wasm');
-  const wasmBytes = await response.arrayBuffer();
+  // 2. Fetch and compile the WebAssembly binary dynamically using chunked progress tracking
+  const wasmBytes = await fetchWithChunkedProgress('./pkg/web_bg.wasm', 15500000, "Downloading Neural WASM Engine...");
   const wasmModule = await WebAssembly.compile(wasmBytes);
   
   // 3. Create the Inference Node (0 inputs, 1 output with 4 channels)
@@ -37,21 +129,34 @@ async function initializeAudioEngine() {
   
   window.__rainEngine = { audioCtx, inferenceNode, telemetryArray };
   console.log("RainAI Audio Engine Initialized");
+
+  // Dismiss loading overlay smoothly
+  hideLoadingOverlay();
   
   return window.__rainEngine;
 }
 
 (function () {
   const unlockAudio = async () => {
-    if (window.__rainAudioContext && window.__rainAudioContext.state === 'suspended') {
-      window.__rainAudioContext.resume().catch(() => {});
+    if (window.__rainAudioContext) {
+      if (window.__rainAudioContext.state === 'suspended') {
+        try {
+          await window.__rainAudioContext.resume();
+          // Mobile Safari AudioContext unlock: play 1 frame of silence
+          const buffer = window.__rainAudioContext.createBuffer(1, 1, 22050);
+          const source = window.__rainAudioContext.createBufferSource();
+          source.buffer = buffer;
+          source.connect(window.__rainAudioContext.destination);
+          source.start(0);
+        } catch (_) {}
+      }
     }
-    // Initialize the WASM engine on the first user interaction
+    // Initialize the WASM engine on user interaction if not yet started
     if (!window.__rainEngine) {
       await initializeAudioEngine().catch(e => console.error("Audio Engine Init Failed:", e));
     }
   };
-  ['click', 'touchstart', 'pointerdown', 'keydown'].forEach((evt) => {
+  ['click', 'touchstart', 'touchend', 'pointerdown', 'keydown'].forEach((evt) => {
     window.addEventListener(evt, unlockAudio, { passive: true });
   });
 })();
@@ -285,5 +390,271 @@ document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState === 'visible' && window.__wakeLockDesired) {
     await window.__setWakeLock(true);
   }
+});
+
+// ============================================================================
+// Hardware WebGPU vs CPU Acceleration Detection
+// ============================================================================
+window.__webgpuAvailable = false;
+
+async function detectGpuAcceleration() {
+  const badge = document.getElementById('hw_badge');
+  if (!navigator.gpu) {
+    if (badge) {
+      badge.textContent = "⚡ CPU Mode (WebGPU unavailable)";
+      badge.className = "badge badge-cpu";
+    }
+    window.__webgpuAvailable = false;
+    return false;
+  }
+  try {
+    const adapter = await navigator.gpu.requestAdapter();
+    if (!adapter) {
+      if (badge) {
+        badge.textContent = "⚡ CPU Mode (No GPU adapter)";
+        badge.className = "badge badge-cpu";
+      }
+      window.__webgpuAvailable = false;
+      return false;
+    }
+    if (badge) {
+      badge.textContent = "🚀 WebGPU Accelerated";
+      badge.className = "badge badge-gpu";
+    }
+    window.__webgpuAvailable = true;
+    return true;
+  } catch (e) {
+    if (badge) {
+      badge.textContent = "⚡ CPU Mode (Fallback)";
+      badge.className = "badge badge-cpu";
+    }
+    window.__webgpuAvailable = false;
+    return false;
+  }
+}
+
+// ============================================================================
+// Loading Overlay Auto-Dismissal Engine
+// ============================================================================
+function hideLoadingOverlay() {
+  const overlay = document.getElementById('loading_overlay');
+  if (overlay && !overlay.classList.contains('fade_out')) {
+    overlay.classList.add('fade_out');
+    setTimeout(() => {
+      overlay.style.display = 'none';
+    }, 600);
+  }
+}
+
+// Watch canvas render activity to automatically dismiss overlay
+(function watchCanvasReady() {
+  const canvas = document.getElementById('egui_canvas');
+  if (!canvas) return;
+
+  let checks = 0;
+  const poll = setInterval(() => {
+    checks++;
+    if (canvas.width > 0 && canvas.height > 0) {
+      // Allow egui one frame to paint
+      setTimeout(hideLoadingOverlay, 300);
+      clearInterval(poll);
+    }
+    if (checks > 120) {
+      clearInterval(poll);
+      hideLoadingOverlay();
+    }
+  }, 100);
+})();
+
+// ============================================================================
+// Out-of-Memory (OOM) & Crash Resurrection Loop
+// ============================================================================
+function getRecoveryAttempts() {
+  try {
+    const val = parseInt(sessionStorage.getItem('rain_recovery_attempts') || '0', 10);
+    return isNaN(val) ? 0 : val;
+  } catch (_) {
+    return 0;
+  }
+}
+
+function setRecoveryAttempts(count) {
+  try {
+    sessionStorage.setItem('rain_recovery_attempts', String(count));
+  } catch (_) {}
+}
+
+function clearRecoveryAttempts() {
+  try {
+    sessionStorage.removeItem('rain_recovery_attempts');
+  } catch (_) {}
+}
+
+// Clear recovery attempts if running stably for 4 seconds
+setTimeout(clearRecoveryAttempts, 4000);
+
+function writeSafeRecoveryState() {
+  try {
+    const safeAppState = {
+      config: { theme: 'Dark' },
+      collection: { presets: [] },
+      rain: {
+        intensity: 0.35,
+        droplet_density: 0.25,
+        quality_tier: 'Ternary158',
+        is_playing: false,
+        master_volume: 0.50,
+        synthesis_mode: 'ProceduralFilterbank'
+      }
+    };
+    const safeSessionState = {
+      flow_solver: { AdaptiveRk45: { tol: 0.001, initial_h: 0.1 } },
+      active_preset_name: 'Gentle Summer Rain',
+      master_volume: 0.50,
+      decode_mode: 'BinauralHeadphones',
+      noise_masking_enabled: false,
+      noise_masking_threshold_db: -40.0,
+      hrtf_profile: 'Kemar-Compact-Standard',
+      webgpu_fp16_enabled: true,
+      show_advanced_inspector: false,
+      custom_ir_hash: null
+    };
+    localStorage.setItem('serverless_template_app_state', JSON.stringify(safeAppState));
+    localStorage.setItem('rainai_persistent_session_state', JSON.stringify(safeSessionState));
+    localStorage.setItem('rainai_first_launch_done', 'true');
+  } catch (_) {}
+}
+
+function setupOOMAndCrashRecovery() {
+  let hasHandledCrash = false;
+
+  const handlePanicOrOOM = (err) => {
+    if (hasHandledCrash) return;
+    const errStr = String(err || '').toLowerCase();
+    const isOomOrPanic =
+      errStr.includes('out of memory') ||
+      errStr.includes('memory access out of bounds') ||
+      errStr.includes('capacity overflow') ||
+      errStr.includes('oom') ||
+      errStr.includes('unreachable') ||
+      errStr.includes('panic') ||
+      errStr.includes('allocation failed');
+
+    if (isOomOrPanic) {
+      hasHandledCrash = true;
+      console.warn('[RainAI] Intercepted runtime memory pressure or panic:', err);
+      const attempts = getRecoveryAttempts();
+
+      if (attempts < 2) {
+        setRecoveryAttempts(attempts + 1);
+        const banner = document.getElementById('recovery_banner');
+        const overlay = document.getElementById('loading_overlay');
+        if (banner) {
+          banner.textContent = `⚠ Initializing session recovery with safe defaults (Attempt ${attempts + 1}/2)...`;
+          banner.classList.remove('hidden');
+        }
+        if (overlay) {
+          overlay.style.display = 'flex';
+          overlay.classList.remove('fade_out');
+        }
+
+        writeSafeRecoveryState();
+
+        setTimeout(() => {
+          window.location.reload();
+        }, 1200);
+      } else {
+        // Stop reload loop and present interactive recovery UI
+        const overlay = document.getElementById('loading_overlay');
+        if (overlay) {
+          overlay.style.display = 'flex';
+          overlay.classList.remove('fade_out');
+          overlay.innerHTML = `
+            <div style="background:#161922; border:1px solid #e53e3e; border-radius:12px; padding:28px; color:#e2e8f0; max-width:520px; width:90%; text-align:center; box-shadow:0 12px 32px rgba(0,0,0,0.6);">
+              <div style="font-size:36px; margin-bottom:12px;">🌧 ⚠</div>
+              <h2 style="margin:0 0 8px 0; color:#fff; font-size:20px;">RainAI Recovery Console</h2>
+              <p style="font-size:14px; color:#a0aec0; margin:0 0 16px 0; line-height:1.5;">
+                The studio encountered a startup issue in WebAssembly linear memory.
+              </p>
+              <div style="font-family:monospace; font-size:12px; color:#feb2b2; background:#2d1515; padding:10px 14px; border-radius:6px; margin-bottom:20px; text-align:left; word-break:break-all; max-height:80px; overflow-y:auto;">
+                ${String(err || 'Runtime panic')}
+              </div>
+              <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap;">
+                <button id="rain_btn_reset_storage" style="background:#e53e3e; color:#fff; border:none; padding:10px 18px; border-radius:6px; cursor:pointer; font-weight:600; font-size:14px;">
+                  Reset & Clear Cache
+                </button>
+                <button id="rain_btn_safe_mode" style="background:#3182ce; color:#fff; border:none; padding:10px 18px; border-radius:6px; cursor:pointer; font-weight:600; font-size:14px;">
+                  Launch Muted Safe Mode
+                </button>
+              </div>
+            </div>
+          `;
+
+          const resetBtn = document.getElementById('rain_btn_reset_storage');
+          if (resetBtn) {
+            resetBtn.onclick = () => {
+              try {
+                localStorage.clear();
+                sessionStorage.clear();
+              } catch (_) {}
+              window.location.reload();
+            };
+          }
+
+          const safeBtn = document.getElementById('rain_btn_safe_mode');
+          if (safeBtn) {
+            safeBtn.onclick = () => {
+              clearRecoveryAttempts();
+              writeSafeRecoveryState();
+              window.location.reload();
+            };
+          }
+        }
+      }
+    }
+  };
+
+  window.addEventListener('error', (e) => handlePanicOrOOM(e.error || e.message));
+  window.addEventListener('unhandledrejection', (e) => handlePanicOrOOM(e.reason));
+}
+
+// ============================================================================
+// Cloudflare Turnstile Helper Bridge
+// ============================================================================
+window.__turnstileWidgetId = null;
+
+window.__getTurnstileToken = async function (sitekey = "1x00000000000000000000AA") {
+  if (!window.turnstile) {
+    console.warn('[RainAI] Turnstile API not loaded, checking ad-blockers');
+    return null;
+  }
+
+  const container = document.getElementById('cf-turnstile-container');
+  if (!container) return null;
+
+  return new Promise((resolve) => {
+    try {
+      container.innerHTML = '';
+      window.__turnstileWidgetId = window.turnstile.render('#cf-turnstile-container', {
+        sitekey: sitekey,
+        callback: (token) => {
+          resolve(token);
+        },
+        'error-callback': () => {
+          console.warn('[RainAI] Turnstile challenge execution deferred');
+          resolve(null);
+        },
+      });
+    } catch (e) {
+      console.warn('[RainAI] Turnstile render exception:', e);
+      resolve(null);
+    }
+  });
+};
+
+// Initial triggers on page load
+window.addEventListener('DOMContentLoaded', () => {
+  detectGpuAcceleration();
+  setupOOMAndCrashRecovery();
 });
 

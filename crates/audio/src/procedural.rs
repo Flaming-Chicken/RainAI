@@ -4,6 +4,7 @@
 //! entirely in pure Rust with zero external allocations in the audio thread.
 
 use crate::decoder::FoaFrame;
+use inference::NeuralParametricControl;
 use shared::rain::{NoiseColor, RainState};
 
 /// Fast, lightweight, deterministic pseudo-random number generator (Xorshift32)
@@ -63,7 +64,8 @@ impl PinkNoiseFilter {
         self.b3 = 0.86650 * self.b3 + white * 0.3104856;
         self.b4 = 0.55000 * self.b4 + white * 0.5329522;
         self.b5 = -0.7616 * self.b5 - white * 0.0168980;
-        let pink = self.b0 + self.b1 + self.b2 + self.b3 + self.b4 + self.b5 + self.b6 + white * 0.5362;
+        let pink =
+            self.b0 + self.b1 + self.b2 + self.b3 + self.b4 + self.b5 + self.b6 + white * 0.5362;
         self.b6 = white * 0.115926;
         pink * 0.11
     }
@@ -144,10 +146,22 @@ impl ResonantBandpass {
 /// 16 learned drift factors from RainAI neural deployment config
 #[allow(clippy::excessive_precision)]
 pub const LEARNED_DRIFT: [f32; 16] = [
-    0.0033373055, 0.0027257325, 0.0011902788, -0.0008779404,
-    -0.0014967915, 0.0032215454, 0.0022632028, -0.0006406382,
-    -0.0015108247, 0.0036037352, -0.0005228554, 0.0036691856,
-    0.0023833837, 0.0039697173, 0.0030191161, 0.0034048420,
+    0.0033373055,
+    0.0027257325,
+    0.0011902788,
+    -0.0008779404,
+    -0.0014967915,
+    0.0032215454,
+    0.0022632028,
+    -0.0006406382,
+    -0.0015108247,
+    0.0036037352,
+    -0.0005228554,
+    0.0036691856,
+    0.0023833837,
+    0.0039697173,
+    0.0030191161,
+    0.0034048420,
 ];
 
 /// Nominal frequencies for the 16 subtractive DDSP bands (Hz)
@@ -224,6 +238,15 @@ impl SubtractiveFilterbank16 {
 
         Self { filters }
     }
+
+    /// Dynamically applies neural-parametric frequency micro-drifts from Mamba2-MoE inference
+    pub fn apply_drifts(&mut self, drifts: &[f32; 16], sample_rate: f32) {
+        for (i, filter) in self.filters.iter_mut().enumerate().take(16) {
+            let tuned_freq = (NOMINAL_BAND_FREQS[i] * (1.0 + LEARNED_DRIFT[i] + drifts[i]))
+                .clamp(20.0, sample_rate * 0.48);
+            filter.update(tuned_freq, NOMINAL_BAND_Q[i], sample_rate);
+        }
+    }
 }
 
 /// Real-time Procedural DDSP Synthesis Engine
@@ -234,6 +257,8 @@ pub struct ProceduralSynthesizer {
     pink_filter: PinkNoiseFilter,
     brown_filter: BrownNoiseFilter,
     filterbank: SubtractiveFilterbank16,
+    last_drifts: [f32; 16],
+    smoothed_gains: [f32; 16],
     thunder_rumble: f32,
     thunder_decay: f32,
     insect_phase: f32,
@@ -257,6 +282,8 @@ impl ProceduralSynthesizer {
             pink_filter: PinkNoiseFilter::default(),
             brown_filter: BrownNoiseFilter::default(),
             filterbank: SubtractiveFilterbank16::new(sample_rate),
+            last_drifts: [0.0; 16],
+            smoothed_gains: [1.0; 16],
             thunder_rumble: 0.0,
             thunder_decay: 0.9995,
             insect_phase: 0.0,
@@ -267,8 +294,41 @@ impl ProceduralSynthesizer {
         }
     }
 
+    /// Resets procedural filters and ambient generator phases.
+    pub fn reset(&mut self) {
+        self.thunder_rumble = 0.0;
+        self.insect_phase = 0.0;
+        self.bird_chirp_counter = 0;
+        self.smoothed_gains = [1.0; 16];
+        self.filterbank = SubtractiveFilterbank16::new(self.sample_rate);
+    }
+
     /// Synthesizes one 4-channel FOA frame based on current RainState
     pub fn process_frame(&mut self, state: &RainState) -> FoaFrame {
+        self.process_frame_modulated(state, None)
+    }
+
+    /// Synthesizes one 4-channel FOA frame based on current RainState dynamically modulated
+    /// by optional neural-parametric control signals.
+    pub fn process_frame_modulated(
+        &mut self,
+        state: &RainState,
+        modulation: Option<&NeuralParametricControl>,
+    ) -> FoaFrame {
+        self.process_frame_partitioned(state, modulation, false)
+    }
+
+    /// Synthesizes one 4-channel FOA frame with explicit partitioning control.
+    /// When `suppress_droplets` is true, procedural discrete Poisson droplet bursts
+    /// (bands 0..=9/10 droplet impacts) are muted, dedicating this engine strictly to
+    /// ambient wash, wind, and mist to prevent double-triggering acoustic mud against
+    /// the physical raindrop synthesizer.
+    pub fn process_frame_partitioned(
+        &mut self,
+        state: &RainState,
+        modulation: Option<&NeuralParametricControl>,
+        suppress_droplets: bool,
+    ) -> FoaFrame {
         if !state.is_playing {
             return FoaFrame::default();
         }
@@ -287,50 +347,121 @@ impl ProceduralSynthesizer {
         // 2. Continuous 16-band subtractive parametric resonance response
         let rain_drive = base_noise * state.weather.intensity;
 
-        // 12 Tied Physics Bands
-        let tin_sound = self.filterbank.filters[0].process(rain_drive) * state.surfaces.tin * 2.2;
-        let leaf_sound = self.filterbank.filters[1].process(rain_drive) * state.surfaces.leaves_broad * 1.5;
-        let pine_sound = self.filterbank.filters[2].process(rain_drive) * state.surfaces.pine_needles * 1.7;
-        let pavement_sound = self.filterbank.filters[3].process(rain_drive) * state.surfaces.pavement * 1.1;
-        let water_sound = self.filterbank.filters[4].process(rain_drive) * state.surfaces.water_deep * 1.6;
-        let puddle_sound = self.filterbank.filters[5].process(rain_drive) * state.surfaces.puddle_shallow * 1.8;
-        let canvas_sound = self.filterbank.filters[6].process(rain_drive) * state.surfaces.canvas_tent * 1.9;
-        let glass_sound = self.filterbank.filters[7].process(rain_drive) * state.surfaces.glass_window * 1.8;
-        let wood_sound = self.filterbank.filters[8].process(rain_drive) * state.surfaces.wood_deck * 1.6;
+        let (mod_gains, droplet_rate_scale, droplet_energy_scale, wind_howl_scale, wind_gust_scale) =
+            if let Some(ctrl) = modulation {
+                if ctrl.band_freq_drifts != self.last_drifts {
+                    self.filterbank
+                        .apply_drifts(&ctrl.band_freq_drifts, self.sample_rate);
+                    self.last_drifts = ctrl.band_freq_drifts;
+                }
+                (
+                    ctrl.band_gains,
+                    ctrl.droplet_rate_mod,
+                    ctrl.droplet_energy_mod,
+                    ctrl.wind_howl_mod,
+                    ctrl.wind_gust_mod,
+                )
+            } else {
+                ([1.0; 16], 1.0, 1.0, 1.0, 1.0)
+            };
+
+        // Slew block-rate neural gains per sample (tau ~ 4.1ms @ 48kHz) to eliminate zipper clicks
+        let slew = 0.005f32;
+        for i in 0..16 {
+            self.smoothed_gains[i] += (mod_gains[i] - self.smoothed_gains[i]) * slew;
+        }
+
+        // 12 Tied Physics Bands with Neural Gain Modulation
+        let tin_sound = self.filterbank.filters[0].process(rain_drive)
+            * state.surfaces.tin
+            * 2.2
+            * self.smoothed_gains[0];
+        let leaf_sound = self.filterbank.filters[1].process(rain_drive)
+            * state.surfaces.leaves_broad
+            * 1.5
+            * self.smoothed_gains[1];
+        let pine_sound = self.filterbank.filters[2].process(rain_drive)
+            * state.surfaces.pine_needles
+            * 1.7
+            * self.smoothed_gains[2];
+        let pavement_sound = self.filterbank.filters[3].process(rain_drive)
+            * state.surfaces.pavement
+            * 1.1
+            * self.smoothed_gains[3];
+        let water_sound = self.filterbank.filters[4].process(rain_drive)
+            * state.surfaces.water_deep
+            * 1.6
+            * self.smoothed_gains[4];
+        let puddle_sound = self.filterbank.filters[5].process(rain_drive)
+            * state.surfaces.puddle_shallow
+            * 1.8
+            * self.smoothed_gains[5];
+        let canvas_sound = self.filterbank.filters[6].process(rain_drive)
+            * state.surfaces.canvas_tent
+            * 1.9
+            * self.smoothed_gains[6];
+        let glass_sound = self.filterbank.filters[7].process(rain_drive)
+            * state.surfaces.glass_window
+            * 1.8
+            * self.smoothed_gains[7];
+        let wood_sound = self.filterbank.filters[8].process(rain_drive)
+            * state.surfaces.wood_deck
+            * 1.6
+            * self.smoothed_gains[8];
 
         // Acoustic runoff & bubble chirps
-        let runoff_drive = rain_drive * (state.surfaces.tin * 0.6 + state.surfaces.puddle_shallow * 0.4);
-        let downpipe_sound = self.filterbank.filters[9].process(runoff_drive) * 1.3;
+        let runoff_drive =
+            rain_drive * (state.surfaces.tin * 0.6 + state.surfaces.puddle_shallow * 0.4);
+        let downpipe_sound =
+            self.filterbank.filters[9].process(runoff_drive) * 1.3 * self.smoothed_gains[9];
 
-        // Discrete rain droplet Poisson impacts
-        let droplet_prob = (state.weather.intensity * 0.04).clamp(0.001, 0.2);
-        let droplet_burst = if self.rng.next_unit_f32() < droplet_prob {
-            let droplet_pitch = 0.5 + self.rng.next_unit_f32() * 0.5;
-            self.rng.next_f32() * droplet_pitch * 0.35
-        } else {
+        // Discrete rain droplet Poisson impacts (suppressed if physical raindrops layer is active)
+        let droplet_burst = if suppress_droplets {
             0.0
+        } else {
+            let droplet_prob =
+                (state.weather.intensity * 0.04 * droplet_rate_scale).clamp(0.001, 0.4);
+            if self.rng.next_unit_f32() < droplet_prob {
+                let droplet_pitch = 0.5 + self.rng.next_unit_f32() * 0.5;
+                self.rng.next_f32() * droplet_pitch * 0.35 * droplet_energy_scale
+            } else {
+                0.0
+            }
         };
 
         let bubble_sound = self.filterbank.filters[10].process(droplet_burst)
             * (state.surfaces.puddle_shallow + state.surfaces.water_deep)
-            * 1.5;
+            * 1.5
+            * self.smoothed_gains[10];
 
         // Wind drive & howl band
         let wind_drive = self.brown_filter.process(white) * state.wind.speed;
-        let wind_howl = self.filterbank.filters[11].process(wind_drive) * state.wind.howl * 2.0;
+        let wind_howl = self.filterbank.filters[11].process(wind_drive)
+            * state.wind.howl
+            * 2.0
+            * wind_howl_scale
+            * self.smoothed_gains[11];
 
         // 4 Untied Residual Texture Bands
         let mist_drive = white * (state.weather.intensity * 0.2 + state.wind.speed * 0.1);
-        let mist_sound = self.filterbank.filters[12].process(mist_drive) * 0.8;
+        let mist_sound =
+            self.filterbank.filters[12].process(mist_drive) * 0.8 * self.smoothed_gains[12];
 
         let turb_drive = wind_drive * (1.0 + state.wind.gustiness * 0.8) * 0.5;
-        let turb_sound = self.filterbank.filters[13].process(turb_drive) * 0.9;
+        let turb_sound = self.filterbank.filters[13].process(turb_drive)
+            * 0.9
+            * wind_gust_scale
+            * self.smoothed_gains[13];
 
-        let rattle_drive = rain_drive * (state.surfaces.leaves_broad + state.surfaces.pine_needles) * (state.wind.speed * 0.5 + 0.3);
-        let rattle_sound = self.filterbank.filters[14].process(rattle_drive) * 0.7;
+        let rattle_drive = rain_drive
+            * (state.surfaces.leaves_broad + state.surfaces.pine_needles)
+            * (state.wind.speed * 0.5 + 0.3);
+        let rattle_sound =
+            self.filterbank.filters[14].process(rattle_drive) * 0.7 * self.smoothed_gains[14];
 
         let transducer_drive = white * (state.weather.intensity * 0.05);
-        let transducer_sound = self.filterbank.filters[15].process(transducer_drive) * 0.6;
+        let transducer_sound =
+            self.filterbank.filters[15].process(transducer_drive) * 0.6 * self.smoothed_gains[15];
 
         let total_rain = tin_sound
             + leaf_sound
@@ -347,7 +478,8 @@ impl ProceduralSynthesizer {
             + rattle_sound
             + transducer_sound;
 
-        let total_wind = (wind_drive * 0.6 + wind_howl + turb_sound) * (1.0 + state.wind.gustiness * 0.5);
+        let total_wind =
+            (wind_drive * 0.6 + wind_howl + turb_sound) * (1.0 + state.wind.gustiness * 0.5);
 
         // 5. Side Sounds (Spatialized Point Sources)
         let mut side_w = 0.0;
@@ -383,7 +515,7 @@ impl ProceduralSynthesizer {
             if self.thunder_rumble > 0.001 {
                 self.thunder_rumble *= self.thunder_decay;
                 let thunder_noise = self.brown_filter.process(white) * self.thunder_rumble;
-                
+
                 let azim = state.side_sounds.thunder_azimuth;
                 let elev = state.side_sounds.thunder_elevation;
                 let (cos_e, sin_e) = (elev.cos(), elev.sin());
@@ -399,10 +531,15 @@ impl ProceduralSynthesizer {
         // Insects (Cicadas / Crickets granular chirp modulation)
         if state.side_sounds.insect_density > 0.01 {
             self.insect_phase = (self.insect_phase + 5200.0 / self.sample_rate).fract();
-            let grain_env = ((self.insect_phase * 208.0).fract() * std::f32::consts::PI).sin().max(0.0);
+            let grain_env = ((self.insect_phase * 208.0).fract() * std::f32::consts::PI)
+                .sin()
+                .max(0.0);
             let carrier = (self.insect_phase * 2.0 * std::f32::consts::PI).sin();
             let noise_burst = self.rng.next_f32() * 0.15;
-            let insect_sig = (carrier * 0.85 + noise_burst) * grain_env * state.side_sounds.insect_density * 0.35;
+            let insect_sig = (carrier * 0.85 + noise_burst)
+                * grain_env
+                * state.side_sounds.insect_density
+                * 0.35;
 
             let azim = state.side_sounds.insect_azimuth * std::f32::consts::PI;
             let dist = state.side_sounds.insect_proximity.clamp(0.2, 1.0);
@@ -426,10 +563,13 @@ impl ProceduralSynthesizer {
             }
 
             if self.bird_chirp_counter > 0 {
-                let progress = 1.0 - (self.bird_chirp_counter as f32 / self.bird_chirp_duration as f32);
+                let progress =
+                    1.0 - (self.bird_chirp_counter as f32 / self.bird_chirp_duration as f32);
                 let env = (progress * std::f32::consts::PI).sin();
                 let f = self.bird_pitch * (1.0 - progress * 0.25);
-                let chirp = (progress * f * 2.0 * std::f32::consts::PI / self.sample_rate).sin() * env * 0.35;
+                let chirp = (progress * f * 2.0 * std::f32::consts::PI / self.sample_rate).sin()
+                    * env
+                    * 0.35;
                 self.bird_chirp_counter -= 1;
 
                 let dist = state.side_sounds.bird_proximity.clamp(0.2, 1.0);
@@ -464,10 +604,30 @@ impl ProceduralSynthesizer {
         let rain_master = (total_rain + droplet_burst) * state.master_volume;
         let wind_master = total_wind * state.master_volume;
 
-        let w = rain_master * 0.7071 + wind_master * 0.5 + side_w;
-        let x = wind_master * 0.4 + side_x + (self.rng.next_f32() * 0.02 * rain_master);
-        let y = (self.rng.next_f32() * 0.05 * rain_master) + side_y;
-        let z = (rain_master * 0.45 * state.weather.pitch_angle.cos()) + side_z;
+        let mut w = rain_master * 0.7071 + wind_master * 0.5 + side_w;
+        let mut x = wind_master * 0.4 + side_x + (self.rng.next_f32() * 0.02 * rain_master);
+        let mut y = (self.rng.next_f32() * 0.05 * rain_master) + side_y;
+        let mut z = (rain_master * 0.45 * state.weather.pitch_angle.cos()) + side_z;
+
+        // Neural Ambisonic directivity injection when modulation is active
+        if let Some(ctrl) = modulation {
+            let (sw, sx, sy, sz) = ctrl.spatial_vector;
+            let spatial_blend = 0.35f32;
+            let sw_smooth = sw.abs().tanh() * 1.8 + 0.2;
+            w = w * (1.0 - spatial_blend) + (w * sw_smooth) * spatial_blend;
+            x += sx * 0.20 * rain_master;
+            y += sy * 0.20 * rain_master;
+            z += sz * 0.20 * rain_master;
+        }
+
+        // Audio-Rate Neural Waveshaper (L0 Exciter)
+        // Applies nonlinear air excitation and harmonic saturation when active
+        if !state.telemetry.diffusion_bypassed {
+            let drive = 1.25f32;
+            let wet = 0.18f32;
+            let w_sat = (w * drive).tanh();
+            w = w * (1.0 - wet) + w_sat * wet;
+        }
 
         FoaFrame::new(w, x, y, z)
     }
@@ -477,5 +637,44 @@ impl ProceduralSynthesizer {
         for frame in output.iter_mut() {
             *frame = self.process_frame(state);
         }
+    }
+
+    /// Synthesizes an entire buffer of FOA frames in parallel chunks across Rayon threads.
+    /// Each chunk simulates independent acoustic droplet impulse responses and spatial mixing.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn process_buffer_parallel(
+        &mut self,
+        state: &RainState,
+        output: &mut [FoaFrame],
+        chunk_size: usize,
+    ) {
+        if output.is_empty() {
+            return;
+        }
+
+        if !state.is_playing {
+            output.fill(FoaFrame::default());
+            return;
+        }
+
+        use spodeian_parallel::prelude::*;
+
+        let effective_chunk = chunk_size.max(64);
+        let sample_rate = self.sample_rate;
+        let base_seed = self.rng.next_u32();
+
+        output
+            .par_chunks_mut(effective_chunk)
+            .enumerate()
+            .for_each(|(chunk_idx, chunk)| {
+                // Initialize thread-local procedural synthesizer with distinct seed
+                let thread_seed = base_seed.wrapping_add((chunk_idx as u32).wrapping_mul(7919) + 1);
+                let mut synth = ProceduralSynthesizer::new(sample_rate);
+                synth.rng = FastRng::new(thread_seed);
+
+                for frame in chunk.iter_mut() {
+                    *frame = synth.process_frame(state);
+                }
+            });
     }
 }

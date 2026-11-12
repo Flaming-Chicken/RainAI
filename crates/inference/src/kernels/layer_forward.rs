@@ -2,12 +2,7 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 #[inline]
-pub fn dense_projection(
-    input: &[f32],
-    weights: &[f32],
-    bias: Option<&[f32]>,
-    output: &mut [f32],
-) {
+pub fn dense_projection(input: &[f32], weights: &[f32], bias: Option<&[f32]>, output: &mut [f32]) {
     let in_dim = input.len();
     assert!(
         weights.len() >= output.len() * in_dim,
@@ -39,7 +34,11 @@ pub fn dense_projection(
             acc3 += cw[7] * cx[7];
         }
 
-        let rem_sum: f32 = remainder_w.iter().zip(remainder_x.iter()).map(|(&w, &x)| w * x).sum();
+        let rem_sum: f32 = remainder_w
+            .iter()
+            .zip(remainder_x.iter())
+            .map(|(&w, &x)| w * x)
+            .sum();
         let dot = (acc0 + acc1) + (acc2 + acc3) + rem_sum;
         *out_val = bias.map_or(0.0, |b| b[i]) + dot;
     }
@@ -47,12 +46,7 @@ pub fn dense_projection(
 
 #[cfg(target_arch = "wasm32")]
 #[inline]
-pub fn dense_projection(
-    input: &[f32],
-    weights: &[f32],
-    bias: Option<&[f32]>,
-    output: &mut [f32],
-) {
+pub fn dense_projection(input: &[f32], weights: &[f32], bias: Option<&[f32]>, output: &mut [f32]) {
     use std::arch::wasm32::*;
 
     let in_dim = input.len();

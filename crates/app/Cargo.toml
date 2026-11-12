@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "Application view controller, UI layout components, and state management"
 
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
 [lints]
 workspace = true
 
@@ -20,19 +23,32 @@ tracing-subscriber = { workspace = true }
 shared = { workspace = true }
 audio = { workspace = true }
 inference = { workspace = true }
+hound = { workspace = true }
 bson = { workspace = true }
 miniz_oxide = { workspace = true }
 base64 = { workspace = true }
 thiserror = { workspace = true }
 ron = { workspace = true }
+spodeian-cache = { workspace = true }
+spodeian-tokens = { workspace = true }
+spodeian-ui = { workspace = true }
+spodeian-web-utils = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = { workspace = true }
 web-sys = { workspace = true, features = ["Document", "Window", "HtmlCanvasElement", "Element", "Blob", "BlobPropertyBag", "Url", "HtmlAnchorElement", "HtmlDocument", "Location", "AudioContext", "AudioContextOptions", "AudioBuffer", "AudioBufferSourceNode", "AudioDestinationNode", "AudioNode", "GainNode", "ScriptProcessorNode", "AudioProcessingEvent"] }
 js-sys = { workspace = true }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+[target.'cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))'.dependencies]
 eframe = { workspace = true, features = ["x11", "wayland"] }
+rfd = { workspace = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+winit = { workspace = true, features = ["android-native-activity"] }
+android-activity = { workspace = true }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+winit = { workspace = true }
 
 [features]
 default = ["accesskit", "persistence", "wgpu"]

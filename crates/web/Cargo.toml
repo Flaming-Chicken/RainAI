@@ -21,9 +21,11 @@ web-sys = { workspace = true, features = ["Document", "Window", "HtmlCanvasEleme
 console_error_panic_hook = { workspace = true }
 tracing-web = { workspace = true }
 tracing = { workspace = true }
+spodeian-telemetry = { workspace = true }
 app = { workspace = true }
 shared = { workspace = true }
 inference = { workspace = true }
+audio = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [features]

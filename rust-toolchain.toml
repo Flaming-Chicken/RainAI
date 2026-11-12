@@ -1,4 +1,13 @@
 [toolchain]
 channel = "stable"
-targets = ["wasm32-unknown-unknown"]
-profile = "minimal"
+targets = [
+    "x86_64-pc-windows-msvc",
+    "wasm32-unknown-unknown",
+    "aarch64-linux-android",
+    "armv7-linux-androideabi",
+    "x86_64-linux-android",
+    "aarch64-apple-ios",
+    "aarch64-apple-ios-sim",
+    "x86_64-apple-ios",
+]
+components = ["rustfmt", "clippy"]

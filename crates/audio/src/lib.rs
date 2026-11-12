@@ -10,8 +10,8 @@
 //!   and sample-accurate dispatch between neural model inference and procedural fallbacks.
 //! - [`decoder`]: Ambisonic B-format ($W, Y, Z, X$) decoding matrices projecting 3D spherical soundfields
 //!   into stereo headphones (binaural virtual acoustics), stereo monitors, quadraphonic arrays, and 5.1 surround.
-//! - [`meta_governor`]: Dynamic runtime hardware governor adjusting quantization tiers (FP32 -> INT16 -> INT8 -> Ternary),
-//!   pruning active MoE experts, and triggering emergency procedural cross-fades under buffer underrun stress.
+//! - [`buffer_guard`]: Deterministic buffer monitor and underrun protector managing
+//!   smooth procedural crossfades and compute deficit metrics.
 //! - [`procedural`]: High-efficiency procedural rain synthesizer utilizing a 16-band subtractive filterbank
 //!   with learned parametric resonant drift profiles for ultra-low-power execution.
 //! - [`physical`]: Fluid mechanics and aeroacoustics simulation modules (Ulbrich Gamma DSD, Gunn-Kinzer
@@ -20,21 +20,38 @@
 //!   band-limiting, and thermal noise) for hardware robustness testing.
 //! - [`export`]: Chunk-streamed lossless 24-bit/32-bit WAV and raw Ambisonic B-format file rendering.
 
+pub mod adaptation;
+pub mod buffer_guard;
 pub mod corruptions;
 pub mod decoder;
+pub mod derivation;
 pub mod engine;
 pub mod export;
+pub mod graph;
 pub mod history;
-pub mod meta_governor;
+pub mod hoa;
+pub mod hrtf_sofa;
+pub mod ios_audio;
+pub mod noise_masking;
 pub mod physical;
 pub mod procedural;
+pub mod ray_tracing;
+pub mod session;
 
+pub use adaptation::*;
+pub use buffer_guard::*;
 pub use corruptions::*;
 pub use decoder::*;
+pub use derivation::*;
 pub use engine::*;
 pub use export::*;
+pub use graph::*;
 pub use history::*;
-pub use meta_governor::*;
+pub use hoa::*;
+pub use hrtf_sofa::*;
+pub use ios_audio::*;
+pub use noise_masking::*;
 pub use physical::*;
 pub use procedural::*;
-
+pub use ray_tracing::*;
+pub use session::*;

@@ -5,7 +5,7 @@
 //! eliminating silent drift and double-handling risks.
 
 use candle_core::{DType, Device, Tensor};
-use candle_nn::{linear, Module, VarBuilder};
+use candle_nn::{Module, VarBuilder, linear};
 use std::collections::HashMap;
 
 #[test]

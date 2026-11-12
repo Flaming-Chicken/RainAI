@@ -9,6 +9,7 @@
 
 use crate::decoder::FoaFrame;
 use crate::procedural::{BrownNoiseFilter, FastRng};
+use inference::NeuralParametricControl;
 use shared::rain::RainState;
 use std::f32::consts::PI;
 
@@ -42,6 +43,7 @@ pub struct PhysicalRainSynthesizer {
     ring_z: Vec<f32>,
     ring_pos: usize,
     capacity: usize,
+    mask: usize,
 }
 
 impl Default for PhysicalRainSynthesizer {
@@ -52,7 +54,10 @@ impl Default for PhysicalRainSynthesizer {
 
 impl PhysicalRainSynthesizer {
     pub fn new(sample_rate: f32) -> Self {
-        let capacity = (sample_rate * 0.12) as usize; // 120ms impulse tail capacity
+        // Enforce power-of-two capacity for single-cycle bitwise masking
+        let raw_cap = (sample_rate * 0.12) as usize; // ~120ms impulse tail capacity
+        let capacity = raw_cap.next_power_of_two().max(1024);
+        let mask = capacity - 1;
         Self {
             sample_rate,
             rng: FastRng::new(99),
@@ -63,7 +68,17 @@ impl PhysicalRainSynthesizer {
             ring_z: vec![0.0; capacity],
             ring_pos: 0,
             capacity,
+            mask,
         }
+    }
+
+    /// Resets the internal circular impulse buffers.
+    pub fn reset(&mut self) {
+        self.ring_w.fill(0.0);
+        self.ring_x.fill(0.0);
+        self.ring_y.fill(0.0);
+        self.ring_z.fill(0.0);
+        self.ring_pos = 0;
     }
 
     /// Spawns a physical droplet impact into the internal circular FOA tail buffer.
@@ -106,20 +121,31 @@ impl PhysicalRainSynthesizer {
                 let damp2_mult = (-270.0 * inv_sr).exp();
                 let mut env1 = 0.5 * (diameter_mm / 2.0);
                 let mut env2 = 0.25 * (diameter_mm / 2.0);
-                let phase_add1 = 2.0 * PI * 1250.0 * inv_sr;
-                let phase_add2 = 2.0 * PI * 2550.0 * inv_sr;
-                let mut phase1 = 0.0f32;
-                let mut phase2 = 0.0f32;
+                let (sin_step1, cos_step1) = (2.0 * PI * 1250.0 * inv_sr).sin_cos();
+                let (sin_step2, cos_step2) = (2.0 * PI * 2550.0 * inv_sr).sin_cos();
+                let mut s1 = 0.0f32;
+                let mut c1 = 1.0f32;
+                let mut s2 = 0.0f32;
+                let mut c2 = 1.0f32;
 
                 for i in 0..n_samples {
-                    let idx = (self.ring_pos + i) % self.capacity;
-                    let s = phase1.sin() * env1 + phase2.sin() * env2;
+                    let idx = (self.ring_pos + i) & self.mask;
+                    let s = s1 * env1 + s2 * env2;
                     self.ring_w[idx] += s * w_gain;
                     self.ring_x[idx] += s * x_gain;
                     self.ring_y[idx] += s * y_gain;
                     self.ring_z[idx] += s * z_gain;
-                    phase1 += phase_add1;
-                    phase2 += phase_add2;
+
+                    let next_s1 = s1 * cos_step1 + c1 * sin_step1;
+                    let next_c1 = c1 * cos_step1 - s1 * sin_step1;
+                    s1 = next_s1;
+                    c1 = next_c1;
+
+                    let next_s2 = s2 * cos_step2 + c2 * sin_step2;
+                    let next_c2 = c2 * cos_step2 - s2 * sin_step2;
+                    s2 = next_s2;
+                    c2 = next_c2;
+
                     env1 *= damp1_mult;
                     env2 *= damp2_mult;
                 }
@@ -128,17 +154,22 @@ impl PhysicalRainSynthesizer {
                 // Broad leaves: Soft damp slap (1400 Hz)
                 let damp_mult = (-420.0 * inv_sr).exp();
                 let mut env = 0.45f32;
-                let phase_add = 2.0 * PI * 1400.0 * inv_sr;
-                let mut phase = 0.0f32;
+                let (sin_step, cos_step) = (2.0 * PI * 1400.0 * inv_sr).sin_cos();
+                let mut s = 0.0f32;
+                let mut c = 1.0f32;
 
                 for i in 0..n_samples {
-                    let idx = (self.ring_pos + i) % self.capacity;
-                    let s = phase.sin() * env;
-                    self.ring_w[idx] += s * w_gain;
-                    self.ring_x[idx] += s * x_gain;
-                    self.ring_y[idx] += s * y_gain;
-                    self.ring_z[idx] += s * z_gain;
-                    phase += phase_add;
+                    let idx = (self.ring_pos + i) & self.mask;
+                    let val = s * env;
+                    self.ring_w[idx] += val * w_gain;
+                    self.ring_x[idx] += val * x_gain;
+                    self.ring_y[idx] += val * y_gain;
+                    self.ring_z[idx] += val * z_gain;
+
+                    let next_s = s * cos_step + c * sin_step;
+                    let next_c = c * cos_step - s * sin_step;
+                    s = next_s;
+                    c = next_c;
                     env *= damp_mult;
                 }
             }
@@ -146,17 +177,22 @@ impl PhysicalRainSynthesizer {
                 // Pine needles: Fast micro-clicks (3200 Hz)
                 let damp_mult = (-700.0 * inv_sr).exp();
                 let mut env = 0.35f32;
-                let phase_add = 2.0 * PI * 3200.0 * inv_sr;
-                let mut phase = 0.0f32;
+                let (sin_step, cos_step) = (2.0 * PI * 3200.0 * inv_sr).sin_cos();
+                let mut s = 0.0f32;
+                let mut c = 1.0f32;
 
                 for i in 0..n_samples {
-                    let idx = (self.ring_pos + i) % self.capacity;
-                    let s = phase.sin() * env;
-                    self.ring_w[idx] += s * w_gain;
-                    self.ring_x[idx] += s * x_gain;
-                    self.ring_y[idx] += s * y_gain;
-                    self.ring_z[idx] += s * z_gain;
-                    phase += phase_add;
+                    let idx = (self.ring_pos + i) & self.mask;
+                    let val = s * env;
+                    self.ring_w[idx] += val * w_gain;
+                    self.ring_x[idx] += val * x_gain;
+                    self.ring_y[idx] += val * y_gain;
+                    self.ring_z[idx] += val * z_gain;
+
+                    let next_s = s * cos_step + c * sin_step;
+                    let next_c = c * cos_step - s * sin_step;
+                    s = next_s;
+                    c = next_c;
                     env *= damp_mult;
                 }
             }
@@ -164,17 +200,22 @@ impl PhysicalRainSynthesizer {
                 // Pavement: Crisp splatter splash
                 let damp_mult = (-600.0 * inv_sr).exp();
                 let mut env = 0.40f32;
-                let phase_add = 2.0 * PI * 1100.0 * inv_sr;
-                let mut phase = 0.0f32;
+                let (sin_step, cos_step) = (2.0 * PI * 1100.0 * inv_sr).sin_cos();
+                let mut s = 0.0f32;
+                let mut c = 1.0f32;
 
                 for i in 0..n_samples {
-                    let idx = (self.ring_pos + i) % self.capacity;
-                    let s = phase.sin() * env;
-                    self.ring_w[idx] += s * w_gain;
-                    self.ring_x[idx] += s * x_gain;
-                    self.ring_y[idx] += s * y_gain;
-                    self.ring_z[idx] += s * z_gain;
-                    phase += phase_add;
+                    let idx = (self.ring_pos + i) & self.mask;
+                    let val = s * env;
+                    self.ring_w[idx] += val * w_gain;
+                    self.ring_x[idx] += val * x_gain;
+                    self.ring_y[idx] += val * y_gain;
+                    self.ring_z[idx] += val * z_gain;
+
+                    let next_s = s * cos_step + c * sin_step;
+                    let next_c = c * cos_step - s * sin_step;
+                    s = next_s;
+                    c = next_c;
                     env *= damp_mult;
                 }
             }
@@ -182,17 +223,22 @@ impl PhysicalRainSynthesizer {
                 // Canvas tent: Low damped thud (400 Hz)
                 let damp_mult = (-450.0 * inv_sr).exp();
                 let mut env = 0.5f32;
-                let phase_add = 2.0 * PI * 400.0 * inv_sr;
-                let mut phase = 0.0f32;
+                let (sin_step, cos_step) = (2.0 * PI * 400.0 * inv_sr).sin_cos();
+                let mut s = 0.0f32;
+                let mut c = 1.0f32;
 
                 for i in 0..n_samples {
-                    let idx = (self.ring_pos + i) % self.capacity;
-                    let s = phase.sin() * env;
-                    self.ring_w[idx] += s * w_gain;
-                    self.ring_x[idx] += s * x_gain;
-                    self.ring_y[idx] += s * y_gain;
-                    self.ring_z[idx] += s * z_gain;
-                    phase += phase_add;
+                    let idx = (self.ring_pos + i) & self.mask;
+                    let val = s * env;
+                    self.ring_w[idx] += val * w_gain;
+                    self.ring_x[idx] += val * x_gain;
+                    self.ring_y[idx] += val * y_gain;
+                    self.ring_z[idx] += val * z_gain;
+
+                    let next_s = s * cos_step + c * sin_step;
+                    let next_c = c * cos_step - s * sin_step;
+                    s = next_s;
+                    c = next_c;
                     env *= damp_mult;
                 }
             }
@@ -200,17 +246,22 @@ impl PhysicalRainSynthesizer {
                 // Glass window: Bright sharp transient (4500 Hz)
                 let damp_mult = (-800.0 * inv_sr).exp();
                 let mut env = 0.6f32;
-                let phase_add = 2.0 * PI * 4500.0 * inv_sr;
-                let mut phase = 0.0f32;
+                let (sin_step, cos_step) = (2.0 * PI * 4500.0 * inv_sr).sin_cos();
+                let mut s = 0.0f32;
+                let mut c = 1.0f32;
 
                 for i in 0..n_samples {
-                    let idx = (self.ring_pos + i) % self.capacity;
-                    let s = phase.sin() * env;
-                    self.ring_w[idx] += s * w_gain;
-                    self.ring_x[idx] += s * x_gain;
-                    self.ring_y[idx] += s * y_gain;
-                    self.ring_z[idx] += s * z_gain;
-                    phase += phase_add;
+                    let idx = (self.ring_pos + i) & self.mask;
+                    let val = s * env;
+                    self.ring_w[idx] += val * w_gain;
+                    self.ring_x[idx] += val * x_gain;
+                    self.ring_y[idx] += val * y_gain;
+                    self.ring_z[idx] += val * z_gain;
+
+                    let next_s = s * cos_step + c * sin_step;
+                    let next_c = c * cos_step - s * sin_step;
+                    s = next_s;
+                    c = next_c;
                     env *= damp_mult;
                 }
             }
@@ -218,23 +269,29 @@ impl PhysicalRainSynthesizer {
                 // Wood deck: Warm knock (800 Hz)
                 let damp_mult = (-300.0 * inv_sr).exp();
                 let mut env = 0.45f32;
-                let phase_add = 2.0 * PI * 800.0 * inv_sr;
-                let mut phase = 0.0f32;
+                let (sin_step, cos_step) = (2.0 * PI * 800.0 * inv_sr).sin_cos();
+                let mut s = 0.0f32;
+                let mut c = 1.0f32;
 
                 for i in 0..n_samples {
-                    let idx = (self.ring_pos + i) % self.capacity;
-                    let s = phase.sin() * env;
-                    self.ring_w[idx] += s * w_gain;
-                    self.ring_x[idx] += s * x_gain;
-                    self.ring_y[idx] += s * y_gain;
-                    self.ring_z[idx] += s * z_gain;
-                    phase += phase_add;
+                    let idx = (self.ring_pos + i) & self.mask;
+                    let val = s * env;
+                    self.ring_w[idx] += val * w_gain;
+                    self.ring_x[idx] += val * x_gain;
+                    self.ring_y[idx] += val * y_gain;
+                    self.ring_z[idx] += val * z_gain;
+
+                    let next_s = s * cos_step + c * sin_step;
+                    let next_c = c * cos_step - s * sin_step;
+                    s = next_s;
+                    c = next_c;
                     env *= damp_mult;
                 }
             }
             _ => {
                 // Water / Puddle: Minnaert bubble chirping with upward glide
-                let damping = (0.13 * minnaert_f0 + 0.0072 * minnaert_f0.powf(1.333)).clamp(100.0, 2500.0);
+                let damping =
+                    (0.13 * minnaert_f0 + 0.0072 * minnaert_f0.powf(1.333)).clamp(100.0, 2500.0);
                 let damp_mult = (-damping * inv_sr).exp();
                 let mut env = 0.7f32;
                 let inv_dur = 1.0 / duration_sec;
@@ -242,7 +299,7 @@ impl PhysicalRainSynthesizer {
                 let mut phase = 0.0f32;
 
                 for i in 0..n_samples {
-                    let idx = (self.ring_pos + i) % self.capacity;
+                    let idx = (self.ring_pos + i) & self.mask;
                     let chirp = minnaert_f0 * (1.0 + 0.12 * t * inv_dur);
                     phase += 2.0 * PI * chirp * inv_sr;
                     let s = phase.sin() * env;
@@ -259,19 +316,34 @@ impl PhysicalRainSynthesizer {
 
     /// Process one frame of physical rain soundscape in 4-channel FOA format.
     pub fn process_frame(&mut self, state: &RainState) -> FoaFrame {
+        self.process_frame_modulated(state, None)
+    }
+
+    /// Process one frame of physical rain soundscape in 4-channel FOA format with optional
+    /// neural-parametric modulation from the local Mamba2-MoE model.
+    pub fn process_frame_modulated(
+        &mut self,
+        state: &RainState,
+        modulation: Option<&NeuralParametricControl>,
+    ) -> FoaFrame {
         if !state.is_playing {
             return FoaFrame::default();
         }
 
+        let droplet_rate_scale = modulation.map(|c| c.droplet_rate_mod).unwrap_or(1.0);
+        let droplet_energy_scale = modulation.map(|c| c.droplet_energy_mod).unwrap_or(1.0);
+        let wind_gust_scale = modulation.map(|c| c.wind_gust_mod).unwrap_or(1.0);
+
         // 1. Poisson droplet arrival rate derived from rain intensity and Ulbrich DSD
         let intensity = state.weather.intensity.clamp(0.01, 1.0);
         // Probability of a new droplet event spawning on this sample
-        let spawn_prob = (intensity * 0.06).clamp(0.002, 0.35);
+        let spawn_prob = (intensity * 0.06 * droplet_rate_scale).clamp(0.002, 0.45);
 
         if self.rng.next_unit_f32() < spawn_prob {
             // Sample droplet diameter (Marshall-Palmer / Ulbrich Gamma distribution proxy)
             let u = self.rng.next_unit_f32().max(1e-4);
-            let diameter_mm = (-u.ln() * (0.8 + intensity * 1.5)).clamp(0.4, 6.0);
+            let diameter_mm =
+                (-u.ln() * (0.8 + intensity * 1.5) * droplet_energy_scale).clamp(0.4, 7.0);
 
             // Select dominant active surface
             let surfaces = [
@@ -317,7 +389,10 @@ impl PhysicalRainSynthesizer {
         // 2. Continuous wind bed and turbulence
         let white = self.rng.next_f32();
         let wind_drive = self.brown_filter.process(white) * state.wind.speed;
-        let wind_master = wind_drive * (1.0 + state.wind.gustiness * 0.5) * state.master_volume * 0.4;
+        let wind_master = wind_drive
+            * (1.0 + state.wind.gustiness * 0.5 * wind_gust_scale)
+            * state.master_volume
+            * 0.4;
 
         // 3. Pop droplet tail frame
         let pw = self.ring_w[self.ring_pos];
@@ -329,13 +404,22 @@ impl PhysicalRainSynthesizer {
         self.ring_x[self.ring_pos] = 0.0;
         self.ring_y[self.ring_pos] = 0.0;
         self.ring_z[self.ring_pos] = 0.0;
-        self.ring_pos = (self.ring_pos + 1) % self.capacity;
+        self.ring_pos = (self.ring_pos + 1) & self.mask;
 
         // 4. Combine droplet acoustic impacts with spatial wind vector
-        let w = (pw * 0.85 + wind_master * 0.7071) * state.master_volume;
-        let x = (px * 0.85 + wind_master * 0.4) * state.master_volume;
-        let y = py * 0.85 * state.master_volume;
-        let z = pz * 0.85 * state.master_volume;
+        let mut w = (pw * 0.85 + wind_master * 0.7071) * state.master_volume;
+        let mut x = (px * 0.85 + wind_master * 0.4) * state.master_volume;
+        let mut y = py * 0.85 * state.master_volume;
+        let mut z = pz * 0.85 * state.master_volume;
+
+        if let Some(ctrl) = modulation {
+            let (sw, sx, sy, sz) = ctrl.spatial_vector;
+            let spatial_blend = 0.35f32;
+            w = w * (1.0 - spatial_blend) + (w * sw.abs().clamp(0.2, 2.0)) * spatial_blend;
+            x += sx * 0.15 * state.master_volume;
+            y += sy * 0.15 * state.master_volume;
+            z += sz * 0.15 * state.master_volume;
+        }
 
         FoaFrame::new(w, x, y, z)
     }

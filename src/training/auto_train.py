@@ -260,7 +260,9 @@ def run_phase_vae(logger: RainAILogger, python_exe: str, args, device: str, use_
         "--epochs", str(args.epochs_vae),
         "--batch-size", str(args.batch_size),
         "--accumulation-steps", str(args.accumulation_steps),
-        "--device", device
+        "--device", device,
+        "--optimizer", str(args.optimizer),
+        "--bfgs-history-size", str(args.bfgs_history_size)
     ]
     if args.max_batches > 0:
         cmd.extend(["--max-batches", str(args.max_batches)])
@@ -300,7 +302,9 @@ def run_phase_mamba(logger: RainAILogger, python_exe: str, args, device: str, us
         "--epochs", str(args.epochs_mamba),
         "--batch-size", str(args.batch_size),
         "--accumulation-steps", str(args.accumulation_steps),
-        "--device", device
+        "--device", device,
+        "--optimizer", str(args.optimizer),
+        "--bfgs-history-size", str(args.bfgs_history_size)
     ]
     if args.max_batches > 0:
         cmd.extend(["--max-batches", str(args.max_batches)])
@@ -442,7 +446,8 @@ def main():
     parser.add_argument("--log-file", type=str, default=None, help="Custom filename for the log")
     parser.add_argument("--prepare-data", action="store_true", default=False, help="Ensure raw and processed audio data are fully prepared on-demand before training")
     parser.add_argument("--rebuild-data", action="store_true", default=False, help="Force complete re-synthesis, re-upmixing, and manifest regeneration from scratch")
-    parser.add_argument("--rust-engine", action="store_true", default=False, help="Execute pure Rust Candle training engine instead of PyTorch")
+    parser.add_argument("--optimizer", type=str, default="adamw", choices=["adamw", "lbfgs", "bfgs", "hybrid_bfgs"], help="Optimizer selection: AdamW vs Quasi-Newton second-order L-BFGS")
+    parser.add_argument("--bfgs-history-size", type=int, default=10, help="L-BFGS history memory buffer size")
     parser.add_argument("--verbose", action="store_true", default=False, help="Enable verbose debug logging")
     parser.add_argument("--quiet", action="store_true", default=False, help="Suppress informational console output")
 

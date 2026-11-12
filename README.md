@@ -1,18 +1,20 @@
 # 🌧️ RainAI: Real-Time Neural & Physical Spatial Rain Audio Engine
 
-[![CI](https://github.com/Spodeian/RainAI/actions/workflows/ci.yml/badge.svg)](https://github.com/Spodeian/RainAI/actions/workflows/ci.yml)
+[![CI](https://github.com/Flaming-Chicken/RainAI/actions/workflows/ci.yml/badge.svg)](https://github.com/Flaming-Chicken/RainAI/actions/workflows/ci.yml)
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC_BY--NC--SA_4.0-lightgrey.svg)](LICENSE)
 [![PyTorch 2.0+](https://img.shields.io/badge/PyTorch-2.0%2B-EE4C2C.svg?logo=pytorch)](https://pytorch.org)
 [![Rust 1.85+](https://img.shields.io/badge/Rust-1.85%2B-orange.svg?logo=rust)](https://www.rust-lang.org)
 [![WebGPU / WASM](https://img.shields.io/badge/WebGPU-Enabled-blue.svg)](https://www.w3.org/TR/webgpu/)
 [![egui 0.36](https://img.shields.io/badge/egui-0.36-00bcd4.svg)](https://github.com/emilk/egui)
 
-**RainAI** is a production-grade, real-time neural spatial audio synthesis and physical simulation engine operating at 48 kHz with First-Order Ambisonics (FOA: $W, Y, Z, X$). It synthesizes physically authentic acoustic rain soundscapes by unifying micro-meteorological fluid dynamics, droplet impact mechanics, structural acoustics, and deep neural autoregressive trajectory modeling (Mamba-2 State Space Duality with Mixture-of-Experts) with continuous differentiable DSP (HOA-DDSP).
+**RainAI** is a production-grade, real-time neural spatial audio synthesis and physical simulation engine operating at 48 kHz with First-Order Ambisonics (FOA: $W, Y, Z, X$). It synthesizes physically authentic acoustic rain soundscapes by unifying micro-meteorological fluid dynamics, droplet impact mechanics, structural acoustics, and deep neural autoregressive trajectory modeling (Continuous-Time Mamba-2 & Liquid State Space architecture with adaptive RK45 integration) with continuous differentiable DSP (HOA-DDSP).
 
-The engine features a dual-stack architecture:
+The engine features a multi-tiered architecture:
 1. **Master Native Rust Candle Engine** (`crates/utilities`): Pure-Rust end-to-end training, dataset preprocessing, acoustic feature extraction, and SafeTensors model export without Python or CUDA runtime dependencies.
 2. **PyTorch Deep Learning & Research Suite** (`src/`): Automated hyperparameter profiling, physical loss formulation development, and multi-backend export pipeline (ONNX, SafeTensors, WASM).
 3. **Cross-Platform Studio & Edge Runtimes** (`crates/`): Zero-allocation audio callback loop with egui UI targeting native desktop (Windows, macOS, Linux), terminal TUI studio, and high-performance WebAssembly/WebGPU browser runtimes.
+4. **Continuous-Time Neural ODE Steering & Stochastic Driver**: Driven by a correlated leaky brown noise process ($-6\text{ dB/oct}$) so the latent state continuously evolves without fixed-point convergence, feeding 16-band real-time dynamic resonant frequency drifts (`apply_drifts`).
+5. **Zero-Copy Explainable AI (XAI)**: Binary attribution dictionary (`RATT` binary format) compiled into the client for instantaneous $O(\log N)$ offline resolution of dataset contributions, surface tags, and licensing terms (CC-BY/CC0/proprietary).
 
 ---
 
@@ -24,11 +26,11 @@ The engine features a dual-stack architecture:
                                         │
              ┌──────────────────────────┴──────────────────────────┐
              ▼                                                     ▼
- [ FLUID & STRUCTURAL DYNAMICS ]                      [ NEURAL LATENT TRAJECTORY ]
-  • Truncated Gamma DSD N(D)                           • Mamba-2 SSD State Space (MoE)
-  • Gunn-Kinzer Terminal Velocity vt(D)                • Threshold-Coverage Routing (τ_cov)
-  • Pumphrey & Crum Bubble Entrapment                  • Temporal Tabu Diversity (γ_tabu)
-  • van den Doel Minnaert Chirps                       • Iterative Latent Deliberation
+ [ FLUID & STRUCTURAL DYNAMICS ]                      [ NEURAL LATENT TRAJECTORY (ODE) ]
+  • Truncated Gamma DSD N(D)                           • Continuous Mamba-2 & Liquid SSM
+  • Gunn-Kinzer Terminal Velocity vt(D)                • Correlated Leaky Brown Driver (-6dB/oct)
+  • Pumphrey & Crum Bubble Entrapment                  • Adaptive Step Integrator (RK45 / DP5)
+  • van den Doel Minnaert Chirps                       • Dynamic Resonant Frequency Drifts (16 bands)
   • ISO 140-18 Roof Plate Modal Harmonics              • 1-Step Consistency Distillation Jump
   • AS/NZS 3500.3 Downpipe Resonances                  • Continuous HWIL Governor
              │                                                     │
@@ -129,6 +131,10 @@ graph TD
   - **Hardware Awareness**: Continuous HWIL Buffer Deficit and Active Expert Penalties.
   - **Effectiveness**: Transient Half-Wave Spectral Flux Loss and Bark-scale psychoacoustic filterbank weighting.
 - **Physics-Preserving Augmentations**: 3D SO(3) Ambisonic rotation matrix augmentation ($\mathbf{R} \in \text{SO}(3)$) conserving 100% of omnidirectional acoustic pressure $W$ while rotating directional gradients, paired with convex surface wetness mixup.
+- **Continuous-Time Neural ODE & Adaptive Solvers**: Integrates parametric trajectory control using Dormand-Prince (RK45) adaptive-step integration, Bogacki-Shampine, and Heun solvers, alongside **Learned Inference Solvers (Implicit RK, Predictor-Evaluator-Corrector)** that optimally traverse the data manifold to dynamically allocate computational budget based on acoustic turbulence.
+- **Correlated Stochastic Driver & Neural Micro-Drifts**: Employs a zero-allocation -6 dB/oct leaky brown noise process to eliminate fixed-point convergence, dynamically modulating the 16 subtractive filterbank center frequencies via `apply_drifts`.
+- **Zero-Copy Explainable AI (XAI) & Attribution HUD**: Integrated `BinaryAttributionDictionary` (`RATT` binary format) and live collapsible HUD resolving contributor provenance, surface tags, and open licensing metadata 100% offline.
+- **Sample Rate Policy & Anti-Aliasing**: Synthesizer defaults to 48 kHz on WebAudio; rates below the 32 kHz floor are safely supported with sub-Nyquist anti-aliasing filtering and console telemetry warnings.
 
 ---
 
@@ -210,8 +216,8 @@ cargo run --bin rainai_synth
 # Run Audio Feature Extractor
 cargo run --bin rainai_features
 
-# Run Dataset Ingestion Pipeline
-cargo run --bin rainai_ingest
+# Run Dataset Ingestion Pipeline & Contribution Manager
+cargo run -p utilities --bin rainai_contribute -- --help
 ```
 
 ### 3. WebAssembly / WebGPU Studio (Browser)
@@ -224,7 +230,7 @@ cargo install trunk
 trunk serve crates/web/index.html
 ```
 
-Navigate to `http://localhost:8080` to interact with real-time WebGPU audio synthesis.
+Navigate to `http://localhost:8080` to interact with real-time WebGPU audio synthesis and preview AI features.
 
 ### 4. PyTorch Deep Learning Pipeline (Research)
 
@@ -238,6 +244,155 @@ python src/training/auto_train.py --profile production --rebuild-data
 # Run multi-backend export (SafeTensors, ONNX, WASM)
 python src/export/export_all.py
 ```
+
+---
+
+## 🤖 Autonomous AI Training & Dataset Pipeline (Maintainer Guide)
+
+The RainAI training and dataset architecture is designed to run autonomously with zero manual curation, self-healing dataset intake, smooth rolling cache limits, and zero-cost cloud staging. This guide details every component of the pipeline for maintainers.
+
+### 1. Architecture & Data Flow Overview
+
+```text
+               [ LOCAL INTAKE DROP FOLDER ]                   [ CLOUDFLARE EDGE BUFFER ]
+                    data/input/*.wav                          D1 SQLite & R2 Object Store
+                           │                                              │
+       (Extract sidecars: .json, .toml, .yaml, .txt)           (Rate limited: 15 w/m, 60 r/m)
+                           │                                              │
+                           ├── Invalid / Missing License                  │
+                           ▼                                              │
+                 [ data/quarantine/ ]                                     │
+           <sha256>_quarantine.json (reasons & fixes)                     ▼
+                           │                                  [ rainai_contribute sync-edge ]
+                           ▼                                  (Pulls, verifies & acknowledges)
+                 [ data/rain/manifest.json ] ◄────────────────────────────┘
+                 (Standardized 48 kHz WAVs)
+                           │
+                           ▼
+          [ SMOOTH ROLLING CACHE & PRUNING ]
+           • 15 GB Quota, 90% Soft Ceiling (13.5 GB)
+           • Small (5) / Medium (20) chunk eviction
+           • Multi-factor geometric utility scoring
+           • Persistent Ledger: data/rain/data_utility_ledger.json (in Git)
+                           │
+                           ▼
+          [ NATIVE CANDLE TRAINING ENGINE ]
+           • 64-dim conditioning vector (sanitized bounds)
+           • Muon 2D orthogonal matrix optimizer
+           • Lion 1D vector & embedding optimizer
+           • Flow Matching & Straight-Path loss
+                           │
+                           ▼
+          [ DECOUPLED GIT SYNCHRONIZATION ]
+           • data(ingest): Standardized manifests & utility scores
+           • weights(milestone): Model SafeTensors & provenance
+```
+
+### 2. Local Drop Folder & Quarantine System (`data/input/` ➔ `data/rain/`)
+
+Maintainers and field recordists can drop raw audio recordings directly into `data/input/`. The pipeline automatically inspects, standardizes, or quarantines them:
+
+1. **Drop Folder**: Place raw recordings (`.wav`, `.flac`, `.mp3`, `.ogg`) into `data/input/`.
+2. **Metadata Extraction**:
+   - **Sidecar Files**: Looks for sibling metadata with matching stems: `<stem>.json`, `<stem>.toml`, `<stem>.yaml`, or `<stem>.txt`.
+   - **Internal Audio Tags**: If no sidecar is present, ID3, Vorbis Comments, and RIFF INFO chunks are extracted automatically.
+   - **Required Fields**: `license` (must be commercial-safe: CC0, CC-BY, CC-BY-SA, Public Domain, etc.), `source`, and optionally `surface`, `contributor`, `description`.
+3. **Quarantine Handling (`data/quarantine/`)**:
+   - Files lacking valid licensing or audio data (e.g. non-commercial `-NC`, silent/clipped audio, corrupted headers) are immediately moved to `data/quarantine/`.
+   - A companion JSON report is generated: `data/quarantine/<sha256>_quarantine.json`, specifying the exact failure reasons and recommended remediation actions.
+   - Maintainers can resolve issues by editing the sidecar or metadata and moving the file back to `data/input/`.
+4. **Standardization & Promotion**:
+   - Valid files are resampled to 48 kHz 32-bit float stereo/Ambisonic WAVs and promoted to `data/rain/`.
+   - Content-addressed deduplication by SHA-256 prevents duplicate samples.
+   - Automatically registered into `data/rain/manifest.json`.
+
+**Manual or Scheduled Intake Run**:
+```bash
+cargo run -p utilities --bin rainai_contribute -- drop-intake data/input
+```
+
+### 3. Cloudflare Edge Sync & Zero-Cost Purge (D1 & R2)
+
+Community contributions staged at the Cloudflare edge buffer are pulled and synchronized with strict rate limits and immediate purges:
+
+- **Edge Security & Cost Guards**:
+  - Max binary blob size: 50 MB; Max metadata JSON size: 512 KB.
+  - Per-IP Rate Limiting: 15 write submissions / min; 60 read queries / min.
+- **Maintainer Synchronization**:
+  ```bash
+  cargo run -p utilities --bin rainai_contribute -- sync-edge \
+    --edge-url "https://rainai.example.workers.dev" \
+    --api-token "$RAINAI_INGEST_TOKEN"
+  ```
+- **Zero-Cost Edge Ingest (`ack-ingested`)**:
+  - Once verified and committed locally, the client calls `POST /api/contribute/ack-ingested`.
+  - The worker atomically removes metadata from D1 and deletes binary blobs from R2, maintaining edge storage usage at near zero.
+
+### 4. Smooth Rolling Cache & Cross-Device Utility Ledger
+
+To support massive audio collections on developer workstations without unbounded disk growth:
+
+- **15 GB Storage Ceiling & 90% Soft Ceiling ($13.5\text{ GB}$)**:
+  - Cache quota is actively monitored. When size reaches $13.5\text{ GB}$, small (5 items) or medium (20 items) chunk evictions are triggered, avoiding full-disk halts or thrashing.
+- **Multi-Factor Geometric Utility Score**:
+  $$\text{Score} = \text{Recency}^{0.20} \times \text{Rarity}^{0.35} \times \text{ReconLoss}^{0.30} \times \text{Plausibility}^{0.15}$$
+  - **Recency**: Prioritizes fresh, newly ingested data for grokking.
+  - **Rarity**: Weights scarce surface categories and extreme meteorological conditions.
+  - **Loss**: Samples with high reconstruction error are retained for curriculum refinement.
+  - **Plausibility**: Enforces audio fidelity and clean signal-to-noise ratio.
+- **Cross-Device Persistent Utility Ledger**:
+  - Scores are recorded in `data/rain/data_utility_ledger.json` and tracked in Git.
+  - If a file is evicted to make room for fresh data, its utility history is preserved so training can immediately prioritize high-value samples if re-downloaded or transferred to other devices.
+
+### 5. Autonomous Model Training (Muon & Lion Optimizers)
+
+Train native Candle neural acoustic models without Python or CUDA runtime dependencies:
+
+```powershell
+# Unified PowerShell runner
+.\train.ps1 -Profile standard -RustEngine
+
+# Or invoke the Rust binary directly
+cargo run --bin rainai_train_candle -- \
+  --epochs 20 \
+  --batch-size 16 \
+  --use-flow-matching \
+  --learning-rate 0.001 \
+  --stft-mode combined
+```
+
+- **64-Dimensional Continuous Conditioning Manifold**:
+  - Maps 10 atmospheric params, 7 surface mixture proportions, 4 wind physics terms, 18 side sound layers, and acoustic energy metrics.
+  - Strictly sanitized: out-of-bound values are clamped to $[-1.0, 1.0]$ or $[0.0, 1.0]$, infinities map to extreme bounds, and NaNs are zeroed.
+- **Hybrid Muon + Lion Optimization**:
+  - **Muon**: Newton-Schulz orthogonalization updates 2D weight matrices for optimal representation learning and fast grokking.
+  - **Lion**: Sign-based momentum updates 1D vectors, biases, and scale embeddings.
+
+### 6. Decoupled Git Synchronization for Team Collaboration
+
+Data and model weights are tracked in Git with independent commit streams to prevent bloated merge conflicts:
+
+- **Dataset Ingestion Commits**:
+  - Only manifests (`data/rain/manifest.json`) and utility scores (`data/rain/data_utility_ledger.json`) are committed.
+  - Commit format: `data(ingest): add X standardized samples, update utility ledger`.
+- **Milestone Weight Checkpoints**:
+  - Safetensors checkpoints (`data/weights/model_epoch_*.safetensors`) and provenance receipts are synchronized only when training milestones (e.g., loss plateaus or epoch targets) are reached.
+  - Commit format: `weights(milestone): epoch X, loss Y, hash Z`.
+
+### 7. UI AI Features (Preview Mode)
+
+Maintainers and users can test neural models directly from the desktop (`cargo run -p desktop`) or web interface:
+
+- **`✨ AI & Conditioning (Preview)` Tab**:
+  - **Acoustic Description Prompt (AI Inversion Preview)**: Type descriptive text (e.g. *"Heavy summer thunderstorm striking corrugated tin roof"*) to project into the 64-dimensional conditioning manifold in real time.
+  - **Reference Audio Conditioning (AI Inversion Preview)**: Load a local WAV file to extract spectral centroid, crest factor, and summary embeddings.
+  - **Synthesis Engine Selector**: Switch on-the-fly between `Physical Fluid Dynamics`, `Procedural Filterbank`, `Hybrid Adaptive`, and `🧠 Neural AI (Preview)`.
+- **Learned Flow Solvers (Preview)**:
+  - In the Spatial Radar / Telemetry inspector, evaluate `Learned Curvature (Neural ODE) (Preview)`, `Trained PEC (Preview)`, and `Trained Implicit RK (Preview)` solvers.
+- **Neural Deliberation & 1-Step Consistency Jump Head (Preview)**:
+  - Inspect multi-step recurrence reasoning depth and single-step consistency distillation jumps in the Telemetry tab.
+
+---
 
 ### 5. Verification & Test Suite Execution
 

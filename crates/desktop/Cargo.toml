@@ -14,7 +14,10 @@ workspace = true
 eframe = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+spodeian-telemetry = { workspace = true }
 app = { workspace = true }
+audio = { workspace = true }
+shared = { workspace = true }
 mimalloc = "0.1"
 
 [features]

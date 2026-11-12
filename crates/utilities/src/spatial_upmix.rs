@@ -126,7 +126,11 @@ pub fn stereo_or_mono_to_foa(
         z[i] = z_val;
         x[i] = x_val;
 
-        max_p = max_p.max(w_val.abs()).max(y_val.abs()).max(z_val.abs()).max(x_val.abs());
+        max_p = max_p
+            .max(w_val.abs())
+            .max(y_val.abs())
+            .max(z_val.abs())
+            .max(x_val.abs());
     }
 
     if max_p > 1.0 {
@@ -155,7 +159,11 @@ pub fn resample_linear(input: &[f32], src_sr: u32, dst_sr: u32) -> Vec<f32> {
         let idx0 = src_idx.floor() as usize;
         let frac = (src_idx - idx0 as f64) as f32;
         let s0 = if idx0 < input.len() { input[idx0] } else { 0.0 };
-        let s1 = if idx0 + 1 < input.len() { input[idx0 + 1] } else { s0 };
+        let s1 = if idx0 + 1 < input.len() {
+            input[idx0 + 1]
+        } else {
+            s0
+        };
         out.push(s0 + frac * (s1 - s0));
     }
     out
@@ -166,9 +174,9 @@ use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{
+    Arc,
     atomic::{AtomicBool, Ordering},
     mpsc::Sender,
-    Arc,
 };
 
 /// Pure-Rust FOA audio upmix pipeline callable directly in-process.
@@ -184,12 +192,18 @@ pub fn run_upmix_pipeline(
         }
     };
 
-    emit_log(format!("[*] Starting in-process FOA Spatial Audio Upmixer from {:?}...", raw_dir));
+    emit_log(format!(
+        "[*] Starting in-process FOA Spatial Audio Upmixer from {:?}...",
+        raw_dir
+    ));
     fs::create_dir_all(out_dir)?;
 
     let mut entries = Vec::new();
     visit_dirs(raw_dir, &mut entries)?;
-    emit_log(format!("[*] Discovered {} candidate audio files.", entries.len()));
+    emit_log(format!(
+        "[*] Discovered {} candidate audio files.",
+        entries.len()
+    ));
 
     let mut total_chunks = 0usize;
     for path in entries {
@@ -201,7 +215,11 @@ pub fn run_upmix_pipeline(
             Ok(c) => {
                 total_chunks += c;
                 if c > 0 {
-                    emit_log(format!("  -> Upmixed {:?}: {} chunks generated", path.file_name().unwrap_or_default(), c));
+                    emit_log(format!(
+                        "  -> Upmixed {:?}: {} chunks generated",
+                        path.file_name().unwrap_or_default(),
+                        c
+                    ));
                 }
             }
             Err(e) => {
@@ -210,7 +228,10 @@ pub fn run_upmix_pipeline(
         }
     }
 
-    emit_log(format!("[+] Upmix pipeline finished. Total FOA 5.0s chunks: {}", total_chunks));
+    emit_log(format!(
+        "[+] Upmix pipeline finished. Total FOA 5.0s chunks: {}",
+        total_chunks
+    ));
     Ok(total_chunks)
 }
 
@@ -222,7 +243,11 @@ fn visit_dirs(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
             if path.is_dir() {
                 visit_dirs(&path, files)?;
             } else {
-                let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+                let ext = path
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
                 if ["wav", "mp3", "ogg", "flac"].contains(&ext.as_str()) {
                     files.push(path);
                 }
@@ -233,7 +258,11 @@ fn visit_dirs(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
 }
 
 fn process_audio_file(input_path: &Path, output_dir: &Path) -> Result<usize> {
-    let ext = input_path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+    let ext = input_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
     if ext != "wav" {
         return Ok(0);
     }
@@ -243,7 +272,10 @@ fn process_audio_file(input_path: &Path, output_dir: &Path) -> Result<usize> {
         SampleFormat::Float => reader.samples::<f32>().collect::<Result<_, _>>()?,
         SampleFormat::Int => {
             let scale = 1.0 / (1i32 << (spec.bits_per_sample - 1)) as f32;
-            reader.samples::<i32>().map(|s| s.map(|v| v as f32 * scale)).collect::<Result<_, _>>()?
+            reader
+                .samples::<i32>()
+                .map(|s| s.map(|v| v as f32 * scale))
+                .collect::<Result<_, _>>()?
         }
     };
 

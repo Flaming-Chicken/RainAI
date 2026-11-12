@@ -5,9 +5,10 @@
 
 use anyhow::Result;
 use candle_core::{DType, Tensor};
-use candle_nn::{linear, Linear, Module, VarBuilder};
+use candle_nn::{Linear, Module, VarBuilder, linear};
 
 use super::*;
+use shared::rain::QualityTier;
 
 /// Numerically stable softplus: softplus(x) = max(x, 0) + ln(1 + exp(-|x|))
 /// Overflow-free for all x in (-inf, inf).
@@ -25,7 +26,7 @@ pub struct CandleSpatialVae {
     enc_fc2: Linear,
     enc_mu: Linear,
     enc_logvar: Linear,
-    // Decoder: Latent z [B, 64] + Conditioning u [B, 554] -> 16 DDSP bands + 4 FOA gains
+    // Decoder: Latent z [B, 64] + Conditioning u [B, 64] -> 16 DDSP bands + 4 FOA gains
     dec_fc1: Linear,
     dec_fc2: Linear,
     dec_bands: Linear,
@@ -82,15 +83,17 @@ impl CandleSpatialVae {
         let h1 = self.dec_fc1.forward(&x)?.gelu_erf()?;
         let h2 = self.dec_fc2.forward(&h1)?.gelu_erf()?;
 
-        // Output Affine Alignment for bands: physically constrained non-negative band gains in [0, 20]
+        // Output Affine Alignment for bands: physically constrained C^inf smooth non-negative band gains in (0, 20]
         let raw_bands = self.dec_bands.forward(&h2)?;
-        let bands = (candle_softplus(&raw_bands)? + 1e-4f64)?.clamp(0.0f32, 20.0f32)?;
+        let sp_bands = candle_softplus(&raw_bands)?;
+        let bands = ((sp_bands.tanh()? * 20.0f64)? + 1e-4f64)?;
 
         // Output Affine Alignment for FOA: enforcing acoustic physical energy constraint W >= sqrt(X^2 + Y^2 + Z^2)
         let raw_foa = self.dec_foa.forward(&h2)?;
         let w_raw = raw_foa.narrow(1, 0, 1)?;
         let u_raw = raw_foa.narrow(1, 1, 3)?;
-        let w = (candle_softplus(&w_raw)? + 1e-4f64)?.clamp(1e-4f32, 10.0f32)?;
+        let sp_w = candle_softplus(&w_raw)?;
+        let w = ((sp_w.tanh()? * 10.0f64)? + 1e-4f64)?;
         let u_dir = u_raw.tanh()?;
         let xyz = u_dir.broadcast_mul(&w)?;
         let foa = Tensor::cat(&[&w, &xyz], 1)?;
@@ -99,7 +102,11 @@ impl CandleSpatialVae {
     }
 
     /// Full autoencoder forward pass.
-    pub fn forward(&self, audio_features: &Tensor, conditioning: &Tensor) -> Result<(Tensor, Tensor, Tensor, Tensor)> {
+    pub fn forward(
+        &self,
+        audio_features: &Tensor,
+        conditioning: &Tensor,
+    ) -> Result<(Tensor, Tensor, Tensor, Tensor)> {
         let (mu, logvar) = self.encode(audio_features)?;
         let z = self.reparameterize(&mu, &logvar)?;
         let (bands, foa) = self.decode(&z, conditioning)?;
@@ -116,8 +123,10 @@ pub struct CandleRMSNorm {
 
 impl CandleRMSNorm {
     pub fn new(dim: usize, eps: f64, vs: VarBuilder) -> Result<Self> {
-        let weight = vs.get((dim,), "weight")
-            .unwrap_or_else(|_| Tensor::ones((dim,), DType::F32, vs.device()).unwrap());
+        let weight = match vs.get((dim,), "weight") {
+            Ok(t) => t,
+            Err(_) => Tensor::ones((dim,), DType::F32, vs.device())?,
+        };
         Ok(Self { weight, eps })
     }
 
@@ -160,12 +169,18 @@ pub struct CandleLearnedQuantizer {
 
 impl CandleLearnedQuantizer {
     pub fn new(dim: usize, initial_bits: f32, vs: VarBuilder) -> Result<Self> {
-        let beta = vs.get((dim,), "beta")
-            .unwrap_or_else(|_| Tensor::full(initial_bits, (dim,), vs.device()).unwrap());
-        let lambda_param = vs.get((dim,), "lambda_param")
-            .unwrap_or_else(|_| Tensor::full(0.5f32, (dim,), vs.device()).unwrap());
-        let delta_prune = vs.get((dim,), "delta_prune")
-            .unwrap_or_else(|_| Tensor::full(0.05f32, (dim,), vs.device()).unwrap());
+        let beta = match vs.get((dim,), "beta") {
+            Ok(t) => t,
+            Err(_) => Tensor::full(initial_bits, (dim,), vs.device())?,
+        };
+        let lambda_param = match vs.get((dim,), "lambda_param") {
+            Ok(t) => t,
+            Err(_) => Tensor::full(0.5f32, (dim,), vs.device())?,
+        };
+        let delta_prune = match vs.get((dim,), "delta_prune") {
+            Ok(t) => t,
+            Err(_) => Tensor::full(0.05f32, (dim,), vs.device())?,
+        };
         Ok(Self {
             beta,
             lambda_param,
@@ -202,11 +217,19 @@ impl CandleMambaExpert {
         let in_proj = linear(d_model, d_model, vs.pp("in_proj"))?;
         let rec_proj = linear(d_model, d_model, vs.pp("rec_proj"))?;
         let out_proj = linear(d_model, d_model, vs.pp("out_proj"))?;
-        Ok(Self { in_proj, rec_proj, out_proj })
+        Ok(Self {
+            in_proj,
+            rec_proj,
+            out_proj,
+        })
     }
 
     pub fn from_parts(in_proj: Linear, rec_proj: Linear, out_proj: Linear) -> Self {
-        Self { in_proj, rec_proj, out_proj }
+        Self {
+            in_proj,
+            rec_proj,
+            out_proj,
+        }
     }
 
     pub fn forward(&self, x: &Tensor, h_prev: &Tensor) -> Result<(Tensor, Tensor)> {
@@ -232,10 +255,14 @@ pub struct CandleEngramBank {
 impl CandleEngramBank {
     pub fn new(bank_size: usize, embed_dim: usize, vs: VarBuilder) -> Result<Self> {
         let num_hash_heads = 4;
-        let bank = vs.get((bank_size, embed_dim), "bank")
-            .unwrap_or_else(|_| Tensor::randn(0.0f32, 0.02f32, (bank_size, embed_dim), vs.device()).unwrap());
-        let hash_projections = vs.get((num_hash_heads, embed_dim), "hash_projections")
-            .unwrap_or_else(|_| Tensor::randn(0.0f32, 1.0f32, (num_hash_heads, embed_dim), vs.device()).unwrap());
+        let bank = match vs.get((bank_size, embed_dim), "bank") {
+            Ok(t) => t,
+            Err(_) => Tensor::randn(0.0f32, 0.02f32, (bank_size, embed_dim), vs.device())?,
+        };
+        let hash_projections = match vs.get((num_hash_heads, embed_dim), "hash_projections") {
+            Ok(t) => t,
+            Err(_) => Tensor::randn(0.0f32, 1.0f32, (num_hash_heads, embed_dim), vs.device())?,
+        };
         let fuse_gate = linear(embed_dim * 2, embed_dim, vs.pp("fuse_gate"))?;
         Ok(Self {
             bank_size,
@@ -252,15 +279,16 @@ impl CandleEngramBank {
         let proj_vec = proj.to_vec2::<f32>()?;
         let b_sz = proj_vec.len();
         let primes = [2654435761u64, 2246822519u64, 3266489917u64, 668265263u64];
-        
+
         let mut retrieved_vec = Vec::with_capacity(b_sz * self.embed_dim);
         let bank_vec = self.bank.to_vec2::<f32>()?;
-        
+
         for row in proj_vec {
             let mut accum = vec![0.0f32; self.embed_dim];
             for (h, &val) in row.iter().enumerate().take(self.num_hash_heads) {
                 let scaled = (val * 1000.0).abs() as u64;
-                let idx = ((scaled.wrapping_mul(primes[h % primes.len()])) % (self.bank_size as u64)) as usize;
+                let idx = ((scaled.wrapping_mul(primes[h % primes.len()]))
+                    % (self.bank_size as u64)) as usize;
                 let bank_slice = &bank_vec[idx];
                 for (acc, &b_val) in accum.iter_mut().zip(bank_slice.iter()) {
                     *acc += b_val;
@@ -396,7 +424,7 @@ impl CandleMamba2MoE {
         conditioning: &Tensor,
         h_prev: &Tensor,
     ) -> Result<(Tensor, Tensor, Tensor)> {
-        // Combined input [B, 618]
+        // Combined input [B, 128]
         let x_in = Tensor::cat(&[z_prev, conditioning], 1)?;
         let h_in = self.in_proj.forward(&x_in)?.gelu_erf()?;
 
@@ -492,12 +520,15 @@ impl CandleMamba2MoE {
         pairs
     }
 
-
     /// Multi-Frame Prediction: predicts trajectories for t+1, t+2, and t+3.
     pub fn predict_multi_frame(&self, fused: &Tensor) -> Result<(Tensor, Tensor, Tensor)> {
         let z1 = self.out_affine.forward(&self.traj_head.forward(fused)?)?;
-        let z2 = self.out_affine.forward(&self.traj_head_t2.forward(fused)?)?;
-        let z3 = self.out_affine.forward(&self.traj_head_t3.forward(fused)?)?;
+        let z2 = self
+            .out_affine
+            .forward(&self.traj_head_t2.forward(fused)?)?;
+        let z3 = self
+            .out_affine
+            .forward(&self.traj_head_t3.forward(fused)?)?;
         Ok((z1, z2, z3))
     }
 
@@ -513,7 +544,10 @@ impl CandleMamba2MoE {
                 in_w = (in_w + scaled)?;
             }
         }
-        let in_bias = match (self.shared_base.in_proj.bias(), self.experts[0].in_proj.bias()) {
+        let in_bias = match (
+            self.shared_base.in_proj.bias(),
+            self.experts[0].in_proj.bias(),
+        ) {
             (Some(b_base), _) => {
                 let mut b = b_base.clone();
                 for (k, expert) in self.experts.iter().enumerate() {
@@ -536,7 +570,10 @@ impl CandleMamba2MoE {
                 rec_w = (rec_w + scaled)?;
             }
         }
-        let rec_bias = match (self.shared_base.rec_proj.bias(), self.experts[0].rec_proj.bias()) {
+        let rec_bias = match (
+            self.shared_base.rec_proj.bias(),
+            self.experts[0].rec_proj.bias(),
+        ) {
             (Some(b_base), _) => {
                 let mut b = b_base.clone();
                 for (k, expert) in self.experts.iter().enumerate() {
@@ -559,7 +596,10 @@ impl CandleMamba2MoE {
                 out_w = (out_w + scaled)?;
             }
         }
-        let out_bias = match (self.shared_base.out_proj.bias(), self.experts[0].out_proj.bias()) {
+        let out_bias = match (
+            self.shared_base.out_proj.bias(),
+            self.experts[0].out_proj.bias(),
+        ) {
             (Some(b_base), _) => {
                 let mut b = b_base.clone();
                 for (k, expert) in self.experts.iter().enumerate() {
@@ -577,7 +617,9 @@ impl CandleMamba2MoE {
         let rec_linear = Linear::new(rec_w, rec_bias);
         let out_linear = Linear::new(out_w, out_bias);
 
-        Ok(CandleMambaExpert::from_parts(in_linear, rec_linear, out_linear))
+        Ok(CandleMambaExpert::from_parts(
+            in_linear, rec_linear, out_linear,
+        ))
     }
 
     /// Smooth temperature-scaled softmax routing. All experts receive non-zero, differentiable
@@ -588,10 +630,7 @@ impl CandleMamba2MoE {
     /// - `smooth_weights`: full [B, N] probability distribution summing to 1.0 per row.
     /// - `weights_as_mask`: same tensor (continuous, no binary gate).
     /// - `mean_effective_count`: per-batch mean exp(H) — entropy-based effective expert count.
-    pub fn route_smooth_softmax(
-        logits: &Tensor,
-        tau_moe: f64,
-    ) -> Result<(Tensor, Tensor, Tensor)> {
+    pub fn route_smooth_softmax(logits: &Tensor, tau_moe: f64) -> Result<(Tensor, Tensor, Tensor)> {
         let tau = tau_moe.max(0.05);
         // Temperature-scaled softmax: p_e = exp((l_e - max) / tau) / Z
         let scaled = (logits * (1.0 / tau))?;
@@ -601,8 +640,8 @@ impl CandleMamba2MoE {
         // Clamping smooth_weights to [1e-8, 1.0] before log guarantees 0 * log(0) = NaN cannot occur
         let safe_weights = smooth_weights.clamp(1e-8f32, 1.0f32)?;
         let log_w = (safe_weights.log()? * -1.0)?;
-        let entropy = (&smooth_weights * &log_w)?.sum(1)?;       // [B]
-        let eff_count = entropy.exp()?;                           // exp(H), in [1, N]
+        let entropy = (&smooth_weights * &log_w)?.sum(1)?; // [B]
+        let eff_count = entropy.exp()?; // exp(H), in [1, N]
         let mean_eff = eff_count.mean_all()?;
 
         Ok((smooth_weights.clone(), smooth_weights, mean_eff))
@@ -646,7 +685,8 @@ impl CandleMamba2MoE {
                 let dropped_e = rng.gen_range(0..NUM_EXPERTS);
                 let mut mask_vec = vec![1.0f32; NUM_EXPERTS];
                 mask_vec[dropped_e] = 0.0f32;
-                let drop_mask = Tensor::from_vec(mask_vec, (1, NUM_EXPERTS), smooth_weights.device())?;
+                let drop_mask =
+                    Tensor::from_vec(mask_vec, (1, NUM_EXPERTS), smooth_weights.device())?;
                 let masked = smooth_weights.broadcast_mul(&drop_mask)?;
                 let sum_w = (masked.sum_keepdim(1)? + 1e-8f64)?;
                 smooth_weights = masked.broadcast_div(&sum_w)?;
@@ -686,7 +726,14 @@ impl CandleMamba2MoE {
         let z_raw = self.traj_head.forward(&fused)?;
         let z_pred = self.out_affine.forward(&z_raw)?;
 
-        Ok((z_pred, blended_state, router_probs, active_mask, mean_eff, router_logits))
+        Ok((
+            z_pred,
+            blended_state,
+            router_probs,
+            active_mask,
+            mean_eff,
+            router_logits,
+        ))
     }
 
     /// Forward pass with continuous smooth softmax routing and temporal tabu logit dampening (zero expert dropout).
@@ -722,7 +769,6 @@ impl CandleMamba2MoE {
     }
 }
 
-
 /// Iterative Latent Space "Thinking" and Refinement Block.
 /// Allows multiple iterative latent updates with deliberation depth embeddings
 /// and stochastic latent jittering to encourage contractive attractor dynamics.
@@ -738,12 +784,21 @@ pub struct CandleThinkingBlock {
 impl CandleThinkingBlock {
     pub fn new(dim: usize, cond_dim: usize, vs: VarBuilder) -> Result<Self> {
         let step_embed_dim = 32;
-        let step_embed = vs.get((16, step_embed_dim), "step_embed")
-            .unwrap_or_else(|_| Tensor::randn(0.0f32, 0.02f32, (16, step_embed_dim), vs.device()).unwrap());
+        let step_embed = match vs.get((16, step_embed_dim), "step_embed") {
+            Ok(t) => t,
+            Err(_) => Tensor::randn(0.0f32, 0.02f32, (16, step_embed_dim), vs.device())?,
+        };
         let fc1 = linear(dim + cond_dim + step_embed_dim, 128, vs.pp("fc1"))?;
         let fc2 = linear(128, dim, vs.pp("fc2"))?;
         let halt_gate = linear(dim + cond_dim + step_embed_dim, 1, vs.pp("halt_gate"))?;
-        Ok(Self { fc1, fc2, halt_gate, step_embed, dim, step_embed_dim })
+        Ok(Self {
+            fc1,
+            fc2,
+            halt_gate,
+            step_embed,
+            dim,
+            step_embed_dim,
+        })
     }
 
     /// Performs iterative thinking updates with stochastic latent jittering and depth embeddings.
@@ -763,7 +818,8 @@ impl CandleThinkingBlock {
         for step in 1..=max_steps {
             steps_taken = step;
             let z_perturbed = if jitter_sigma > 1e-6 {
-                let jitter = Tensor::randn(0.0f32, jitter_sigma, z_current.shape(), z_current.device())?;
+                let jitter =
+                    Tensor::randn(0.0f32, jitter_sigma, z_current.shape(), z_current.device())?;
                 (&z_current + &jitter)?
             } else {
                 z_current.copy()?
@@ -821,10 +877,14 @@ impl CandleMambaSSDBlock {
         let b_proj = linear(d_model, d_state, vs.pp("b_proj"))?;
         let c_proj = linear(d_model, d_state, vs.pp("c_proj"))?;
         let out_proj = linear(d_model, d_model, vs.pp("out_proj"))?;
-        let a_log = vs.get((d_model, d_state), "a_log")
-            .unwrap_or_else(|_| Tensor::zeros((d_model, d_state), DType::F32, vs.device()).unwrap());
-        let d_param = vs.get((d_model,), "d_param")
-            .unwrap_or_else(|_| Tensor::ones((d_model,), DType::F32, vs.device()).unwrap());
+        let a_log = match vs.get((d_model, d_state), "a_log") {
+            Ok(t) => t,
+            Err(_) => Tensor::zeros((d_model, d_state), DType::F32, vs.device())?,
+        };
+        let d_param = match vs.get((d_model,), "d_param") {
+            Ok(t) => t,
+            Err(_) => Tensor::ones((d_model,), DType::F32, vs.device())?,
+        };
 
         Ok(Self {
             d_model,
@@ -932,7 +992,11 @@ pub struct CandleMetaTelemetryOutput {
 impl CandleMetaTelemetryOutput {
     /// Returns discrete recommended pre-generated / thinking steps (1..=5)
     pub fn recommended_steps(&self) -> usize {
-        if let Ok(val) = self.pre_generated_steps.mean_all().and_then(|t| t.to_scalar::<f32>()) {
+        if let Ok(val) = self
+            .pre_generated_steps
+            .mean_all()
+            .and_then(|t| t.to_scalar::<f32>())
+        {
             (val.round() as usize).clamp(1, 5)
         } else {
             3
@@ -961,12 +1025,16 @@ impl CandleInvasiveMetaController {
     pub fn new(num_experts: usize, d_state: usize, vs: VarBuilder) -> Result<Self> {
         let in_dim = num_experts + 4 + 3 + 2 + 1; // 18
         let telemetry_proj = linear(4, 32, vs.pp("telemetry_proj"))?;
-        let telem_a_log = vs.get((32, d_state), "telem_a_log")
-            .unwrap_or_else(|_| Tensor::zeros((32, d_state), DType::F32, vs.device()).unwrap());
+        let telem_a_log = match vs.get((32, d_state), "telem_a_log") {
+            Ok(t) => t,
+            Err(_) => Tensor::zeros((32, d_state), DType::F32, vs.device())?,
+        };
         let telem_b_proj = linear(32, d_state, vs.pp("telem_b_proj"))?;
         let telem_c_proj = linear(32, d_state, vs.pp("telem_c_proj"))?;
-        let telem_d = vs.get((32,), "telem_d")
-            .unwrap_or_else(|_| Tensor::ones((32,), DType::F32, vs.device()).unwrap());
+        let telem_d = match vs.get((32,), "telem_d") {
+            Ok(t) => t,
+            Err(_) => Tensor::ones((32,), DType::F32, vs.device())?,
+        };
 
         let fusion_fc1 = linear(in_dim + 32, 64, vs.pp("fusion_fc1"))?;
         let fusion_fc2 = linear(64, 64, vs.pp("fusion_fc2"))?;
@@ -990,10 +1058,10 @@ impl CandleInvasiveMetaController {
     pub fn forward(
         &self,
         moe_logits: &Tensor,
-        telemetry: &Tensor,       // [B, 4] [buffer_health_ms, cpu_headroom, gpu_headroom, delta_t_ms]
-        user_weights: &Tensor,    // [B, 3] [quality_pref, perf_pref, target_buffer_ms]
-        quality_scores: &Tensor,  // [B, 2]
-        slice_level: &Tensor,     // [B, 1]
+        telemetry: &Tensor, // [B, 4] [buffer_health_ms, cpu_headroom, gpu_headroom, delta_t_ms]
+        user_weights: &Tensor, // [B, 3] [quality_pref, perf_pref, target_buffer_ms]
+        quality_scores: &Tensor, // [B, 2]
+        slice_level: &Tensor, // [B, 1]
         telemetry_state: &Tensor, // [B, 32, 16]
     ) -> Result<CandleMetaTelemetryOutput> {
         let u_telem = self.telemetry_proj.forward(telemetry)?.silu()?;
@@ -1008,7 +1076,16 @@ impl CandleInvasiveMetaController {
         let mamba_out = next_telem_state.broadcast_mul(&c_t.unsqueeze(1)?)?.sum(2)?;
         let mamba_act = (&mamba_out + u_telem.broadcast_mul(&self.telem_d.unsqueeze(0)?)?)?;
 
-        let raw_features = Tensor::cat(&[moe_logits, telemetry, user_weights, quality_scores, slice_level], 1)?;
+        let raw_features = Tensor::cat(
+            &[
+                moe_logits,
+                telemetry,
+                user_weights,
+                quality_scores,
+                slice_level,
+            ],
+            1,
+        )?;
         let fused_in = Tensor::cat(&[&raw_features, &mamba_act], 1)?;
 
         let h1 = self.fusion_fc1.forward(&fused_in)?.silu()?;
@@ -1019,7 +1096,8 @@ impl CandleInvasiveMetaController {
         let raw_tau = candle_nn::ops::sigmoid(&raw_out.narrow(1, self.num_experts, 1)?)?;
         let tau_moe = ((&raw_tau * 1.9)? + 0.1)?;
 
-        let ambisonic_gate = candle_nn::ops::sigmoid(&raw_out.narrow(1, self.num_experts + 1, 1)?)?;
+        let ambisonic_gate =
+            candle_nn::ops::sigmoid(&raw_out.narrow(1, self.num_experts + 1, 1)?)?;
         let diff_gate = candle_nn::ops::sigmoid(&raw_out.narrow(1, self.num_experts + 2, 1)?)?;
         let blend_gate = candle_nn::ops::sigmoid(&raw_out.narrow(1, self.num_experts + 3, 1)?)?;
 
@@ -1049,9 +1127,9 @@ impl CandleInvasiveMetaController {
 // 3. Physics-Informed & HWIL Loss Functions
 // ============================================================================
 
-/// Trajectory loss with 1st-order finite difference velocity smoothness penalty:
-/// $\mathcal{L} = \text{MSE}(z_{pred}, z_{target}) + \lambda_{vel} \|(z_{pred} - z_{prev}) - (z_{target} - z_{prev})\|^2$.
-
+/// 1-Step Consistency Distillation Jump Head.
+/// Predicts the multi-step converged latent delta in a single forward pass,
+/// enabling sub-millisecond, 1-step Euler inference on edge / WebGPU devices.
 pub struct CandleConsistencyHead {
     fc1: Linear,
     fc2: Linear,
@@ -1063,7 +1141,12 @@ impl CandleConsistencyHead {
     pub fn new(in_dim: usize, out_dim: usize, vs: VarBuilder) -> Result<Self> {
         let fc1 = linear(in_dim, 128, vs.pp("fc1"))?;
         let fc2 = linear(128, out_dim, vs.pp("fc2"))?;
-        Ok(Self { fc1, fc2, in_dim, out_dim })
+        Ok(Self {
+            fc1,
+            fc2,
+            in_dim,
+            out_dim,
+        })
     }
 
     /// Predicts 1-step fast jump: z_fast = z_0 + Delta z_fast
@@ -1076,9 +1159,74 @@ impl CandleConsistencyHead {
     }
 
     /// Computes Huber distillation loss against the converged multi-step thinking target
-    pub fn compute_distill_loss(&self, z_fast: &Tensor, z_converged: &Tensor, delta: f64) -> Result<Tensor> {
+    pub fn compute_distill_loss(
+        &self,
+        z_fast: &Tensor,
+        z_converged: &Tensor,
+        delta: f64,
+    ) -> Result<Tensor> {
         let diff = (z_fast - z_converged)?;
         crate::stft_loss::huber_loss(&diff, delta)
     }
 }
 
+/// Audio-Rate / Block-Rate Differentiable Neural Waveshaper (L0 Exciter).
+/// Applies nonlinear harmonic saturation and acoustic air excitation to procedural rain.
+/// Its quantization bit-width and sparsity thresholds are learned continuously during training
+/// to discover the optimal default deployment quantization tier.
+pub struct CandleNeuralWaveshaper {
+    fc_in: Linear,
+    fc_hidden: Linear,
+    fc_out: Linear,
+    pub quantizer: CandleLearnedQuantizer,
+    pub mix: Tensor,
+}
+
+impl CandleNeuralWaveshaper {
+    pub fn new(hidden_dim: usize, vs: VarBuilder) -> Result<Self> {
+        let fc_in = linear(1, hidden_dim, vs.pp("fc_in"))?;
+        let fc_hidden = linear(hidden_dim, hidden_dim, vs.pp("fc_hidden"))?;
+        let fc_out = linear(hidden_dim, 1, vs.pp("fc_out"))?;
+        let quantizer = CandleLearnedQuantizer::new(hidden_dim, 8.0, vs.pp("quantizer"))?;
+        let mix = match vs.get((1,), "mix") {
+            Ok(t) => t,
+            Err(_) => Tensor::full(0.35f32, (1,), vs.device())?,
+        };
+        Ok(Self {
+            fc_in,
+            fc_hidden,
+            fc_out,
+            quantizer,
+            mix,
+        })
+    }
+
+    /// Forward pass through the differentiable neural waveshaper with continuous quantization
+    pub fn forward(&self, audio: &Tensor, tau_quant: f32) -> Result<Tensor> {
+        let original_shape = audio.shape().clone();
+        let flat_audio = audio.flatten_to(1)?.unsqueeze(1)?;
+        let h1 = self.fc_in.forward(&flat_audio)?.gelu_erf()?;
+        let h1_quant = self.quantizer.forward(&h1, tau_quant)?;
+        let h2 = self.fc_hidden.forward(&h1_quant)?.gelu_erf()?;
+        let h2_quant = self.quantizer.forward(&h2, tau_quant)?;
+        let exciter = self.fc_out.forward(&h2_quant)?.tanh()?;
+
+        let mix_clamped = self.mix.clamp(0.0f32, 1.0f32)?;
+        let shaped = (&flat_audio + (&exciter * &mix_clamped)?)?;
+        shaped.reshape(original_shape).map_err(Into::into)
+    }
+
+    /// Computes the optimal quantization tier discovered during training
+    pub fn optimal_quantization_tier(&self) -> Result<QualityTier> {
+        let mean_bits = self.quantizer.beta.abs()?.mean_all()?.to_scalar::<f32>()?;
+        if mean_bits <= 2.0 {
+            Ok(QualityTier::Ternary158)
+        } else if mean_bits <= 8.5 {
+            Ok(QualityTier::AdaptiveMinimum)
+        } else if mean_bits <= 16.5 {
+            Ok(QualityTier::HighInt16)
+        } else {
+            Ok(QualityTier::StudioFp32)
+        }
+    }
+}

@@ -8,39 +8,38 @@
 //! - Seamless Open/Close Lifecycle: Atomic safetensors write (.tmp rename) and JSON state ensure zero lost progress or corruption.
 //! - Active Learning Audio Auditing: HITL preview queue for high-uncertainty surfaces with live loss re-weighting.
 //! - Streamlined 4-Tab Interface:
-//!     Tab 0: Mission Control & Flight Deck
-//!     Tab 1: Dataset & 9-Surface Health (with 15 GB Rolling Quota)
-//!     Tab 2: Neural Blueprint & Quantization Slices
-//!     Tab 3: Live Diagnostics & Streaming Logs (Zero scrollbars)
+//!   - Tab 0: Mission Control & Flight Deck
+//!   - Tab 1: Dataset & 9-Surface Health (with 15 GB Rolling Quota)
+//!   - Tab 2: Neural Blueprint & Quantization Slices
+//!   - Tab 3: Live Diagnostics & Streaming Logs (Zero scrollbars)
 
 use anyhow::Result;
 use crossterm::{
     event::{
-        self, DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture, Event,
-        KeyCode, KeyEventKind, KeyModifiers,
+        self, DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture,
+        Event, KeyCode, KeyEventKind, KeyModifiers,
     },
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
+    Terminal,
     backend::{Backend, CrosstermBackend},
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Gauge, List, ListItem, Paragraph, Sparkline, Tabs, Wrap},
-    Terminal,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     collections::HashMap,
-    fs,
-    io,
+    fs, io,
     path::{Path, PathBuf},
     sync::{
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, Sender},
-        Arc, Mutex,
     },
     thread,
     time::{Duration, Instant},
@@ -51,14 +50,14 @@ use shared::{paths::WorkspacePaths, surface::CanonicalSurface};
 use utilities::{
     audio_preview::{AudioPreviewManager, PreferenceChoice},
     autopilot::{
-        configure_system_resources, probe_host_nvidia_gpu, AutoPilotConvergenceTracker,
-        HardwareProfile, SurfaceEntropyAuditor, SurfaceQuota, CANONICAL_SURFACES,
+        AutoPilotConvergenceTracker, CANONICAL_SURFACES, HardwareProfile, SurfaceEntropyAuditor,
+        SurfaceQuota, configure_system_resources, probe_host_nvidia_gpu,
     },
     candle_train::{
-        run_candle_training_pipeline_with_steering, AtomicCheckpointManager, CandleTrainConfig,
-        CandleTrainingSteeringHandle, TrainingPhase, TrainingProgressUpdate, TrainingSessionState,
+        AtomicCheckpointManager, CandleTrainConfig, CandleTrainingSteeringHandle, TrainingPhase,
+        TrainingProgressUpdate, TrainingSessionState, run_candle_training_pipeline_with_steering,
     },
-    data_worker::{DatabaseHealthWorker, DataWorkerTelemetry},
+    data_worker::{DataWorkerTelemetry, DatabaseHealthWorker},
     pipeline::PipelineTask,
 };
 
@@ -83,6 +82,9 @@ pub struct GranularTuningState {
     pub lambda_soup: f64,
     pub stft_weight: f64,
     pub cfg_dropout: f64,
+    pub flow_solver: usize,
+    pub solver_tolerance: f64,
+    pub fp16_mode: bool,
 }
 
 impl Default for GranularTuningState {
@@ -96,6 +98,9 @@ impl Default for GranularTuningState {
             lambda_soup: 0.05,
             stft_weight: 1.0,
             cfg_dropout: 0.1,
+            flow_solver: 1, // Default: Adaptive RK45 (Dormand-Prince)
+            solver_tolerance: 1e-4,
+            fp16_mode: false,
         }
     }
 }
@@ -159,13 +164,33 @@ impl GranularTuningState {
                     self.cfg_dropout = (self.cfg_dropout - 0.05).max(0.0);
                 }
             }
+            8 => {
+                if increment {
+                    self.flow_solver = (self.flow_solver + 1) % 7;
+                } else {
+                    self.flow_solver = (self.flow_solver + 6) % 7;
+                }
+            }
+            9 => {
+                if increment {
+                    self.solver_tolerance = (self.solver_tolerance * 2.0).min(1e-2);
+                } else {
+                    self.solver_tolerance = (self.solver_tolerance / 2.0).max(1e-5);
+                }
+            }
+            10 => {
+                self.fp16_mode = !self.fp16_mode;
+            }
             _ => {}
         }
     }
 
     pub fn param_name_and_val(&self, idx: usize) -> (&'static str, String) {
         match idx {
-            0 => ("Learning Rate (AdamW)", format!("{:.6}", self.learning_rate)),
+            0 => (
+                "Learning Rate (AdamW)",
+                format!("{:.6}", self.learning_rate),
+            ),
             1 => ("Batch Size (Per Step)", format!("{}", self.batch_size)),
             2 => (
                 "Gradient Accumulation",
@@ -175,11 +200,51 @@ impl GranularTuningState {
                     self.batch_size * self.accumulation_steps
                 ),
             ),
-            3 => ("Deliberation Thinking Steps", format!("{}/5 steps", self.thinking_steps)),
-            4 => ("MoE Temperature (τ)", format!("τ = {:.2} (smooth, all 8 experts)", self.tau_moe)),
-            5 => ("Dense Soup Weight (λ_soup)", format!("{:.4}", self.lambda_soup)),
-            6 => ("STFT Transient Loss Weight", format!("{:.2}", self.stft_weight)),
-            7 => ("CFG Conditioning Dropout", format!("{:.2}", self.cfg_dropout)),
+            3 => (
+                "Deliberation Thinking Steps",
+                format!("{}/5 steps", self.thinking_steps),
+            ),
+            4 => (
+                "MoE Temperature (τ)",
+                format!("τ = {:.2} (smooth, all 8 experts)", self.tau_moe),
+            ),
+            5 => (
+                "Dense Soup Weight (λ_soup)",
+                format!("{:.4}", self.lambda_soup),
+            ),
+            6 => (
+                "STFT Transient Loss Weight",
+                format!("{:.2}", self.stft_weight),
+            ),
+            7 => (
+                "CFG Conditioning Dropout",
+                format!("{:.2}", self.cfg_dropout),
+            ),
+            8 => {
+                let name = match self.flow_solver {
+                    0 => "Fixed RK4 (10 Steps)",
+                    1 => "Adaptive RK45 (Dormand-Prince)",
+                    2 => "Adaptive RK23 (Bogacki-Shampine)",
+                    3 => "Adaptive Tsit5 (Tsitouras 5/4)",
+                    4 => "Adaptive Heun2 (EDM/Karras)",
+                    5 => "DPM-Solver++ (Fast Multistep)",
+                    6 => "Learned Curvature (Neural ODE)",
+                    _ => "Adaptive RK45",
+                };
+                ("ODE Probability Flow Solver", name.to_string())
+            }
+            9 => (
+                "Local Error Tolerance (ε)",
+                format!("{:.1e}", self.solver_tolerance),
+            ),
+            10 => (
+                "WebGPU Shader Precision",
+                if self.fp16_mode {
+                    "FP16 Energy-Saver (Mobile Adreno/Mali Turbo)".into()
+                } else {
+                    "FP32 High-Precision (Studio Reference)".into()
+                },
+            ),
             _ => ("Unknown", "".into()),
         }
     }
@@ -382,17 +447,22 @@ impl App {
             None => ("CUDA/DirectX GPU".to_string(), 8192),
         };
 
-        let mut tuning_state = GranularTuningState::default();
-        tuning_state.batch_size = hw_profile.recommended_batch_size;
-        tuning_state.accumulation_steps = hw_profile.recommended_accumulation_steps;
-        tuning_state.thinking_steps = hw_profile.recommended_thinking_steps;
-        tuning_state.tau_moe = 0.75;
+        let tuning_state = GranularTuningState {
+            batch_size: hw_profile.recommended_batch_size,
+            accumulation_steps: hw_profile.recommended_accumulation_steps,
+            thinking_steps: hw_profile.recommended_thinking_steps,
+            tau_moe: 0.75,
+            ..Default::default()
+        };
 
         let (gpu_tx, gpu_rx) = mpsc::channel();
         thread::spawn(move || {
             loop {
                 if let Ok(output) = std::process::Command::new("nvidia-smi")
-                    .args(["--query-gpu=utilization.gpu,memory.used", "--format=csv,noheader,nounits"])
+                    .args([
+                        "--query-gpu=utilization.gpu,memory.used",
+                        "--format=csv,noheader,nounits",
+                    ])
                     .output()
                 {
                     if output.status.success() {
@@ -481,7 +551,7 @@ impl App {
             gpu_name,
             gpu_usage: 0.0,
             gpu_mem_used_mb: 0,
-            gpu_mem_total_mb: gpu_mem_total_mb,
+            gpu_mem_total_mb,
             gpu_rx,
             log_rx,
             log_tx,
@@ -603,10 +673,22 @@ impl App {
                         if let Some(tag) = meta.get("surface_tag").and_then(|t| t.as_str()) {
                             *summary.surface_stats.entry(tag.to_string()).or_insert(0) += 1;
                         }
-                        total_rms += meta.get("rms_energy").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                        total_rain += meta.get("rain_rate").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                        total_density += meta.get("droplet_density").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                        total_centroid += meta.get("spectral_centroid").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        total_rms += meta
+                            .get("rms_energy")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0);
+                        total_rain += meta
+                            .get("rain_rate")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0);
+                        total_density += meta
+                            .get("droplet_density")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0);
+                        total_centroid += meta
+                            .get("spectral_centroid")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0);
                     }
 
                     if summary.total_chunks > 0 {
@@ -636,13 +718,19 @@ impl App {
     /// Autonomously launches or resumes native Candle training completely in-process.
     pub fn launch_training(&mut self) {
         if self.is_training_active.load(Ordering::SeqCst) {
-            let _ = self.log_tx.send("[!] Candle training is already active in-process.".to_string());
+            let _ = self
+                .log_tx
+                .send("[!] Candle training is already active in-process.".to_string());
             return;
         }
 
         self.is_training_active.store(true, Ordering::SeqCst);
-        self.training_steering.stop_signal.store(false, Ordering::SeqCst);
-        self.training_steering.pause_signal.store(false, Ordering::SeqCst);
+        self.training_steering
+            .stop_signal
+            .store(false, Ordering::SeqCst);
+        self.training_steering
+            .pause_signal
+            .store(false, Ordering::SeqCst);
         self.flight_stage = FlightStage::HardwareProbe;
 
         let active_flag = self.is_training_active.clone();
@@ -671,22 +759,27 @@ impl App {
         });
 
         // Build config from tuning parameters
-        let mut config = CandleTrainConfig::default();
-        config.learning_rate = self.tuning_state.learning_rate;
-        config.batch_size = self.tuning_state.batch_size;
-        config.accumulation_steps = self.tuning_state.accumulation_steps;
-        config.max_thinking_steps = self.tuning_state.thinking_steps;
-        config.tau_moe = self.tuning_state.tau_moe as f64;
-        config.lambda_soup_deficit = self.tuning_state.lambda_soup;
-        config.stft_weight = self.tuning_state.stft_weight;
-        config.cfg_dropout = self.tuning_state.cfg_dropout as f32;
-        config.vae_epochs = 5;
-        config.mamba_epochs = 10;
-        config.max_batches = 190; // Full epoch pass over 1,526 chunks (1526 / 8 = 190 batches)
-        config.continuous_refinement = true;
+        let mut config = CandleTrainConfig {
+            learning_rate: self.tuning_state.learning_rate,
+            batch_size: self.tuning_state.batch_size,
+            accumulation_steps: self.tuning_state.accumulation_steps,
+            max_thinking_steps: self.tuning_state.thinking_steps,
+            tau_moe: self.tuning_state.tau_moe as f64,
+            lambda_soup_deficit: self.tuning_state.lambda_soup,
+            stft_weight: self.tuning_state.stft_weight,
+            cfg_dropout: self.tuning_state.cfg_dropout as f32,
+            vae_epochs: 5,
+            mamba_epochs: 10,
+            max_batches: 190, // Full epoch pass over 1,526 chunks (1526 / 8 = 190 batches)
+            continuous_refinement: true,
+            ..Default::default()
+        };
 
         thread::spawn(move || {
-            let _ = log_tx.send("[⚡] Autonomous In-Process Candle Training Engine Initiated (Continuous Stream).".to_string());
+            let _ = log_tx.send(
+                "[⚡] Autonomous In-Process Candle Training Engine Initiated (Continuous Stream)."
+                    .to_string(),
+            );
             while !steering.stop_signal.load(Ordering::SeqCst) {
                 // Check if user paused training
                 while steering.pause_signal.load(Ordering::SeqCst) {
@@ -703,7 +796,10 @@ impl App {
                     if let Ok(mut g) = dyn_cfg.lock() {
                         if let Some(new_cfg) = g.take() {
                             config = new_cfg;
-                            let _ = log_tx.send("[+] In-Process Training Engine adopted updated hyperparameters.".to_string());
+                            let _ = log_tx.send(
+                                "[+] In-Process Training Engine adopted updated hyperparameters."
+                                    .to_string(),
+                            );
                         }
                     }
                 }
@@ -714,7 +810,10 @@ impl App {
                         let _ = Self::deploy_models_standalone(&log_tx);
                     }
                     Err(e) => {
-                        let _ = log_tx.send(format!("[!] In-Process Training Notice: {}. Retrying in 3s...", e));
+                        let _ = log_tx.send(format!(
+                            "[!] In-Process Training Notice: {}. Retrying in 3s...",
+                            e
+                        ));
                         std::thread::sleep(Duration::from_secs(3));
                     }
                 }
@@ -730,14 +829,25 @@ impl App {
     }
 
     /// Starts an in-process pipeline task using the strongly-typed PipelineTask enum.
-    pub fn start_in_process_pipeline_task(&mut self, task: PipelineTask, target_surfaces: Option<Vec<String>>) {
+    pub fn start_in_process_pipeline_task(
+        &mut self,
+        task: PipelineTask,
+        target_surfaces: Option<Vec<String>>,
+    ) {
         if let Some(active) = &self.active_in_process_task {
-            let _ = self.log_tx.send(format!("[!] Cannot launch '{}': task '{}' is currently running.", task.short_code(), active));
+            let _ = self.log_tx.send(format!(
+                "[!] Cannot launch '{}': task '{}' is currently running.",
+                task.short_code(),
+                active
+            ));
             return;
         }
 
         self.active_in_process_task = Some(task.title().to_string());
-        let _ = self.log_tx.send(format!("[*] Launching in-process pipeline: {}...", task.title()));
+        let _ = self.log_tx.send(format!(
+            "[*] Launching in-process pipeline: {}...",
+            task.title()
+        ));
 
         let tx = self.log_tx.clone();
         let short_code = task.short_code().to_string();
@@ -747,10 +857,16 @@ impl App {
             let res = task.execute(target_surfaces.as_deref(), stop_flag, Some(tx.clone()));
             match res {
                 Ok(count) => {
-                    let _ = tx.send(format!("[+] In-process task '{}' finished successfully ({} items).", short_code, count));
+                    let _ = tx.send(format!(
+                        "[+] In-process task '{}' finished successfully ({} items).",
+                        short_code, count
+                    ));
                 }
                 Err(e) => {
-                    let _ = tx.send(format!("[ERR] In-process task '{}' encountered error: {}", short_code, e));
+                    let _ = tx.send(format!(
+                        "[ERR] In-process task '{}' encountered error: {}",
+                        short_code, e
+                    ));
                 }
             }
             let _ = tx.send(format!("TASK_COMPLETE:{}", short_code));
@@ -758,11 +874,17 @@ impl App {
     }
 
     /// Backward-compatible string-based trigger method delegating to PipelineTask.
-    pub fn start_in_process_data_pipeline(&mut self, stage: &'static str, target_surfaces: Option<Vec<String>>) {
+    pub fn start_in_process_data_pipeline(
+        &mut self,
+        stage: &'static str,
+        target_surfaces: Option<Vec<String>>,
+    ) {
         if let Some(task) = PipelineTask::from_code(stage) {
             self.start_in_process_pipeline_task(task, target_surfaces);
         } else {
-            let _ = self.log_tx.send(format!("[!] Unknown pipeline stage: '{}'", stage));
+            let _ = self
+                .log_tx
+                .send(format!("[!] Unknown pipeline stage: '{}'", stage));
         }
     }
 
@@ -775,12 +897,18 @@ impl App {
             .map(|q| q.surface.clone())
             .collect();
 
-        if (self.total_chunks == 0 || self.surface_quotas.is_empty()) && deficit_surfaces.is_empty() {
-            deficit_surfaces = CanonicalSurface::ALL.iter().map(|s| s.as_str().to_string()).collect();
+        if (self.total_chunks == 0 || self.surface_quotas.is_empty()) && deficit_surfaces.is_empty()
+        {
+            deficit_surfaces = CanonicalSurface::ALL
+                .iter()
+                .map(|s| s.as_str().to_string())
+                .collect();
         }
 
         if deficit_surfaces.is_empty() {
-            let _ = self.log_tx.send("[+] No surface deficits detected. Shannon entropy H is well-balanced.".to_string());
+            let _ = self.log_tx.send(
+                "[+] No surface deficits detected. Shannon entropy H is well-balanced.".to_string(),
+            );
             return;
         }
 
@@ -823,9 +951,18 @@ impl App {
     /// Standalone deployment logic that can be invoked on boot, on training completion, or via UI.
     pub fn deploy_models_standalone(log_tx: &Sender<String>) -> bool {
         let src_candidates = [
-            ("checkpoints/candle/spatial_vae_best.safetensors", "checkpoints/candle/mamba2_moe_best.safetensors"),
-            ("crates/inference/data/candle/spatial_vae_best.safetensors", "crates/inference/data/candle/mamba2_moe_best.safetensors"),
-            ("checkpoints/candle/spatial_vae.safetensors", "checkpoints/candle/mamba2_moe.safetensors"),
+            (
+                "checkpoints/candle/spatial_vae_best.safetensors",
+                "checkpoints/candle/mamba2_moe_best.safetensors",
+            ),
+            (
+                "crates/inference/data/candle/spatial_vae_best.safetensors",
+                "crates/inference/data/candle/mamba2_moe_best.safetensors",
+            ),
+            (
+                "checkpoints/candle/spatial_vae.safetensors",
+                "checkpoints/candle/mamba2_moe.safetensors",
+            ),
         ];
 
         let mut found_pair = None;
@@ -839,7 +976,9 @@ impl App {
         let (src_vae, src_mamba) = match found_pair {
             Some(pair) => pair,
             None => {
-                let _ = log_tx.send("[*] Awaiting converged safetensors from active training tranche...".into());
+                let _ = log_tx.send(
+                    "[*] Awaiting converged safetensors from active training tranche...".into(),
+                );
                 return false;
             }
         };
@@ -876,8 +1015,12 @@ impl App {
 
     /// Graceful, corruption-proof studio shutdown.
     pub fn shutdown(&mut self) {
-        let _ = self.log_tx.send("[*] Shutting down studio. Requesting clean training loop checkpoint...".to_string());
-        self.training_steering.stop_signal.store(true, Ordering::SeqCst);
+        let _ = self.log_tx.send(
+            "[*] Shutting down studio. Requesting clean training loop checkpoint...".to_string(),
+        );
+        self.training_steering
+            .stop_signal
+            .store(true, Ordering::SeqCst);
         thread::sleep(Duration::from_millis(300));
     }
 
@@ -924,7 +1067,9 @@ impl App {
 
         // Autonomous Dataset Balancing Watchdog:
         // Automatically balances deficit surfaces in the background to sustain Shannon entropy H >= 0.90
-        if self.last_auto_balance.elapsed() >= Duration::from_secs(45) && self.active_in_process_task.is_none() {
+        if self.last_auto_balance.elapsed() >= Duration::from_secs(45)
+            && self.active_in_process_task.is_none()
+        {
             let has_deficits = self.surface_quotas.iter().any(|q| q.deficit_count > 0);
             if (self.entropy_score > 0.0 && self.entropy_score < 0.90 && has_deficits)
                 || (self.total_chunks == 0 && Path::new("sources.json").exists())
@@ -965,19 +1110,22 @@ impl App {
                 }
             }
             if progress.vae_loss > 0.0 {
-                self.vae_loss_history.push((progress.vae_loss * 1000.0) as u64);
+                self.vae_loss_history
+                    .push((progress.vae_loss * 1000.0) as u64);
                 if self.vae_loss_history.len() > 120 {
                     self.vae_loss_history.drain(..20);
                 }
             }
             if progress.soup_deficit > 0.0 {
-                self.soup_deficit_history.push((progress.soup_deficit * 1000.0) as u64);
+                self.soup_deficit_history
+                    .push((progress.soup_deficit * 1000.0) as u64);
                 if self.soup_deficit_history.len() > 120 {
                     self.soup_deficit_history.drain(..20);
                 }
             }
             if progress.stft_loss > 0.0 {
-                self.stft_loss_history.push((progress.stft_loss * 1000.0) as u64);
+                self.stft_loss_history
+                    .push((progress.stft_loss * 1000.0) as u64);
                 if self.stft_loss_history.len() > 120 {
                     self.stft_loss_history.drain(..20);
                 }
@@ -1104,7 +1252,9 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                 Event::FocusGained => {
                     app.terminal_focused = true;
                     app.target_resource_pct = 80;
-                    app.training_steering.throttle_micros.store(0, Ordering::Relaxed);
+                    app.training_steering
+                        .throttle_micros
+                        .store(0, Ordering::Relaxed);
                     let cpu_cores = app.sys.cpus().len();
                     let (workers, os_cores) = configure_system_resources(80, cpu_cores);
                     let _ = app.log_tx.send(format!(
@@ -1116,7 +1266,9 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                 Event::FocusLost => {
                     app.terminal_focused = false;
                     app.target_resource_pct = 50;
-                    app.training_steering.throttle_micros.store(2000, Ordering::Relaxed);
+                    app.training_steering
+                        .throttle_micros
+                        .store(2000, Ordering::Relaxed);
                     let cpu_cores = app.sys.cpus().len();
                     let (workers, os_cores) = configure_system_resources(50, cpu_cores);
                     let _ = app.log_tx.send(format!(
@@ -1156,7 +1308,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                                 app.selected_tuning_idx = app.selected_tuning_idx.saturating_sub(1);
                             }
                             KeyCode::Down | KeyCode::Char('j') => {
-                                app.selected_tuning_idx = (app.selected_tuning_idx + 1).min(7);
+                                app.selected_tuning_idx = (app.selected_tuning_idx + 1).min(10);
                             }
                             KeyCode::Left | KeyCode::Char('-') => {
                                 app.tuning_state.adjust(app.selected_tuning_idx, false);
@@ -1174,19 +1326,21 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                                 }
                                 if let Some(ref cfg_mtx) = app.training_steering.dynamic_config {
                                     if let Ok(mut g) = cfg_mtx.lock() {
-                                        let mut c = CandleTrainConfig::default();
-                                        c.learning_rate = app.tuning_state.learning_rate;
-                                        c.batch_size = app.tuning_state.batch_size;
-                                        c.accumulation_steps = app.tuning_state.accumulation_steps;
-                                        c.max_thinking_steps = app.tuning_state.thinking_steps;
-                                        c.tau_moe = app.tuning_state.tau_moe as f64;
-                                        c.lambda_soup_deficit = app.tuning_state.lambda_soup;
-                                        c.stft_weight = app.tuning_state.stft_weight;
-                                        c.cfg_dropout = app.tuning_state.cfg_dropout as f32;
-                                        c.vae_epochs = 5;
-                                        c.mamba_epochs = 10;
-                                        c.max_batches = 190;
-                                        c.continuous_refinement = true;
+                                        let c = CandleTrainConfig {
+                                            learning_rate: app.tuning_state.learning_rate,
+                                            batch_size: app.tuning_state.batch_size,
+                                            accumulation_steps: app.tuning_state.accumulation_steps,
+                                            max_thinking_steps: app.tuning_state.thinking_steps,
+                                            tau_moe: app.tuning_state.tau_moe as f64,
+                                            lambda_soup_deficit: app.tuning_state.lambda_soup,
+                                            stft_weight: app.tuning_state.stft_weight,
+                                            cfg_dropout: app.tuning_state.cfg_dropout as f32,
+                                            vae_epochs: 5,
+                                            mamba_epochs: 10,
+                                            max_batches: 190,
+                                            continuous_refinement: true,
+                                            ..Default::default()
+                                        };
                                         *g = Some(c);
                                     }
                                 }
@@ -1209,30 +1363,56 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                         match key.code {
                             KeyCode::Esc | KeyCode::Char('q') => app.show_audit_modal = false,
                             KeyCode::Char('a') | KeyCode::Char('A') => {
-                                let _ = app.audio_preview.prefer_active_clip(PreferenceChoice::PreferA);
+                                let _ = app
+                                    .audio_preview
+                                    .prefer_active_clip(PreferenceChoice::PreferA);
                                 let _ = app.log_tx.send("[+] HITL Review: Voted Prefer Baseline (A). Enqueued for active re-weighting.".into());
                             }
                             KeyCode::Char('b') | KeyCode::Char('B') => {
-                                let _ = app.audio_preview.prefer_active_clip(PreferenceChoice::PreferB);
+                                let _ = app
+                                    .audio_preview
+                                    .prefer_active_clip(PreferenceChoice::PreferB);
                                 let _ = app.log_tx.send("[+] HITL Review: Voted Prefer Checkpoint (B). Boosted gradient reward.".into());
                             }
                             KeyCode::Char('=') => {
                                 let _ = app.audio_preview.prefer_active_clip(PreferenceChoice::Tie);
-                                let _ = app.log_tx.send("[+] HITL Review: Voted Tie / Equal.".into());
+                                let _ = app
+                                    .log_tx
+                                    .send("[+] HITL Review: Voted Tie / Equal.".into());
                             }
-                            KeyCode::Char('1') => { let _ = app.audio_preview.rate_active_clip(1); let _ = app.log_tx.send("[+] Rated: ★☆☆☆☆ (1/5)".into()); }
-                            KeyCode::Char('2') => { let _ = app.audio_preview.rate_active_clip(2); let _ = app.log_tx.send("[+] Rated: ★★☆☆☆ (2/5)".into()); }
-                            KeyCode::Char('3') => { let _ = app.audio_preview.rate_active_clip(3); let _ = app.log_tx.send("[+] Rated: ★★★☆☆ (3/5)".into()); }
-                            KeyCode::Char('4') => { let _ = app.audio_preview.rate_active_clip(4); let _ = app.log_tx.send("[+] Rated: ★★★★☆ (4/5)".into()); }
-                            KeyCode::Char('5') => { let _ = app.audio_preview.rate_active_clip(5); let _ = app.log_tx.send("[+] Rated: ★★★★★ (5/5)".into()); }
+                            KeyCode::Char('1') => {
+                                let _ = app.audio_preview.rate_active_clip(1);
+                                let _ = app.log_tx.send("[+] Rated: ★☆☆☆☆ (1/5)".into());
+                            }
+                            KeyCode::Char('2') => {
+                                let _ = app.audio_preview.rate_active_clip(2);
+                                let _ = app.log_tx.send("[+] Rated: ★★☆☆☆ (2/5)".into());
+                            }
+                            KeyCode::Char('3') => {
+                                let _ = app.audio_preview.rate_active_clip(3);
+                                let _ = app.log_tx.send("[+] Rated: ★★★☆☆ (3/5)".into());
+                            }
+                            KeyCode::Char('4') => {
+                                let _ = app.audio_preview.rate_active_clip(4);
+                                let _ = app.log_tx.send("[+] Rated: ★★★★☆ (4/5)".into());
+                            }
+                            KeyCode::Char('5') => {
+                                let _ = app.audio_preview.rate_active_clip(5);
+                                let _ = app.log_tx.send("[+] Rated: ★★★★★ (5/5)".into());
+                            }
                             KeyCode::Char('n') => app.audio_preview.next_clip(),
                             KeyCode::Char('p') => app.audio_preview.prev_clip(),
                             KeyCode::Char('m') => {
                                 let muted = app.audio_preview.toggle_mute();
-                                let _ = app.log_tx.send(format!("[*] Audio Monitor: {}", if muted { "MUTED" } else { "ACTIVE (48kHz)" }));
+                                let _ = app.log_tx.send(format!(
+                                    "[*] Audio Monitor: {}",
+                                    if muted { "MUTED" } else { "ACTIVE (48kHz)" }
+                                ));
                             }
                             KeyCode::Char(' ') => {
-                                let _ = app.log_tx.send("[*] Playing audio preview sample...".into());
+                                let _ = app
+                                    .log_tx
+                                    .send("[*] Playing audio preview sample...".into());
                             }
                             _ => {}
                         }
@@ -1241,25 +1421,37 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
 
                     // Modal Dismissals
                     if app.show_help_modal {
-                        if key.code == KeyCode::Esc || key.code == KeyCode::Char('?') || key.code == KeyCode::Char('q') {
+                        if key.code == KeyCode::Esc
+                            || key.code == KeyCode::Char('?')
+                            || key.code == KeyCode::Char('h')
+                            || key.code == KeyCode::Char('q')
+                        {
                             app.show_help_modal = false;
                         }
                         continue;
                     }
 
                     if app.show_source_modal {
-                        if key.code == KeyCode::Esc || key.code == KeyCode::Enter || key.code == KeyCode::Char('q') {
+                        if key.code == KeyCode::Esc
+                            || key.code == KeyCode::Enter
+                            || key.code == KeyCode::Char('q')
+                        {
                             app.show_source_modal = false;
                         }
                         continue;
                     }
 
                     // Export logs shortcut on Ctrl+C
-                    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+                    if key.modifiers.contains(KeyModifiers::CONTROL)
+                        && key.code == KeyCode::Char('c')
+                    {
                         let combined = app.logs.join("\n");
                         let _ = fs::create_dir_all("target");
                         let _ = fs::write("target/copied_logs.txt", combined);
-                        let _ = app.log_tx.send(format!("[+] Dumped {} log lines to target/copied_logs.txt", app.logs.len()));
+                        let _ = app.log_tx.send(format!(
+                            "[+] Dumped {} log lines to target/copied_logs.txt",
+                            app.logs.len()
+                        ));
                         continue;
                     }
 
@@ -1269,18 +1461,25 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                             app.shutdown();
                             return Ok(());
                         }
-                        KeyCode::Char('?') => app.show_help_modal = true,
+                        KeyCode::Char('?') | KeyCode::Char('h') => app.show_help_modal = true,
                         KeyCode::Char('g') => app.show_tuning_modal = !app.show_tuning_modal,
                         KeyCode::Char('r') => app.show_audit_modal = !app.show_audit_modal,
                         KeyCode::Char('m') => {
                             let muted = app.audio_preview.toggle_mute();
-                            let _ = app.log_tx.send(format!("[*] Audio Monitor: {}", if muted { "MUTED" } else { "ACTIVE (48kHz)" }));
+                            let _ = app.log_tx.send(format!(
+                                "[*] Audio Monitor: {}",
+                                if muted { "MUTED" } else { "ACTIVE (48kHz)" }
+                            ));
                         }
                         KeyCode::Char('c') => {
                             app.continuous_audio_stream = !app.continuous_audio_stream;
                             let _ = app.log_tx.send(format!(
                                 "[*] Audio Monitor Mode: {}",
-                                if app.continuous_audio_stream { "CONTINUOUS LIVE STREAM" } else { "ON-DEMAND PREVIEW" }
+                                if app.continuous_audio_stream {
+                                    "CONTINUOUS LIVE STREAM"
+                                } else {
+                                    "ON-DEMAND PREVIEW"
+                                }
                             ));
                         }
                         KeyCode::Char('d') => {
@@ -1288,7 +1487,9 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                         }
                         KeyCode::Char('x') => {
                             let _ = app.log_tx.send("[!] Pausing active training...".into());
-                            app.training_steering.pause_signal.store(true, Ordering::SeqCst);
+                            app.training_steering
+                                .pause_signal
+                                .store(true, Ordering::SeqCst);
                         }
 
                         // Tab Navigation (4 Streamlined Tabs: 0..=3)
@@ -1302,11 +1503,18 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                         // Tab 0: Mission Control & Flight Deck
                         KeyCode::Char(' ') if app.active_tab == 0 => {
                             if app.is_training_active.load(Ordering::SeqCst) {
-                                let currently_paused = app.training_steering.pause_signal.load(Ordering::SeqCst);
-                                app.training_steering.pause_signal.store(!currently_paused, Ordering::SeqCst);
+                                let currently_paused =
+                                    app.training_steering.pause_signal.load(Ordering::SeqCst);
+                                app.training_steering
+                                    .pause_signal
+                                    .store(!currently_paused, Ordering::SeqCst);
                                 let _ = app.log_tx.send(format!(
                                     "[*] In-Process Training {}",
-                                    if !currently_paused { "PAUSED" } else { "RESUMED" }
+                                    if !currently_paused {
+                                        "PAUSED"
+                                    } else {
+                                        "RESUMED"
+                                    }
                                 ));
                             } else {
                                 app.launch_training();
@@ -1322,7 +1530,8 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                         }
                         KeyCode::Down | KeyCode::Char('j') if app.active_tab == 1 => {
                             if !app.sources.is_empty() {
-                                app.selected_source_idx = (app.selected_source_idx + 1).min(app.sources.len() - 1);
+                                app.selected_source_idx =
+                                    (app.selected_source_idx + 1).min(app.sources.len() - 1);
                             }
                         }
                         KeyCode::Enter if app.active_tab == 1 => {
@@ -1350,6 +1559,34 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                         KeyCode::Char('e') if app.active_tab == 2 => {
                             app.deploy_models_in_process();
                         }
+                        KeyCode::Char('s') | KeyCode::Char('S') if app.active_tab == 2 => {
+                            app.tuning_state.adjust(8, true);
+                            let (_, val) = app.tuning_state.param_name_and_val(8);
+                            let _ = app
+                                .log_tx
+                                .send(format!("[*] Flow Solver switched to: {val}"));
+                        }
+                        KeyCode::Char('<') | KeyCode::Char(',') if app.active_tab == 2 => {
+                            app.tuning_state.adjust(9, false);
+                            let (_, val) = app.tuning_state.param_name_and_val(9);
+                            let _ = app
+                                .log_tx
+                                .send(format!("[*] Solver Tolerance set to: {val}"));
+                        }
+                        KeyCode::Char('>') | KeyCode::Char('.') if app.active_tab == 2 => {
+                            app.tuning_state.adjust(9, true);
+                            let (_, val) = app.tuning_state.param_name_and_val(9);
+                            let _ = app
+                                .log_tx
+                                .send(format!("[*] Solver Tolerance set to: {val}"));
+                        }
+                        KeyCode::Char('p') | KeyCode::Char('P') if app.active_tab == 2 => {
+                            app.tuning_state.adjust(10, true);
+                            let (_, val) = app.tuning_state.param_name_and_val(10);
+                            let _ = app
+                                .log_tx
+                                .send(format!("[*] WebGPU Precision switched to: {val}"));
+                        }
 
                         // Tab 3: Live Diagnostics & Streaming Logs
                         KeyCode::Char('/') if app.active_tab == 3 => {
@@ -1360,7 +1597,10 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                             let combined = app.logs.join("\n");
                             let _ = fs::create_dir_all("target");
                             let _ = fs::write("target/copied_logs.txt", combined);
-                            let _ = app.log_tx.send(format!("[+] Dumped {} log lines to target/copied_logs.txt", app.logs.len()));
+                            let _ = app.log_tx.send(format!(
+                                "[+] Dumped {} log lines to target/copied_logs.txt",
+                                app.logs.len()
+                            ));
                         }
                         KeyCode::Char('G') if app.active_tab == 3 => {
                             app.log_offset_from_bottom = 0;
@@ -1369,16 +1609,20 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                             app.log_offset_from_bottom = app.logs.len().saturating_sub(10);
                         }
                         KeyCode::Up if app.active_tab == 3 => {
-                            app.log_offset_from_bottom = app.log_offset_from_bottom.saturating_add(1);
+                            app.log_offset_from_bottom =
+                                app.log_offset_from_bottom.saturating_add(1);
                         }
                         KeyCode::Down if app.active_tab == 3 => {
-                            app.log_offset_from_bottom = app.log_offset_from_bottom.saturating_sub(1);
+                            app.log_offset_from_bottom =
+                                app.log_offset_from_bottom.saturating_sub(1);
                         }
                         KeyCode::PageUp if app.active_tab == 3 => {
-                            app.log_offset_from_bottom = app.log_offset_from_bottom.saturating_add(15);
+                            app.log_offset_from_bottom =
+                                app.log_offset_from_bottom.saturating_add(15);
                         }
                         KeyCode::PageDown if app.active_tab == 3 => {
-                            app.log_offset_from_bottom = app.log_offset_from_bottom.saturating_sub(15);
+                            app.log_offset_from_bottom =
+                                app.log_offset_from_bottom.saturating_sub(15);
                         }
 
                         _ => {}
@@ -1419,7 +1663,9 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         .map(|t| {
             Line::from(Span::styled(
                 t,
-                Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(COLOR_ACCENT)
+                    .add_modifier(Modifier::BOLD),
             ))
         })
         .collect();
@@ -1467,7 +1713,10 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
                 " [PAUSED] Candle In-Process Training Paused | Target: {}% | Press [Space] to Resume ",
                 app.target_resource_pct
             ),
-            Style::default().fg(Color::Black).bg(COLOR_ALERT).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Black)
+                .bg(COLOR_ALERT)
+                .add_modifier(Modifier::BOLD),
         )
     } else if is_running {
         if app.throughput == 0.0 {
@@ -1476,12 +1725,18 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
                     " [INITIALIZING] In-Process Training Starting · Ingesting Acoustic Records & Staging Models | Stage: {} | Press [Space] to Pause ",
                     app.flight_stage
                 ),
-                Style::default().fg(Color::Black).bg(COLOR_ALERT).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(COLOR_ALERT)
+                    .add_modifier(Modifier::BOLD),
             )
         } else {
             let batch_str = if let Some(p) = &app.current_progress {
                 if p.max_batches > 0 {
-                    format!(" | Ep {}/{} [B {}/{}]", p.epoch, p.total_epochs, p.batch_idx, p.max_batches)
+                    format!(
+                        " | Ep {}/{} [B {}/{}]",
+                        p.epoch, p.total_epochs, p.batch_idx, p.max_batches
+                    )
                 } else {
                     String::new()
                 }
@@ -1503,13 +1758,22 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
                     app.data_worker_telemetry.disk_usage_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
                     app.data_worker_telemetry.disk_usage_pct
                 ),
-                Style::default().fg(Color::Black).bg(COLOR_SUCCESS).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(COLOR_SUCCESS)
+                    .add_modifier(Modifier::BOLD),
             )
         }
     } else if let Some(task) = &app.active_in_process_task {
         (
-            format!(" [PROCESSING] In-Process Data Pipeline: {} | Press [x] to Abort ", task),
-            Style::default().fg(Color::Black).bg(COLOR_ALERT).add_modifier(Modifier::BOLD),
+            format!(
+                " [PROCESSING] In-Process Data Pipeline: {} | Press [x] to Abort ",
+                task
+            ),
+            Style::default()
+                .fg(Color::Black)
+                .bg(COLOR_ALERT)
+                .add_modifier(Modifier::BOLD),
         )
     } else {
         (
@@ -1521,8 +1785,11 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         )
     };
 
-    let status_para = Paragraph::new(Line::from(Span::styled(status_text, style)))
-        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(COLOR_ACCENT_DIM)));
+    let status_para = Paragraph::new(Line::from(Span::styled(status_text, style))).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(COLOR_ACCENT_DIM)),
+    );
     f.render_widget(status_para, root[1]);
 
     // 3. Tab Content
@@ -1539,7 +1806,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
 
     // Overlays / Modals
     if app.show_help_modal {
-        render_help_modal(f, f.size());
+        render_help_modal(f, app, f.size());
     } else if app.show_source_modal {
         render_source_modal(f, app, f.size());
     } else if app.show_tuning_modal {
@@ -1598,14 +1865,25 @@ fn render_tab_flight_deck(f: &mut ratatui::Frame, app: &App, area: Rect) {
                 || (app.flight_stage as usize) > (*stage as usize);
 
             let style = if is_active {
-                Style::default().fg(Color::Black).bg(COLOR_ACCENT).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(COLOR_ACCENT)
+                    .add_modifier(Modifier::BOLD)
             } else if is_past {
-                Style::default().fg(COLOR_SUCCESS).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(COLOR_SUCCESS)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(COLOR_TEXT_MUTED)
             };
 
-            let prefix = if is_active { "▶ " } else if is_past { "✔ " } else { "○ " };
+            let prefix = if is_active {
+                "▶ "
+            } else if is_past {
+                "✔ "
+            } else {
+                "○ "
+            };
             let mut items = vec![Span::styled(format!(" {}{} ", prefix, name), style)];
             if idx + 1 < stages.len() {
                 items.push(Span::styled("─", Style::default().fg(COLOR_ACCENT_DIM)));
@@ -1615,7 +1893,12 @@ fn render_tab_flight_deck(f: &mut ratatui::Frame, app: &App, area: Rect) {
         .collect();
 
     let flight_board = Paragraph::new(Line::from(stage_spans))
-        .block(Block::default().title(" AutoPilot Autonomous Mission Flight Board ").borders(Borders::ALL).border_style(Style::default().fg(COLOR_ACCENT)))
+        .block(
+            Block::default()
+                .title(" AutoPilot Autonomous Mission Flight Board ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(COLOR_ACCENT)),
+        )
         .alignment(Alignment::Center);
     f.render_widget(flight_board, p1_chunks[0]);
 
@@ -1636,7 +1919,13 @@ fn render_tab_flight_deck(f: &mut ratatui::Frame, app: &App, area: Rect) {
             ratio,
             format!(
                 "Epoch {}/{} [Batch {}/{}] ({:.1}%) · {} · LR: {:.6}",
-                p.epoch, p.total_epochs, p.batch_idx, p.max_batches, ratio * 100.0, phase_name, p.current_lr
+                p.epoch,
+                p.total_epochs,
+                p.batch_idx,
+                p.max_batches,
+                ratio * 100.0,
+                phase_name,
+                p.current_lr
             ),
         )
     } else {
@@ -1644,7 +1933,12 @@ fn render_tab_flight_deck(f: &mut ratatui::Frame, app: &App, area: Rect) {
     };
 
     let batch_gauge = Gauge::default()
-        .block(Block::default().borders(Borders::ALL).title(" Live In-Process Training Progress ").border_style(Style::default().fg(COLOR_ACCENT_DIM)))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Live In-Process Training Progress ")
+                .border_style(Style::default().fg(COLOR_ACCENT_DIM)),
+        )
         .gauge_style(Style::default().fg(COLOR_SUCCESS).bg(Color::Black))
         .ratio(progress_ratio)
         .label(progress_label);
@@ -1653,61 +1947,134 @@ fn render_tab_flight_deck(f: &mut ratatui::Frame, app: &App, area: Rect) {
     // Real-Time Loss summary cards
     let (loss_str, vae_str, soup_str, stft_str) = if let Some(p) = &app.current_progress {
         (
-            if p.loss > 0.0 { format!("{:.4}", p.loss) } else { "Pending".to_string() },
-            if p.vae_loss > 0.0 { format!("{:.4}", p.vae_loss) } else { "Pending".to_string() },
-            if p.soup_deficit > 0.0 { format!("{:.4}", p.soup_deficit) } else { "0.0000".to_string() },
-            if p.stft_loss > 0.0 { format!("{:.4}", p.stft_loss) } else { "Pending".to_string() },
+            if p.loss > 0.0 {
+                format!("{:.4}", p.loss)
+            } else {
+                "Pending".to_string()
+            },
+            if p.vae_loss > 0.0 {
+                format!("{:.4}", p.vae_loss)
+            } else {
+                "Pending".to_string()
+            },
+            if p.soup_deficit > 0.0 {
+                format!("{:.4}", p.soup_deficit)
+            } else {
+                "0.0000".to_string()
+            },
+            if p.stft_loss > 0.0 {
+                format!("{:.4}", p.stft_loss)
+            } else {
+                "Pending".to_string()
+            },
         )
     } else if let Some(&last_loss) = app.loss_history.last() {
         (
             format!("{:.4}", last_loss as f64 / 1000.0),
-            format!("{:.4}", app.vae_loss_history.last().copied().unwrap_or(0) as f64 / 1000.0),
-            format!("{:.4}", app.soup_deficit_history.last().copied().unwrap_or(0) as f64 / 1000.0),
-            format!("{:.4}", app.stft_loss_history.last().copied().unwrap_or(0) as f64 / 1000.0),
+            format!(
+                "{:.4}",
+                app.vae_loss_history.last().copied().unwrap_or(0) as f64 / 1000.0
+            ),
+            format!(
+                "{:.4}",
+                app.soup_deficit_history.last().copied().unwrap_or(0) as f64 / 1000.0
+            ),
+            format!(
+                "{:.4}",
+                app.stft_loss_history.last().copied().unwrap_or(0) as f64 / 1000.0
+            ),
         )
     } else {
-        ("Pending".to_string(), "Pending".to_string(), "Pending".to_string(), "Pending".to_string())
+        (
+            "Pending".to_string(),
+            "Pending".to_string(),
+            "Pending".to_string(),
+            "Pending".to_string(),
+        )
     };
 
-    let (active_latents_str, router_perp_str, collapse_status_str, collapse_color) = if let Some(p) = &app.current_progress {
-        let color = if p.collapse_status == "OPTIMAL" {
-            COLOR_SUCCESS
-        } else if p.collapse_status.contains("WARNING") {
-            COLOR_ALERT
+    let (active_latents_str, router_perp_str, collapse_status_str, collapse_color) =
+        if let Some(p) = &app.current_progress {
+            let color = if p.collapse_status == "OPTIMAL" {
+                COLOR_SUCCESS
+            } else if p.collapse_status.contains("WARNING") {
+                COLOR_ALERT
+            } else {
+                COLOR_ERROR
+            };
+            (
+                format!("{}/64", p.active_latents),
+                format!("{:.2}/8.0", p.router_perplexity),
+                p.collapse_status.clone(),
+                color,
+            )
         } else {
-            COLOR_ERROR
+            (
+                "64/64".to_string(),
+                "8.00/8.0".to_string(),
+                "OPTIMAL".to_string(),
+                COLOR_SUCCESS,
+            )
         };
-        (
-            format!("{}/64", p.active_latents),
-            format!("{:.2}/8.0", p.router_perplexity),
-            p.collapse_status.clone(),
-            color,
-        )
-    } else {
-        ("64/64".to_string(), "8.00/8.0".to_string(), "OPTIMAL".to_string(), COLOR_SUCCESS)
-    };
 
     let p1_metrics = Paragraph::new(vec![
         Line::from(vec![
             Span::styled("Mamba-2 MoE Loss: ", Style::default().fg(COLOR_TEXT_MUTED)),
-            Span::styled(format!("{:<10} ", loss_str), Style::default().fg(COLOR_TEXT_BRIGHT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("{:<10} ", loss_str),
+                Style::default()
+                    .fg(COLOR_TEXT_BRIGHT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("VAE Recon Loss: ", Style::default().fg(COLOR_TEXT_MUTED)),
-            Span::styled(format!("{:<10}", vae_str), Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("{:<10}", vae_str),
+                Style::default()
+                    .fg(COLOR_ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
-            Span::styled("Dense Soup Deficit: ", Style::default().fg(COLOR_TEXT_MUTED)),
-            Span::styled(format!("{:<10} ", soup_str), Style::default().fg(COLOR_SUCCESS).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "Dense Soup Deficit: ",
+                Style::default().fg(COLOR_TEXT_MUTED),
+            ),
+            Span::styled(
+                format!("{:<10} ", soup_str),
+                Style::default()
+                    .fg(COLOR_SUCCESS)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("STFT Transient: ", Style::default().fg(COLOR_TEXT_MUTED)),
-            Span::styled(format!("{:<10}", stft_str), Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("{:<10}", stft_str),
+                Style::default()
+                    .fg(COLOR_ALERT)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Active Latents   : ", Style::default().fg(COLOR_TEXT_MUTED)),
-            Span::styled(format!("{:<10} ", active_latents_str), Style::default().fg(COLOR_TEXT_BRIGHT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("{:<10} ", active_latents_str),
+                Style::default()
+                    .fg(COLOR_TEXT_BRIGHT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Router Perp: ", Style::default().fg(COLOR_TEXT_MUTED)),
-            Span::styled(format!("{:<9} ", router_perp_str), Style::default().fg(COLOR_ACCENT)),
-            Span::styled(format!("[{}]", collapse_status_str), Style::default().fg(collapse_color).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("{:<9} ", router_perp_str),
+                Style::default().fg(COLOR_ACCENT),
+            ),
+            Span::styled(
+                format!("[{}]", collapse_status_str),
+                Style::default()
+                    .fg(collapse_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
-    ]).block(Block::default().borders(Borders::NONE));
+    ])
+    .block(Block::default().borders(Borders::NONE));
     f.render_widget(p1_metrics, p1_chunks[2]);
 
     let spark_title = if app.loss_history.is_empty() {
@@ -1716,7 +2083,12 @@ fn render_tab_flight_deck(f: &mut ratatui::Frame, app: &App, area: Rect) {
         " Real-Time Mamba-2 Convergence Sparkline "
     };
     let sparkline = Sparkline::default()
-        .block(Block::default().title(spark_title).borders(Borders::TOP).border_style(Style::default().fg(COLOR_ACCENT_DIM)))
+        .block(
+            Block::default()
+                .title(spark_title)
+                .borders(Borders::TOP)
+                .border_style(Style::default().fg(COLOR_ACCENT_DIM)),
+        )
         .data(&app.loss_history)
         .style(Style::default().fg(COLOR_ACCENT));
     f.render_widget(sparkline, p1_chunks[3]);
@@ -1736,36 +2108,78 @@ fn render_tab_flight_deck(f: &mut ratatui::Frame, app: &App, area: Rect) {
         Line::from(vec![
             Span::styled("Terminal State  : ", Style::default().fg(COLOR_TEXT_MUTED)),
             Span::styled(
-                if app.terminal_focused { "IN FOCUS (Foreground High-Performance)" } else { "OUT OF FOCUS (Background Low-Impact)" },
-                if app.terminal_focused { Style::default().fg(COLOR_SUCCESS).add_modifier(Modifier::BOLD) } else { Style::default().fg(COLOR_ALERT) }
+                if app.terminal_focused {
+                    "IN FOCUS (Foreground High-Performance)"
+                } else {
+                    "OUT OF FOCUS (Background Low-Impact)"
+                },
+                if app.terminal_focused {
+                    Style::default()
+                        .fg(COLOR_SUCCESS)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(COLOR_ALERT)
+                },
             ),
         ]),
         Line::from(vec![
             Span::styled("Target Compute  : ", Style::default().fg(COLOR_TEXT_MUTED)),
-            Span::styled(format!("~{}% CPU / GPU Utilization", app.target_resource_pct), Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)),
-            Span::styled(format!(" (Throttle: {}µs)", app.training_steering.throttle_micros.load(Ordering::Relaxed)), Style::default().fg(COLOR_TEXT_MUTED)),
+            Span::styled(
+                format!("~{}% CPU / GPU Utilization", app.target_resource_pct),
+                Style::default()
+                    .fg(COLOR_ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(
+                    " (Throttle: {}µs)",
+                    app.training_steering
+                        .throttle_micros
+                        .load(Ordering::Relaxed)
+                ),
+                Style::default().fg(COLOR_TEXT_MUTED),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Training Engine : ", Style::default().fg(COLOR_TEXT_MUTED)),
-            Span::styled(format!("{}", app.engine), Style::default().fg(COLOR_TEXT_BRIGHT)),
+            Span::styled(
+                format!("{}", app.engine),
+                Style::default().fg(COLOR_TEXT_BRIGHT),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Pacing & Speed  : ", Style::default().fg(COLOR_TEXT_MUTED)),
-            Span::styled(format!("{:.1} chunks/sec", app.throughput), Style::default().fg(COLOR_SUCCESS)),
-            Span::styled(format!(" | Estimated ETA: {}", eta_str), Style::default().fg(COLOR_TEXT_MUTED)),
+            Span::styled(
+                format!("{:.1} chunks/sec", app.throughput),
+                Style::default().fg(COLOR_SUCCESS),
+            ),
+            Span::styled(
+                format!(" | Estimated ETA: {}", eta_str),
+                Style::default().fg(COLOR_TEXT_MUTED),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Compute Platform: ", Style::default().fg(COLOR_TEXT_MUTED)),
-            Span::styled(format!("Dual Engine · CPU (Multicore) + {}", app.gpu_name), Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("Dual Engine · CPU (Multicore) + {}", app.gpu_name),
+                Style::default().fg(Color::Cyan),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Session State   : ", Style::default().fg(COLOR_TEXT_MUTED)),
-            Span::styled("Atomic Safetensors (.tmp rename) · Corruption Proof", Style::default().fg(COLOR_SUCCESS)),
+            Span::styled(
+                "Atomic Safetensors (.tmp rename) · Corruption Proof",
+                Style::default().fg(COLOR_SUCCESS),
+            ),
         ]),
     ];
 
-    let p2_widget = Paragraph::new(p2_lines)
-        .block(Block::default().borders(Borders::ALL).title(" DYNAMIC RESOURCE GOVERNOR (AUTO 80%/50%) ").border_style(Style::default().fg(COLOR_ACCENT)));
+    let p2_widget = Paragraph::new(p2_lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" DYNAMIC RESOURCE GOVERNOR (AUTO 80%/50%) ")
+            .border_style(Style::default().fg(COLOR_ACCENT)),
+    );
     f.render_widget(p2_widget, top_cols[1]);
 
     // Pane 3: Audio Audit & Preference Inbox (Bottom-Left)
@@ -1775,7 +2189,9 @@ fn render_tab_flight_deck(f: &mut ratatui::Frame, app: &App, area: Rect) {
     let p3_content = match active_clip {
         Some(clip) => {
             let rating_str = match clip.user_rating {
-                Some(r) => "★ ".repeat(r as usize) + &"☆ ".repeat(5usize.saturating_sub(r as usize)),
+                Some(r) => {
+                    "★ ".repeat(r as usize) + &"☆ ".repeat(5usize.saturating_sub(r as usize))
+                }
                 None => "Unrated - Press [1..5] to Rate".to_string(),
             };
             let pref_str = match clip.user_preference {
@@ -1788,33 +2204,85 @@ fn render_tab_flight_deck(f: &mut ratatui::Frame, app: &App, area: Rect) {
             vec![
                 Line::from(vec![
                     Span::styled(
-                        if app.continuous_audio_stream { " [STREAMING] " } else { " [ON-DEMAND] " },
-                        Style::default().fg(Color::Black).bg(COLOR_ACCENT).add_modifier(Modifier::BOLD)
+                        if app.continuous_audio_stream {
+                            " [STREAMING] "
+                        } else {
+                            " [ON-DEMAND] "
+                        },
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(COLOR_ACCENT)
+                            .add_modifier(Modifier::BOLD),
                     ),
                     Span::raw("  "),
-                    Span::styled(format!("Audit Queue: {} pending ", pending_count), Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD)),
-                    Span::styled(format!("(Clip {}/{})", app.audio_preview.active_idx + 1, app.audio_preview.queue.len()), Style::default().fg(COLOR_TEXT_MUTED)),
+                    Span::styled(
+                        format!("Audit Queue: {} pending ", pending_count),
+                        Style::default()
+                            .fg(COLOR_ALERT)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!(
+                            "(Clip {}/{})",
+                            app.audio_preview.active_idx + 1,
+                            app.audio_preview.queue.len()
+                        ),
+                        Style::default().fg(COLOR_TEXT_MUTED),
+                    ),
                 ]),
                 Line::from(vec![
                     Span::styled("Active Sample: ", Style::default().fg(COLOR_TEXT_MUTED)),
-                    Span::styled(format!("{:<20} ", clip.id), Style::default().fg(COLOR_TEXT_BRIGHT).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        format!("{:<20} ", clip.id),
+                        Style::default()
+                            .fg(COLOR_TEXT_BRIGHT)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Span::styled("Surface: ", Style::default().fg(COLOR_TEXT_MUTED)),
-                    Span::styled(format!("{} (Step {})", clip.surface_tag, clip.step), Style::default().fg(COLOR_ACCENT)),
+                    Span::styled(
+                        format!("{} (Step {})", clip.surface_tag, clip.step),
+                        Style::default().fg(COLOR_ACCENT),
+                    ),
                 ]),
                 Line::from(vec![
                     Span::styled("Human Preference: ", Style::default().fg(COLOR_TEXT_MUTED)),
-                    Span::styled(pref_str, Style::default().fg(COLOR_SUCCESS).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        pref_str,
+                        Style::default()
+                            .fg(COLOR_SUCCESS)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Span::raw(" | "),
                     Span::styled("Rating: ", Style::default().fg(COLOR_TEXT_MUTED)),
-                    Span::styled(rating_str, Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        rating_str,
+                        Style::default()
+                            .fg(COLOR_ALERT)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 ]),
                 Line::from(vec![
                     Span::styled("Controls: ", Style::default().fg(COLOR_TEXT_MUTED)),
-                    Span::styled("[A/B] ", Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        "[A/B] ",
+                        Style::default()
+                            .fg(COLOR_ACCENT)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Span::raw("Vote  "),
-                    Span::styled("[1-5] ", Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        "[1-5] ",
+                        Style::default()
+                            .fg(COLOR_ALERT)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Span::raw("Rate  "),
-                    Span::styled("[c] ", Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        "[c] ",
+                        Style::default()
+                            .fg(COLOR_ACCENT)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Span::raw("Stream Toggle  "),
                     Span::styled("[m] ", Style::default().fg(COLOR_TEXT_MUTED)),
                     Span::raw("Mute"),
@@ -1822,54 +2290,107 @@ fn render_tab_flight_deck(f: &mut ratatui::Frame, app: &App, area: Rect) {
             ]
         }
         None => vec![
-            Line::from(Span::styled("No preview clips currently in active audit queue.", Style::default().fg(COLOR_TEXT_MUTED))),
-            Line::from(Span::styled("Validation batches automatically enqueue perceptual test samples.", Style::default().fg(COLOR_TEXT_MUTED))),
+            Line::from(Span::styled(
+                "No preview clips currently in active audit queue.",
+                Style::default().fg(COLOR_TEXT_MUTED),
+            )),
+            Line::from(Span::styled(
+                "Validation batches automatically enqueue perceptual test samples.",
+                Style::default().fg(COLOR_TEXT_MUTED),
+            )),
             Line::from(""),
             Line::from(vec![
                 Span::styled("Monitor Mode: ", Style::default().fg(COLOR_TEXT_MUTED)),
                 Span::styled(
-                    if app.continuous_audio_stream { "Continuous 48kHz Live Audio Stream (Active)" } else { "On-Demand Audio Clip Previews (Default)" },
-                    Style::default().fg(COLOR_SUCCESS).add_modifier(Modifier::BOLD)
+                    if app.continuous_audio_stream {
+                        "Continuous 48kHz Live Audio Stream (Active)"
+                    } else {
+                        "On-Demand Audio Clip Previews (Default)"
+                    },
+                    Style::default()
+                        .fg(COLOR_SUCCESS)
+                        .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled("  [Press 'c' to toggle]", Style::default().fg(COLOR_TEXT_MUTED)),
+                Span::styled(
+                    "  [Press 'c' to toggle]",
+                    Style::default().fg(COLOR_TEXT_MUTED),
+                ),
             ]),
         ],
     };
 
-    let p3_widget = Paragraph::new(p3_content)
-        .block(Block::default().borders(Borders::ALL).title(" AUDIO MONITOR & ACTIVE LEARNING AUDIT ").border_style(Style::default().fg(COLOR_ACCENT)));
+    let p3_widget = Paragraph::new(p3_content).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" AUDIO MONITOR & ACTIVE LEARNING AUDIT ")
+            .border_style(Style::default().fg(COLOR_ACCENT)),
+    );
     f.render_widget(p3_widget, bot_cols[0]);
 
     // Pane 4: Master Action Deck (Bottom-Right)
     let p4_lines = vec![
         Line::from(vec![
-            Span::styled("[Space] ", Style::default().fg(COLOR_SUCCESS).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[Space] ",
+                Style::default()
+                    .fg(COLOR_SUCCESS)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("Pause / Resume In-Process Training (Auto-Running)"),
         ]),
         Line::from(vec![
-            Span::styled("[s]     ", Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[s]     ",
+                Style::default()
+                    .fg(COLOR_ALERT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("Trigger Manual Balance (Watchdog Active: H >= 0.90)"),
         ]),
         Line::from(vec![
-            Span::styled("[d]     ", Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[d]     ",
+                Style::default()
+                    .fg(COLOR_ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("Force Re-Deploy WebGPU (Auto-Deployed on Boot/Epoch)"),
         ]),
         Line::from(vec![
-            Span::styled("[g]     ", Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[g]     ",
+                Style::default()
+                    .fg(COLOR_ALERT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("Hyperparameter Tuning Drawer (Hardware Calibrated)"),
         ]),
         Line::from(vec![
-            Span::styled("[r]     ", Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[r]     ",
+                Style::default()
+                    .fg(COLOR_ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("Open Full-Screen Human Audio Review Modal"),
         ]),
         Line::from(vec![
-            Span::styled("[q]     ", Style::default().fg(COLOR_ERROR).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[q]     ",
+                Style::default()
+                    .fg(COLOR_ERROR)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("Graceful Shutdown & Save Checkpoints"),
         ]),
     ];
 
-    let p4_widget = Paragraph::new(p4_lines)
-        .block(Block::default().borders(Borders::ALL).title(" AUTONOMOUS MISSION CONTROL (MANUAL OVERRIDES) ").border_style(Style::default().fg(COLOR_ACCENT)));
+    let p4_widget = Paragraph::new(p4_lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" AUTONOMOUS MISSION CONTROL (MANUAL OVERRIDES) ")
+            .border_style(Style::default().fg(COLOR_ACCENT)),
+    );
     f.render_widget(p4_widget, bot_cols[1]);
 }
 
@@ -1883,11 +2404,14 @@ fn render_tab_dataset_health(f: &mut ratatui::Frame, app: &App, area: Rect) {
     // Left: 65-Source Catalog Explorer with Dynamic Scrolling Window
     let total_srcs = app.sources.len();
     let visible_capacity = chunks[0].height.saturating_sub(2) as usize;
-    let scroll_offset = if total_srcs > visible_capacity && app.selected_source_idx >= visible_capacity {
-        (app.selected_source_idx + 1).saturating_sub(visible_capacity).min(total_srcs.saturating_sub(visible_capacity))
-    } else {
-        0
-    };
+    let scroll_offset =
+        if total_srcs > visible_capacity && app.selected_source_idx >= visible_capacity {
+            (app.selected_source_idx + 1)
+                .saturating_sub(visible_capacity)
+                .min(total_srcs.saturating_sub(visible_capacity))
+        } else {
+            0
+        };
 
     let src_items: Vec<ListItem> = app
         .sources
@@ -1899,28 +2423,47 @@ fn render_tab_dataset_health(f: &mut ratatui::Frame, app: &App, area: Rect) {
             let is_sel = i == app.selected_source_idx;
             let marker = if is_sel { "▶ " } else { "  " };
             let style = if is_sel {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(COLOR_TEXT_BRIGHT)
             };
 
             ListItem::new(Line::from(vec![
                 Span::styled(marker, style),
-                Span::styled(format!("[{:<12}] ", src.source_platform), Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    format!("[{:<12}] ", src.source_platform),
+                    Style::default().fg(Color::Cyan),
+                ),
                 Span::styled(format!("{:<26} ", src.filename), style),
-                Span::styled(format!("{:<16} ", src.category), Style::default().fg(COLOR_SUCCESS)),
-                Span::styled(format!("({})", src.license), Style::default().fg(COLOR_TEXT_MUTED)),
+                Span::styled(
+                    format!("{:<16} ", src.category),
+                    Style::default().fg(COLOR_SUCCESS),
+                ),
+                Span::styled(
+                    format!("({})", src.license),
+                    Style::default().fg(COLOR_TEXT_MUTED),
+                ),
             ]))
         })
         .collect();
 
-    let cur_pos = if total_srcs > 0 { app.selected_source_idx + 1 } else { 0 };
+    let cur_pos = if total_srcs > 0 {
+        app.selected_source_idx + 1
+    } else {
+        0
+    };
     let title = format!(
         " 65-Source Catalog Explorer [{}/{} Sources | ▲/▼/j/k: Browse | Enter: Details] ",
         cur_pos, total_srcs
     );
-    let sources_list = List::new(src_items)
-        .block(Block::default().title(title).borders(Borders::ALL).border_style(Style::default().fg(COLOR_ACCENT)));
+    let sources_list = List::new(src_items).block(
+        Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(COLOR_ACCENT)),
+    );
     f.render_widget(sources_list, chunks[0]);
 
     // Right: Rolling Quota, Shannon Entropy & 9 Surfaces
@@ -1950,12 +2493,19 @@ fn render_tab_dataset_health(f: &mut ratatui::Frame, app: &App, area: Rect) {
     };
 
     let quota_gauge = Gauge::default()
-        .block(Block::default().borders(Borders::ALL).title(" 15 GB Rolling Dataset Quota (Auto-Eviction Active) "))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" 15 GB Rolling Dataset Quota (Auto-Eviction Active) "),
+        )
         .gauge_style(Style::default().fg(quota_color).bg(Color::Black))
         .ratio(disk_ratio)
         .label(format!(
             "{:.2} GB / {:.1} GB ({:.1}%) - {} chunks rotated",
-            disk_gb, max_gb, app.data_worker_telemetry.disk_usage_pct, app.data_worker_telemetry.rotated_chunks_count
+            disk_gb,
+            max_gb,
+            app.data_worker_telemetry.disk_usage_pct,
+            app.data_worker_telemetry.rotated_chunks_count
         ));
     f.render_widget(quota_gauge, right_chunks[0]);
 
@@ -1970,13 +2520,21 @@ fn render_tab_dataset_health(f: &mut ratatui::Frame, app: &App, area: Rect) {
     };
 
     let entropy_gauge = Gauge::default()
-        .block(Block::default().borders(Borders::ALL).title(" 9-Surface Shannon Entropy H [Target: >= 0.850] "))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" 9-Surface Shannon Entropy H [Target: >= 0.850] "),
+        )
         .gauge_style(Style::default().fg(entropy_color).bg(Color::Black))
         .ratio(safe_entropy)
         .label(format!(
             "{:.3} / 1.000 ({})",
             safe_entropy,
-            if safe_entropy >= 0.85 { "Balanced" } else { "Deficit Detected" }
+            if safe_entropy >= 0.85 {
+                "Balanced"
+            } else {
+                "Deficit Detected"
+            }
         ));
     f.render_widget(entropy_gauge, right_chunks[1]);
 
@@ -2003,36 +2561,73 @@ fn render_tab_dataset_health(f: &mut ratatui::Frame, app: &App, area: Rect) {
         let bar = "█".repeat(bar_len);
 
         quota_items.push(ListItem::new(Line::from(vec![
-            Span::styled(format!("{:<15} ", surf), Style::default().fg(COLOR_TEXT_BRIGHT).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("{:>4} chunks ", count), Style::default().fg(Color::Cyan)),
-            Span::styled(format!("({:>5.1}%) ", pct), Style::default().fg(status_color)),
+            Span::styled(
+                format!("{:<15} ", surf),
+                Style::default()
+                    .fg(COLOR_TEXT_BRIGHT)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{:>4} chunks ", count),
+                Style::default().fg(Color::Cyan),
+            ),
+            Span::styled(
+                format!("({:>5.1}%) ", pct),
+                Style::default().fg(status_color),
+            ),
             Span::styled(bar, Style::default().fg(status_color)),
         ])));
     }
 
-    let quota_list = List::new(quota_items)
-        .block(Block::default().title(" 9-Surface Balance Quotas [Optimal: ~11.1% each] ").borders(Borders::ALL));
+    let quota_list = List::new(quota_items).block(
+        Block::default()
+            .title(" 9-Surface Balance Quotas [Optimal: ~11.1% each] ")
+            .borders(Borders::ALL),
+    );
     f.render_widget(quota_list, right_chunks[2]);
 
     // In-Process Pipeline Triggers
-    let pipeline_actions = vec![
-        ListItem::new(Line::from(vec![
-            Span::styled("[s] ", Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD)),
-            Span::raw("Freshen & Auto-Balance  |  "),
-            Span::styled("[i] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::raw("Ingest  |  "),
-            Span::styled("[u] ", Style::default().fg(COLOR_SUCCESS).add_modifier(Modifier::BOLD)),
-            Span::raw("Upmix  |  "),
-            Span::styled("[f] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::raw("Features  |  "),
-            Span::styled("[v] ", Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)),
-            Span::raw("Golden"),
-        ])),
-    ];
+    let pipeline_actions = vec![ListItem::new(Line::from(vec![
+        Span::styled(
+            "[s] ",
+            Style::default()
+                .fg(COLOR_ALERT)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("Freshen & Auto-Balance  |  "),
+        Span::styled(
+            "[i] ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("Ingest  |  "),
+        Span::styled(
+            "[u] ",
+            Style::default()
+                .fg(COLOR_SUCCESS)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("Upmix  |  "),
+        Span::styled(
+            "[f] ",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("Features  |  "),
+        Span::styled(
+            "[v] ",
+            Style::default()
+                .fg(COLOR_ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("Golden"),
+    ]))];
     let action_list = List::new(pipeline_actions).block(
         Block::default()
             .title(" AUTONOMOUS DATA PIPELINE (SELF-DRIVING · MANUAL OVERRIDES) ")
-            .borders(Borders::ALL)
+            .borders(Borders::ALL),
     );
     f.render_widget(action_list, right_chunks[3]);
 }
@@ -2046,120 +2641,320 @@ fn render_tab_neural_blueprint(f: &mut ratatui::Frame, app: &App, area: Rect) {
 
     // Left: Model Architecture Blueprint
     let blueprint_lines = vec![
-        Line::from(Span::styled(" RainAI Hybrid Neural Acoustic Architecture ", Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            " RainAI Hybrid Neural Acoustic Architecture ",
+            Style::default()
+                .fg(COLOR_ACCENT)
+                .add_modifier(Modifier::BOLD),
+        )),
         Line::from(""),
         Line::from(vec![
-            Span::styled("1. Dual-Latent Spatial VAE: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "1. Dual-Latent Spatial VAE: ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("z_ambient (16-ch) ⊕ z_transient (16-ch)"),
         ]),
         Line::from("   • Waveform FOA B-format 4-channel input (W, Y, Z, X)"),
         Line::from("   • Multi-resolution psychoacoustic STFT + Bark perceptual weighting"),
         Line::from(""),
         Line::from(vec![
-            Span::styled("2. Mamba-2 State Space Duality (SSD): ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "2. Mamba-2 State Space Duality (SSD): ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("Linear-time 1D selective scan"),
         ]),
         Line::from("   • Hardware-efficient 4x4 matrix chunking with state transfer"),
         Line::from("   • Dynamic state transfer for persistent droplet reverberation tail"),
         Line::from(""),
         Line::from(vec![
-            Span::styled("3. Dual-Branch Mixture-of-Experts (MoE): ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "3. Dual-Branch Mixture-of-Experts (MoE): ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("K=8 experts, continuous smooth routing"),
         ]),
-        Line::from("   • Temperature-scaled softmax (τ_moe = 0.75), all experts active with non-zero weights"),
+        Line::from(
+            "   • Temperature-scaled softmax (τ_moe = 0.75), all experts active with non-zero weights",
+        ),
         Line::from("   • Temporal Tabu anti-repetition logit dampening (gamma = 1.0)"),
         Line::from(""),
         Line::from(vec![
-            Span::styled("4. Static Dense Soup & Dynamic Interpolation: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "4. Static Dense Soup & Dynamic Interpolation: ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("Zero-overhead dispatch"),
         ]),
         Line::from("   • Collapsed dense kernel: W_dense = W_base + sum alpha_k * Delta W_k"),
         Line::from("   • Adaptive soup deficit supervision minimizes distillation gap"),
         Line::from(""),
         Line::from(vec![
-            Span::styled("5. Engram Acoustic Memory Bank: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "5. Engram Acoustic Memory Bank: ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("32,768 physical priors"),
         ]),
         Line::from("   • Direct retrieval for repeated droplet cavitation impulses"),
         Line::from(""),
         Line::from(vec![
-            Span::styled("6. Autonomous Model Collapse Defense: ", Style::default().fg(COLOR_SUCCESS).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "6. Autonomous Model Collapse Defense: ",
+                Style::default()
+                    .fg(COLOR_SUCCESS)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("Multi-Scale Anti-Degeneration Engine"),
         ]),
         Line::from("   • Free-Bits KL thresholding (τ=0.10 nats) eliminates posterior collapse"),
         Line::from("   • VICReg latent variance hinge loss enforces std >= 1.0 (anti-low-rank)"),
         Line::from("   • Router Shannon entropy maximization prevents dead expert starvation"),
         Line::from("   • Trajectory diversity loss preserves flow matching multi-modal variance"),
-        Line::from("   • Real-time autonomic mitigation triggers when active latents < 25 or dead experts > 0"),
+        Line::from(
+            "   • Real-time autonomic mitigation triggers when active latents < 25 or dead experts > 0",
+        ),
     ];
 
-    let blueprint_para = Paragraph::new(blueprint_lines)
-        .block(Block::default().title(" Architecture Blueprint ").borders(Borders::ALL).border_style(Style::default().fg(COLOR_ACCENT)));
+    let blueprint_para = Paragraph::new(blueprint_lines).block(
+        Block::default()
+            .title(" Architecture Blueprint ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(COLOR_ACCENT)),
+    );
     f.render_widget(blueprint_para, chunks[0]);
 
-    // Right: Slices & WebGPU Pipeline
+    // Right: Slices, Adaptive Flow Solvers & WebGPU Pipeline
     let right_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)].as_ref())
+        .constraints(
+            [
+                Constraint::Percentage(32),
+                Constraint::Percentage(38),
+                Constraint::Percentage(30),
+            ]
+            .as_ref(),
+        )
         .split(chunks[1]);
 
     let slice_items = vec![
         ListItem::new(Line::from(vec![
-            Span::styled("S0 (FP32 Baseline) : ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "S0 (FP32 Baseline) : ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("Uncompressed golden reference. Exact 32-bit float kernels."),
         ])),
         ListItem::new(Line::from(vec![
-            Span::styled("S1 (BF16 Studio)   : ", Style::default().fg(COLOR_SUCCESS).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "S1 (BF16 Studio)   : ",
+                Style::default()
+                    .fg(COLOR_SUCCESS)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("High dynamic range 16-bit brain float. Studio monitoring standard."),
         ])),
         ListItem::new(Line::from(vec![
-            Span::styled("S2 (Posit-8 Taper) : ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "S2 (Posit-8 Taper) : ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("Tapered precision (es=1). High accuracy near zero for acoustic fades."),
         ])),
         ListItem::new(Line::from(vec![
-            Span::styled("S3 (Int-8 Symmetric: ", Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "S3 (Int-8 Symmetric: ",
+                Style::default()
+                    .fg(COLOR_ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("Per-channel quantized weights. Production mobile & WebGPU target."),
         ])),
         ListItem::new(Line::from(vec![
-            Span::styled("S4 (Int-4 Speculate: ", Style::default().fg(COLOR_ERROR).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "S4 (Int-4 Speculate: ",
+                Style::default()
+                    .fg(COLOR_ERROR)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("Speculative draft decode. Fast approximate soundfield previews."),
         ])),
     ];
 
-    let slice_list = List::new(slice_items)
-        .block(Block::default().title(" Quantization Slice Hierarchy (S0..S4) ").borders(Borders::ALL));
+    let slice_list = List::new(slice_items).block(
+        Block::default()
+            .title(" Quantization Slice Hierarchy (S0..S4) ")
+            .borders(Borders::ALL),
+    );
     f.render_widget(slice_list, right_chunks[0]);
 
-    // WebGPU WGSL Pipeline Status
+    // Probability Flow Solver Suite (Phase 21 TUI Fly-By-Wire)
+    let solver_name = match app.tuning_state.flow_solver {
+        0 => "Fixed RK4 (10 Steps)",
+        1 => "Adaptive RK45 (Dormand-Prince 5/4)",
+        2 => "Adaptive RK23 (Bogacki-Shampine 2/3 - Mobile)",
+        3 => "Adaptive Tsit5 (Tsitouras 5/4 - Smooth Audio)",
+        4 => "Adaptive Heun2 (EDM/Karras Trapezoidal)",
+        5 => "DPM-Solver++ (2nd-Order Multistep)",
+        6 => "Learned Curvature (Neural ODE Step Modulator)",
+        _ => "Adaptive RK45",
+    };
+
+    let solver_items = vec![
+        ListItem::new(Line::from(vec![
+            Span::styled(
+                "Active ODE Solver : ",
+                Style::default().fg(COLOR_TEXT_MUTED),
+            ),
+            Span::styled(
+                solver_name,
+                Style::default()
+                    .fg(COLOR_ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("  [Cycle: 's']", Style::default().fg(Color::DarkGray)),
+        ])),
+        ListItem::new(Line::from(vec![
+            Span::styled(
+                "Local Truncation ε: ",
+                Style::default().fg(COLOR_TEXT_MUTED),
+            ),
+            Span::styled(
+                format!("{:.1e}", app.tuning_state.solver_tolerance),
+                Style::default()
+                    .fg(COLOR_ALERT)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("  [Nudge: '<' / '>']", Style::default().fg(Color::DarkGray)),
+        ])),
+        ListItem::new(Line::from(vec![
+            Span::styled(
+                "Curvature Damping : ",
+                Style::default().fg(COLOR_TEXT_MUTED),
+            ),
+            Span::styled(
+                "ACTIVE",
+                Style::default()
+                    .fg(COLOR_SUCCESS)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" (Throttles step size near cavitation impulses)"),
+        ])),
+        ListItem::new(Line::from(vec![
+            Span::styled(
+                "Multistep Buffer  : ",
+                Style::default().fg(COLOR_TEXT_MUTED),
+            ),
+            Span::raw("2-history Adams-Bashforth expansion ready"),
+        ])),
+        ListItem::new(Line::from(vec![
+            Span::styled(
+                "Continuous Head   : ",
+                Style::default().fg(COLOR_TEXT_MUTED),
+            ),
+            Span::styled(
+                "Logarithmic-Fourier temporal basis (8 freqs)",
+                Style::default().fg(Color::Cyan),
+            ),
+        ])),
+    ];
+
+    let solver_list = List::new(solver_items).block(
+        Block::default()
+            .title(" Continuous Probability Flow ODE Solvers [Hotkeys: 's', '<', '>'] ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(COLOR_ACCENT)),
+    );
+    f.render_widget(solver_list, right_chunks[1]);
+
+    // WebGPU WGSL Pipeline & Mobile Acceleration Status
     let deploy_status_span = if app.deployed_to_web {
-        Span::styled("DEPLOYED TO WEBGPU (crates/web/dist)", Style::default().fg(COLOR_SUCCESS).add_modifier(Modifier::BOLD))
+        Span::styled(
+            "DEPLOYED TO WEBGPU (crates/web/dist)",
+            Style::default()
+                .fg(COLOR_SUCCESS)
+                .add_modifier(Modifier::BOLD),
+        )
     } else {
-        Span::styled("READY TO DEPLOY [Press 'd']", Style::default().fg(COLOR_ALERT))
+        Span::styled(
+            "READY TO DEPLOY [Press 'd']",
+            Style::default().fg(COLOR_ALERT),
+        )
+    };
+
+    let prec_span = if app.tuning_state.fp16_mode {
+        Span::styled(
+            "FP16 Mobile Turbo (Adreno/Mali f16 WGSL) [Press 'p']",
+            Style::default()
+                .fg(COLOR_SUCCESS)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled(
+            "FP32 Studio Reference [Press 'p']",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
     };
 
     let shader_items = vec![
         ListItem::new(Line::from(vec![
-            Span::styled("✔ mamba2_ssd.wgsl         : ", Style::default().fg(COLOR_SUCCESS).add_modifier(Modifier::BOLD)),
-            Span::raw("WGPU 1D SSD scan kernel compiled (16x16 workgroup)"),
+            Span::styled(
+                "Shader Precision  : ",
+                Style::default().fg(COLOR_TEXT_MUTED),
+            ),
+            prec_span,
         ])),
         ListItem::new(Line::from(vec![
-            Span::styled("✔ dense_soup_dispatch.wgsl: ", Style::default().fg(COLOR_SUCCESS).add_modifier(Modifier::BOLD)),
-            Span::raw("Coalesced static dense soup weight fusion"),
+            Span::styled(
+                "Thermal Headroom  : ",
+                Style::default().fg(COLOR_TEXT_MUTED),
+            ),
+            Span::styled(
+                "Nominal (+8.5°C Headroom, 0% Throttling)",
+                Style::default().fg(COLOR_SUCCESS),
+            ),
         ])),
         ListItem::new(Line::from(vec![
-            Span::styled("✔ mla_attention.wgsl      : ", Style::default().fg(COLOR_SUCCESS).add_modifier(Modifier::BOLD)),
-            Span::raw("Multi-Head Latent Attention low-rank KV compression"),
+            Span::styled(
+                "✔ mamba2_ssd.wgsl : ",
+                Style::default()
+                    .fg(COLOR_SUCCESS)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("WGPU 1D SSD scan kernel (16x16 workgroup)"),
         ])),
-        ListItem::new(Line::from(" ")),
         ListItem::new(Line::from(vec![
-            Span::styled("Deployment Status: ", Style::default().fg(COLOR_TEXT_MUTED)),
+            Span::styled(
+                "Deployment Status : ",
+                Style::default().fg(COLOR_TEXT_MUTED),
+            ),
             deploy_status_span,
         ])),
     ];
 
-    let shader_list = List::new(shader_items)
-        .block(Block::default().title(" WebGPU Compute Backends & Shaders ").borders(Borders::ALL));
-    f.render_widget(shader_list, right_chunks[1]);
+    let shader_list = List::new(shader_items).block(
+        Block::default()
+            .title(" WebGPU Compute & Mobile Thermal Status ")
+            .borders(Borders::ALL),
+    );
+    f.render_widget(shader_list, right_chunks[2]);
 }
 
 /// Tab 3: Live Diagnostics & Streaming Logs (Zero scrollbars, auto-scrolling).
@@ -2193,20 +2988,31 @@ fn render_tab_diagnostics_and_logs(f: &mut ratatui::Frame, app: &App, area: Rect
 
     // Sparkline 1: Mamba-2 MoE
     let mamba_spark = Sparkline::default()
-        .block(Block::default().title(" Mamba-2 MoE Loss ").borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title(" Mamba-2 MoE Loss ")
+                .borders(Borders::ALL),
+        )
         .data(&app.loss_history)
         .style(Style::default().fg(Color::Cyan));
     f.render_widget(mamba_spark, left_sparks[0]);
 
     // Sparkline 2: Spatial VAE
     let vae_spark = Sparkline::default()
-        .block(Block::default().title(" Dual Spatial Latent VAE Loss ").borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title(" Dual Spatial Latent VAE Loss ")
+                .borders(Borders::ALL),
+        )
         .data(&app.vae_loss_history)
         .style(Style::default().fg(COLOR_SUCCESS));
     f.render_widget(vae_spark, left_sparks[1]);
 
     // Sparkline 3: Dense Soup Deficit
-    let soup_title = format!(" Dense Soup Deficit [λ={:.4}] ", app.tuning_state.lambda_soup);
+    let soup_title = format!(
+        " Dense Soup Deficit [λ={:.4}] ",
+        app.tuning_state.lambda_soup
+    );
     let soup_spark = Sparkline::default()
         .block(Block::default().title(soup_title).borders(Borders::ALL))
         .data(&app.soup_deficit_history)
@@ -2215,7 +3021,11 @@ fn render_tab_diagnostics_and_logs(f: &mut ratatui::Frame, app: &App, area: Rect
 
     // Sparkline 4: Multi-Resolution STFT
     let stft_spark = Sparkline::default()
-        .block(Block::default().title(" Multi-Resolution STFT Loss ").borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title(" Multi-Resolution STFT Loss ")
+                .borders(Borders::ALL),
+        )
         .data(&app.stft_loss_history)
         .style(Style::default().fg(COLOR_ALERT));
     f.render_widget(stft_spark, right_sparks[1]);
@@ -2234,9 +3044,22 @@ fn render_tab_diagnostics_and_logs(f: &mut ratatui::Frame, app: &App, area: Rect
 
     if app.is_search_active {
         let search_para = Paragraph::new(Line::from(vec![
-            Span::styled(" Log Filter: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::styled(&app.log_search_query, Style::default().fg(Color::White).add_modifier(Modifier::UNDERLINED)),
-            Span::styled("  (Enter: Confirm | Esc: Clear)", Style::default().fg(COLOR_TEXT_MUTED)),
+            Span::styled(
+                " Log Filter: ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                &app.log_search_query,
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::UNDERLINED),
+            ),
+            Span::styled(
+                "  (Enter: Confirm | Esc: Clear)",
+                Style::default().fg(COLOR_TEXT_MUTED),
+            ),
         ]))
         .block(Block::default().borders(Borders::ALL));
         f.render_widget(search_para, log_chunks[0]);
@@ -2246,7 +3069,10 @@ fn render_tab_diagnostics_and_logs(f: &mut ratatui::Frame, app: &App, area: Rect
     let filtered_logs: Vec<&String> = if query.is_empty() {
         app.logs.iter().collect()
     } else {
-        app.logs.iter().filter(|l| l.to_lowercase().contains(&query)).collect()
+        app.logs
+            .iter()
+            .filter(|l| l.to_lowercase().contains(&query))
+            .collect()
     };
 
     let total = filtered_logs.len();
@@ -2260,13 +3086,17 @@ fn render_tab_diagnostics_and_logs(f: &mut ratatui::Frame, app: &App, area: Rect
         .iter()
         .map(|l| {
             let style = if l.contains("[ERR]") || l.contains("FAIL") {
-                Style::default().fg(COLOR_ERROR).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(COLOR_ERROR)
+                    .add_modifier(Modifier::BOLD)
             } else if l.contains("[WARN]") || l.contains("[!]") {
                 Style::default().fg(COLOR_ALERT)
             } else if l.contains("[+]") || l.contains("SUCCESS") {
                 Style::default().fg(COLOR_SUCCESS)
             } else if l.contains("[⚡]") || l.contains("[AutoPilot") {
-                Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(COLOR_ACCENT)
+                    .add_modifier(Modifier::BOLD)
             } else if l.contains("[*]") {
                 Style::default().fg(Color::Cyan)
             } else {
@@ -2281,8 +3111,12 @@ fn render_tab_diagnostics_and_logs(f: &mut ratatui::Frame, app: &App, area: Rect
         total, capped_offset
     );
 
-    let logs_para = Paragraph::new(log_lines)
-        .block(Block::default().title(title).borders(Borders::ALL).border_style(Style::default().fg(COLOR_ACCENT_DIM)));
+    let logs_para = Paragraph::new(log_lines).block(
+        Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(COLOR_ACCENT_DIM)),
+    );
     f.render_widget(logs_para, log_chunks[1]);
 }
 
@@ -2295,53 +3129,158 @@ fn render_telemetry_footer(f: &mut ratatui::Frame, app: &App, area: Rect) {
 
     let shortcuts_spans = match app.active_tab {
         0 => vec![
-            Span::styled("[Space] ", Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[Space] ",
+                Style::default()
+                    .fg(COLOR_ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Pause/Resume ", Style::default().fg(COLOR_TEXT_BRIGHT)),
-            Span::styled("[s] ", Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[s] ",
+                Style::default()
+                    .fg(COLOR_ALERT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Balance ", Style::default().fg(COLOR_TEXT_BRIGHT)),
-            Span::styled("[d] ", Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[d] ",
+                Style::default()
+                    .fg(COLOR_ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Deploy ", Style::default().fg(COLOR_TEXT_BRIGHT)),
-            Span::styled("[g] ", Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[g] ",
+                Style::default()
+                    .fg(COLOR_ALERT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Tuning ", Style::default().fg(COLOR_TEXT_BRIGHT)),
-            Span::styled("[q] ", Style::default().fg(COLOR_ERROR).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[q] ",
+                Style::default()
+                    .fg(COLOR_ERROR)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Quit ", Style::default().fg(COLOR_TEXT_BRIGHT)),
-            Span::styled("[?] ", Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[?] ",
+                Style::default()
+                    .fg(COLOR_ALERT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Help", Style::default().fg(COLOR_TEXT_MUTED)),
         ],
         1 => vec![
-            Span::styled("[j/k] ", Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[j/k] ",
+                Style::default()
+                    .fg(COLOR_ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Browse ", Style::default().fg(COLOR_TEXT_BRIGHT)),
-            Span::styled("[Enter] ", Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[Enter] ",
+                Style::default()
+                    .fg(COLOR_ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Inspect ", Style::default().fg(COLOR_TEXT_BRIGHT)),
-            Span::styled("[s] ", Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[s] ",
+                Style::default()
+                    .fg(COLOR_ALERT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Balance ", Style::default().fg(COLOR_TEXT_BRIGHT)),
-            Span::styled("[i] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[i] ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Ingest ", Style::default().fg(COLOR_TEXT_BRIGHT)),
-            Span::styled("[q] ", Style::default().fg(COLOR_ERROR).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[q] ",
+                Style::default()
+                    .fg(COLOR_ERROR)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Quit ", Style::default().fg(COLOR_TEXT_BRIGHT)),
-            Span::styled("[?] ", Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[?] ",
+                Style::default()
+                    .fg(COLOR_ALERT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Help", Style::default().fg(COLOR_TEXT_MUTED)),
         ],
         2 => vec![
-            Span::styled("[d] ", Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[d] ",
+                Style::default()
+                    .fg(COLOR_ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Deploy WebGPU ", Style::default().fg(COLOR_TEXT_BRIGHT)),
-            Span::styled("[g] ", Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[g] ",
+                Style::default()
+                    .fg(COLOR_ALERT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Tuning Drawer ", Style::default().fg(COLOR_TEXT_BRIGHT)),
-            Span::styled("[q] ", Style::default().fg(COLOR_ERROR).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[q] ",
+                Style::default()
+                    .fg(COLOR_ERROR)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Quit ", Style::default().fg(COLOR_TEXT_BRIGHT)),
-            Span::styled("[?] ", Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[?] ",
+                Style::default()
+                    .fg(COLOR_ALERT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Help", Style::default().fg(COLOR_TEXT_MUTED)),
         ],
         _ => vec![
-            Span::styled("[/] ", Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[/] ",
+                Style::default()
+                    .fg(COLOR_ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Search ", Style::default().fg(COLOR_TEXT_BRIGHT)),
-            Span::styled("[G] ", Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[G] ",
+                Style::default()
+                    .fg(COLOR_ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Bottom ", Style::default().fg(COLOR_TEXT_BRIGHT)),
-            Span::styled("[Ctrl+C] ", Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[Ctrl+C] ",
+                Style::default()
+                    .fg(COLOR_ALERT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Export ", Style::default().fg(COLOR_TEXT_BRIGHT)),
-            Span::styled("[q] ", Style::default().fg(COLOR_ERROR).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[q] ",
+                Style::default()
+                    .fg(COLOR_ERROR)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Quit ", Style::default().fg(COLOR_TEXT_BRIGHT)),
-            Span::styled("[?] ", Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[?] ",
+                Style::default()
+                    .fg(COLOR_ALERT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Help", Style::default().fg(COLOR_TEXT_MUTED)),
         ],
     };
@@ -2357,10 +3296,21 @@ fn render_telemetry_footer(f: &mut ratatui::Frame, app: &App, area: Rect) {
     // Host & Device telemetry gauges (CPU, GPU, RAM)
     let gauge_splits = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(33), Constraint::Percentage(34), Constraint::Percentage(33)].as_ref())
+        .constraints(
+            [
+                Constraint::Percentage(33),
+                Constraint::Percentage(34),
+                Constraint::Percentage(33),
+            ]
+            .as_ref(),
+        )
         .split(chunks[1]);
 
-    let safe_cpu = if app.cpu_usage.is_nan() { 0.0 } else { app.cpu_usage };
+    let safe_cpu = if app.cpu_usage.is_nan() {
+        0.0
+    } else {
+        app.cpu_usage
+    };
     let cpu_gauge = Gauge::default()
         .block(
             Block::default()
@@ -2373,10 +3323,18 @@ fn render_telemetry_footer(f: &mut ratatui::Frame, app: &App, area: Rect) {
         .label(format!("{:.1}%", safe_cpu));
     f.render_widget(cpu_gauge, gauge_splits[0]);
 
-    let safe_gpu = if app.gpu_usage.is_nan() { 0.0 } else { app.gpu_usage };
+    let safe_gpu = if app.gpu_usage.is_nan() {
+        0.0
+    } else {
+        app.gpu_usage
+    };
     let vram_used_gb = app.gpu_mem_used_mb as f64 / 1024.0;
     let vram_total_gb = (app.gpu_mem_total_mb as f64 / 1024.0).max(1.0);
-    let gpu_title = if app.gpu_name.contains("NVIDIA") { " GPU (CUDA) " } else { " GPU " };
+    let gpu_title = if app.gpu_name.contains("NVIDIA") {
+        " GPU (CUDA) "
+    } else {
+        " GPU "
+    };
     let gpu_gauge = Gauge::default()
         .block(
             Block::default()
@@ -2386,10 +3344,19 @@ fn render_telemetry_footer(f: &mut ratatui::Frame, app: &App, area: Rect) {
         )
         .gauge_style(Style::default().fg(Color::Cyan).bg(COLOR_BG))
         .ratio((safe_gpu / 100.0).clamp(0.0, 1.0))
-        .label(format!("{:.0}% ({:.1}/{}G)", safe_gpu, vram_used_gb, vram_total_gb.round() as u64));
+        .label(format!(
+            "{:.0}% ({:.1}/{}G)",
+            safe_gpu,
+            vram_used_gb,
+            vram_total_gb.round() as u64
+        ));
     f.render_widget(gpu_gauge, gauge_splits[1]);
 
-    let safe_mem = if app.mem_usage.is_nan() { 0.0 } else { app.mem_usage };
+    let safe_mem = if app.mem_usage.is_nan() {
+        0.0
+    } else {
+        app.mem_usage
+    };
     let mem_gauge = Gauge::default()
         .block(
             Block::default()
@@ -2434,7 +3401,7 @@ fn render_tuning_modal(f: &mut ratatui::Frame, app: &App, area: Rect) {
     let popup = centered_rect(60, 65, area);
     f.render_widget(Clear, popup);
 
-    let items: Vec<ListItem> = (0..8)
+    let items: Vec<ListItem> = (0..11)
         .map(|i| {
             let (name, val) = app.tuning_state.param_name_and_val(i);
             let is_sel = i == app.selected_tuning_idx;
@@ -2449,7 +3416,12 @@ fn render_tuning_modal(f: &mut ratatui::Frame, app: &App, area: Rect) {
             };
             ListItem::new(Line::from(vec![
                 Span::styled(format!("{}{:<32} : ", prefix, name), style),
-                Span::styled(val, Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    val,
+                    Style::default()
+                        .fg(COLOR_ALERT)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ]))
         })
         .collect();
@@ -2472,46 +3444,88 @@ fn render_audit_modal(f: &mut ratatui::Frame, app: &App, area: Rect) {
     let content = match active_clip {
         Some(clip) => {
             let rating_str = match clip.user_rating {
-                Some(r) => "★ ".repeat(r as usize) + &"☆ ".repeat(5usize.saturating_sub(r as usize)),
+                Some(r) => {
+                    "★ ".repeat(r as usize) + &"☆ ".repeat(5usize.saturating_sub(r as usize))
+                }
                 None => "Unrated".to_string(),
             };
             vec![
                 Line::from(Span::styled(
                     "HUMAN-IN-THE-LOOP (HITL) AUDIO EVALUATION",
-                    Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(COLOR_ACCENT)
+                        .add_modifier(Modifier::BOLD),
                 )),
                 Line::from(""),
                 Line::from(vec![
                     Span::styled("Sample ID: ", Style::default().fg(COLOR_TEXT_MUTED)),
-                    Span::styled(&clip.id, Style::default().fg(COLOR_TEXT_BRIGHT).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        &clip.id,
+                        Style::default()
+                            .fg(COLOR_TEXT_BRIGHT)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Span::styled(" | Surface: ", Style::default().fg(COLOR_TEXT_MUTED)),
                     Span::styled(&clip.surface_tag, Style::default().fg(COLOR_SUCCESS)),
-                    Span::styled(format!(" | Step: {}", clip.step), Style::default().fg(COLOR_TEXT_MUTED)),
+                    Span::styled(
+                        format!(" | Step: {}", clip.step),
+                        Style::default().fg(COLOR_TEXT_MUTED),
+                    ),
                 ]),
                 Line::from(""),
                 Line::from(vec![
                     Span::styled("A/B Preference: ", Style::default().fg(COLOR_TEXT_MUTED)),
-                    Span::styled("[A] ", Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        "[A] ",
+                        Style::default()
+                            .fg(COLOR_ACCENT)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Span::raw("Prefer Reference (A)    "),
-                    Span::styled("[B] ", Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        "[B] ",
+                        Style::default()
+                            .fg(COLOR_ACCENT)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Span::raw("Prefer Neural Checkpoint (B)    "),
                     Span::styled("[=] ", Style::default().fg(COLOR_TEXT_MUTED)),
                     Span::raw("Tie"),
                 ]),
                 Line::from(""),
                 Line::from(vec![
-                    Span::styled("Perceptual Realism Rating: ", Style::default().fg(COLOR_TEXT_MUTED)),
-                    Span::styled("[1..5] ", Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD)),
-                    Span::styled(format!("Current: {}", rating_str), Style::default().fg(COLOR_ALERT)),
+                    Span::styled(
+                        "Perceptual Realism Rating: ",
+                        Style::default().fg(COLOR_TEXT_MUTED),
+                    ),
+                    Span::styled(
+                        "[1..5] ",
+                        Style::default()
+                            .fg(COLOR_ALERT)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("Current: {}", rating_str),
+                        Style::default().fg(COLOR_ALERT),
+                    ),
                 ]),
                 Line::from(""),
                 Line::from(vec![
                     Span::styled("Controls: ", Style::default().fg(COLOR_TEXT_MUTED)),
-                    Span::styled("[Space] ", Style::default().fg(COLOR_SUCCESS).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        "[Space] ",
+                        Style::default()
+                            .fg(COLOR_SUCCESS)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Span::raw("Play Sample  |  "),
                     Span::styled("[m] ", Style::default().fg(COLOR_ACCENT)),
                     Span::styled(
-                        if app.audio_preview.is_muted { "Unmute" } else { "Mute" },
+                        if app.audio_preview.is_muted {
+                            "Unmute"
+                        } else {
+                            "Mute"
+                        },
                         Style::default().fg(COLOR_TEXT_BRIGHT),
                     ),
                     Span::raw("  |  "),
@@ -2522,57 +3536,138 @@ fn render_audit_modal(f: &mut ratatui::Frame, app: &App, area: Rect) {
                 ]),
             ]
         }
-        None => vec![
-            Line::from(Span::styled(
-                "No clips in review queue. Checkpoints automatically populate this queue during training.",
-                Style::default().fg(COLOR_TEXT_MUTED),
-            )),
-        ],
+        None => vec![Line::from(Span::styled(
+            "No clips in review queue. Checkpoints automatically populate this queue during training.",
+            Style::default().fg(COLOR_TEXT_MUTED),
+        ))],
     };
 
     let para = Paragraph::new(content).block(
         Block::default()
             .borders(Borders::ALL)
             .title(" [r] Human Audio Audit & Preference Studio ")
-            .border_style(Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)),
+            .border_style(
+                Style::default()
+                    .fg(COLOR_ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            ),
     );
     f.render_widget(para, popup);
 }
 
 /// Universal Quick-Help Modal Overlay.
-fn render_help_modal(f: &mut ratatui::Frame, area: Rect) {
-    let modal_area = centered_rect(75, 88, area);
+fn render_help_modal(f: &mut ratatui::Frame, app: &App, area: Rect) {
+    let modal_area = centered_rect(80, 92, area);
     f.render_widget(Clear, modal_area);
+
+    let is_paused = app.training_steering.pause_signal.load(Ordering::SeqCst);
+    let train_status = if app.is_training_active.load(Ordering::SeqCst) {
+        if is_paused {
+            "PAUSED"
+        } else {
+            "AUTONOMOUS RUNNING"
+        }
+    } else {
+        "IDLE / READY"
+    };
+
+    let solver_name = app.tuning_state.param_name_and_val(8).1;
+    let solver_tol = app.tuning_state.param_name_and_val(9).1;
+    let precision_str = if app.tuning_state.fp16_mode {
+        "FP16 Energy-Saver (Adreno/Mali Turbo)"
+    } else {
+        "FP32 High-Precision (Studio Reference)"
+    };
+    let governor_str = format!(
+        "Target ~{}% compute ({})",
+        app.target_resource_pct,
+        if app.terminal_focused {
+            "FOCUSED"
+        } else {
+            "UNFOCUSED / THROTTLED"
+        }
+    );
+    let audio_mode_str = if app.continuous_audio_stream {
+        "Continuous Live Stream"
+    } else {
+        "On-Demand Preview"
+    };
+    let audio_out_str = if app.audio_preview.is_muted {
+        "MUTED"
+    } else {
+        "ACTIVE (48kHz)"
+    };
 
     let help_text = vec![
         Line::from(Span::styled(
-            " RainAI Studio Universal Command Reference ",
-            Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD),
+            " RainAI Studio Universal Command & Telemetry Reference ",
+            Style::default()
+                .fg(COLOR_ACCENT)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("Autonomous In-Process Operation:", Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD)),
-        ]),
-        Line::from("  • All training and data processing runs in-process on background Rust worker threads."),
-        Line::from("  • Rehydrates previous session state automatically; saves atomic safetensors on close."),
-        Line::from("  • Dynamic Resource Governor: ~80% host compute when focused, throttles to ~50% when unfocused."),
-        Line::from("  • 15 GB Rolling Quota: Automated rotation preserves high-diversity chunks while freeing disk."),
+        Line::from(Span::styled(
+            "Current Live Engine State:",
+            Style::default()
+                .fg(COLOR_ALERT)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(format!(
+            "  • Training Status     : {} (Flight Stage: {})",
+            train_status, app.flight_stage
+        )),
+        Line::from(format!("  • Probability Solver  : {}", solver_name)),
+        Line::from(format!("  • Solver Tolerance (ε): {}", solver_tol)),
+        Line::from(format!("  • WebGPU Precision    : {}", precision_str)),
+        Line::from(format!("  • Resource Governor   : {}", governor_str)),
+        Line::from(format!(
+            "  • Audio Monitoring    : {} | Output: {}",
+            audio_mode_str, audio_out_str
+        )),
+        Line::from(format!(
+            "  • Active Tuning LR    : {:.6} | Batch: {} (Accum: {})",
+            app.tuning_state.learning_rate,
+            app.tuning_state.batch_size,
+            app.tuning_state.accumulation_steps
+        )),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("Global Navigation & Shortcuts:", Style::default().fg(COLOR_ALERT).add_modifier(Modifier::BOLD)),
-        ]),
-        Line::from("  [0]..[3] or Tab/BackTab   : Switch active tabs (0:Flight Deck, 1:Dataset, 2:Blueprint, 3:Logs)"),
+        Line::from(Span::styled(
+            "Global Navigation & Hotkey Commands:",
+            Style::default()
+                .fg(COLOR_ALERT)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(
+            "  [0]..[3] or Tab/BackTab   : Switch active tabs (0:Flight Deck, 1:Dataset, 2:Blueprint, 3:Logs)",
+        ),
         Line::from("  [Space]                   : Pause / Resume in-process training"),
-        Line::from("  [s]                       : Trigger Autonomous Data Freshening & Quota Balancing"),
-        Line::from("  [d]                       : Deploy converged models to WebGPU & Inference Engine"),
-        Line::from("  [c]                       : Toggle Audio Monitor Mode (Continuous Live Stream / On-Demand)"),
+        Line::from(
+            "  [g]                       : Open / Close Granular Hyperparameter Tuning Drawer",
+        ),
+        Line::from(
+            "  [s]                       : Trigger Autonomous Data Freshening & Quota Balancing",
+        ),
+        Line::from(
+            "  [d]                       : Deploy converged models to WebGPU & Inference Engine",
+        ),
+        Line::from(
+            "  [c]                       : Toggle Audio Monitor Mode (Continuous Live Stream / On-Demand)",
+        ),
         Line::from("  [m]                       : Mute / Unmute audio monitor"),
-        Line::from("  [g]                       : Open / Close Granular Hyperparameter Tuning Drawer"),
-        Line::from("  [r]                       : Open Audio Audit & Review Modal (HITL A/B & Rating)"),
-        Line::from("  [?]                       : Toggle this Quick-Help Reference Modal"),
-        Line::from("  [q]                       : Graceful shutdown (saves checkpoints and exits)"),
+        Line::from(
+            "  [r]                       : Open Audio Audit & Review Modal (HITL A/B & Rating)",
+        ),
+        Line::from(
+            "  [?] / [h]                 : Toggle this Quick-Help & Telemetry Reference Overlay",
+        ),
+        Line::from(
+            "  [q]                       : Graceful shutdown (atomic safetensors checkpoint & session save)",
+        ),
         Line::from(""),
-        Line::from(Span::styled("Press [Esc], [?], or [q] to close this window.", Style::default().fg(COLOR_SUCCESS))),
+        Line::from(Span::styled(
+            "Press [Esc], [?], [h], or [q] to close this window.",
+            Style::default().fg(COLOR_SUCCESS),
+        )),
     ];
 
     let help_para = Paragraph::new(help_text)
@@ -2599,7 +3694,9 @@ fn render_source_modal(f: &mut ratatui::Frame, app: &App, area: Rect) {
     let details = vec![
         Line::from(Span::styled(
             format!(" Source File: {} ", src.filename),
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         Line::from(vec![
@@ -2631,11 +3728,18 @@ fn render_source_modal(f: &mut ratatui::Frame, app: &App, area: Rect) {
             Span::raw(src.ingest_method.as_deref().unwrap_or("direct_stream")),
         ]),
         Line::from(""),
-        Line::from(Span::styled("Press [Enter] or [Esc] to close.", Style::default().fg(COLOR_TEXT_MUTED))),
+        Line::from(Span::styled(
+            "Press [Enter] or [Esc] to close.",
+            Style::default().fg(COLOR_TEXT_MUTED),
+        )),
     ];
 
     let modal_para = Paragraph::new(details)
-        .block(Block::default().title(" Source Item Inspector ").borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title(" Source Item Inspector ")
+                .borders(Borders::ALL),
+        )
         .wrap(Wrap { trim: false });
     f.render_widget(modal_para, modal_area);
 }

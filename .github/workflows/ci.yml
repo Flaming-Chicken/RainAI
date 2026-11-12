@@ -128,6 +128,30 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Checkout spodeian-core dependency
+        uses: actions/checkout@v4
+        with:
+          repository: Flaming-Chicken/spodeian-core
+          ref: dev
+          path: spodeian-core
+          token: ${{ secrets.PRIVATE_READ_ACCESS || secrets.SPODEIAN_CORE_TOKEN || secrets.GH_PAT || secrets.PAT || secrets.SPODEIAN_TOKEN || github.token }}
+
+      - name: Link spodeian-core to parent directory
+        shell: bash
+        run: |
+          if [ ! -d "../spodeian-core" ]; then
+            if [ "$RUNNER_OS" == "Windows" ]; then
+              cp -r spodeian-core ../spodeian-core
+            else
+              ln -s "$PWD/spodeian-core" "$PWD/../spodeian-core"
+            fi
+          fi
+
+      - name: Install Linux Audio & Windowing Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -149,6 +173,25 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Checkout spodeian-core dependency
+        uses: actions/checkout@v4
+        with:
+          repository: Flaming-Chicken/spodeian-core
+          ref: dev
+          path: spodeian-core
+          token: ${{ secrets.PRIVATE_READ_ACCESS || secrets.SPODEIAN_CORE_TOKEN || secrets.GH_PAT || secrets.PAT || secrets.SPODEIAN_TOKEN || github.token }}
+
+      - name: Link spodeian-core to parent directory
+        shell: bash
+        run: |
+          if [ ! -d "../spodeian-core" ]; then
+            if [ "$RUNNER_OS" == "Windows" ]; then
+              cp -r spodeian-core ../spodeian-core
+            else
+              ln -s "$PWD/spodeian-core" "$PWD/../spodeian-core"
+            fi
+          fi
 
       - name: Install Linux Audio & Windowing Dependencies
         run: |
@@ -181,6 +224,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Checkout spodeian-core dependency
+        uses: actions/checkout@v4
+        with:
+          repository: Flaming-Chicken/spodeian-core
+          ref: dev
+          path: spodeian-core
+          token: ${{ secrets.PRIVATE_READ_ACCESS || secrets.SPODEIAN_CORE_TOKEN || secrets.GH_PAT || secrets.PAT || secrets.SPODEIAN_TOKEN || github.token }}
+
+      - name: Link spodeian-core to parent directory
+        shell: bash
+        run: |
+          if [ ! -d "../spodeian-core" ]; then
+            if [ "$RUNNER_OS" == "Windows" ]; then
+              cp -r spodeian-core ../spodeian-core
+            else
+              ln -s "$PWD/spodeian-core" "$PWD/../spodeian-core"
+            fi
+          fi
+
       - name: Setup Rust with WASM Target
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -199,15 +261,17 @@ jobs:
 
       - name: Build Web Application via Trunk (SIMD enabled)
         env:
-          RUSTFLAGS: "-C target-feature=+simd128"
+          RUSTFLAGS: "-C target-feature=+bulk-memory,+mutable-globals"
         run: |
+          mkdir -p ../inference/data/wasm
           trunk build --release
-          for wasm_file in crates/web/dist/*.wasm; do
+          for wasm_file in dist/*.wasm; do
             if [ -f "$wasm_file" ]; then
-              echo "Optimizing $wasm_file with wasm-opt (SIMD enabled)"
-              wasm-opt -Oz --enable-simd "$wasm_file" -o "$wasm_file" || true
+              echo "Optimizing $wasm_file with wasm-opt"
+              wasm-opt -Oz --enable-simd --enable-bulk-memory --enable-mutable-globals "$wasm_file" -o "$wasm_file" || true
             fi
           done
+        working-directory: crates/web
 
       - name: Verify Cloudflare Pages Output Distribution
         run: |
@@ -236,6 +300,25 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Checkout spodeian-core dependency
+        uses: actions/checkout@v4
+        with:
+          repository: Flaming-Chicken/spodeian-core
+          ref: dev
+          path: spodeian-core
+          token: ${{ secrets.PRIVATE_READ_ACCESS || secrets.SPODEIAN_CORE_TOKEN || secrets.GH_PAT || secrets.PAT || secrets.SPODEIAN_TOKEN || github.token }}
+
+      - name: Link spodeian-core to parent directory
+        shell: bash
+        run: |
+          if [ ! -d "../spodeian-core" ]; then
+            if [ "$RUNNER_OS" == "Windows" ]; then
+              cp -r spodeian-core ../spodeian-core
+            else
+              ln -s "$PWD/spodeian-core" "$PWD/../spodeian-core"
+            fi
+          fi
 
       - name: Install Linux Audio & GUI Dependencies
         if: runner.os == 'Linux'
@@ -286,3 +369,54 @@ jobs:
 
       - name: Syntax Check deploy.sh
         run: bash -n deploy.sh
+
+  # 6. Mobile Cross-Compilation Verification
+  mobile-build-check:
+    name: Mobile Build Check (Android & iOS)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout spodeian-core dependency
+        uses: actions/checkout@v4
+        with:
+          repository: Flaming-Chicken/spodeian-core
+          ref: dev
+          path: spodeian-core
+          token: ${{ secrets.PRIVATE_READ_ACCESS || secrets.SPODEIAN_CORE_TOKEN || secrets.GH_PAT || secrets.PAT || secrets.SPODEIAN_TOKEN || github.token }}
+
+      - name: Link spodeian-core to parent directory
+        shell: bash
+        run: |
+          if [ ! -d "../spodeian-core" ]; then
+            if [ "$RUNNER_OS" == "Windows" ]; then
+              cp -r spodeian-core ../spodeian-core
+            else
+              ln -s "$PWD/spodeian-core" "$PWD/../spodeian-core"
+            fi
+          fi
+
+      - name: Setup Rust with Mobile Targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,aarch64-apple-ios-sim
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-ndk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-ndk
+
+      - name: Check Android Mobile Target
+        run: |
+          if [ -d "$ANDROID_HOME/ndk" ]; then
+            export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$(ls -1 "$ANDROID_HOME/ndk" | sort -V | tail -n 1)"
+          fi
+          cargo ndk -t arm64-v8a check -p app
+
+      - name: Check iOS Simulator Target
+        run: cargo check -p app --target aarch64-apple-ios-sim
+

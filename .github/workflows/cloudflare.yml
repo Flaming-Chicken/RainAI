@@ -1,0 +1,77 @@
+name: Deploy to Cloudflare
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+
+jobs:
+  deploy-worker:
+    name: Deploy Worker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout spodeian-core dependency
+        uses: actions/checkout@v4
+        with:
+          repository: Flaming-Chicken/spodeian-core
+          ref: dev
+          path: spodeian-core
+          token: ${{ secrets.PRIVATE_READ_ACCESS || secrets.SPODEIAN_CORE_TOKEN || secrets.GH_PAT || secrets.PAT || secrets.SPODEIAN_TOKEN || github.token }}
+
+      - name: Link spodeian-core to parent directory
+        shell: bash
+        run: ln -s "$PWD/spodeian-core" "$PWD/../spodeian-core"
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo Dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Trunk Asset Bundler
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk,wasm-opt
+
+      # Ensure WASM build compiles
+      - name: Build Web Application
+        env:
+          RUSTFLAGS: "-C target-feature=+bulk-memory,+mutable-globals"
+        run: |
+          mkdir -p ../inference/data/wasm
+          trunk build --release
+        working-directory: crates/web
+
+      - name: Deploy to Cloudflare Dev (Preview)
+        if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_PAGES_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: crates/web
+          command: pages deploy dist --project-name=rainai --branch=dev
+
+      - name: Deploy to Cloudflare PR Preview
+        if: github.event_name == 'pull_request'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_PAGES_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: crates/web
+          command: pages deploy dist --project-name=rainai --branch=preview
+
+      - name: Deploy to Cloudflare Production
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_PAGES_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: crates/web
+          command: pages deploy dist --project-name=rainai --branch=main
