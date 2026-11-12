@@ -31,7 +31,7 @@ spodeian-telemetry = { path = "../spodeian-core/crates/spodeian-telemetry", vers
 spodeian-export = { path = "../spodeian-core/crates/spodeian-export", version = "^1.0.0" }
 spodeian-web-utils = { path = "../spodeian-core/crates/spodeian-web-utils", version = "^1.0.0" }
 spodeian-ui = { path = "../spodeian-core/crates/spodeian-ui", version = "^1.0.0" }
-spodeian-ml-utils = { package = "sml-runtime", path = "../spodeian-ml-rs/crates/sml-runtime", version = "^0.1.0" }
+spodeian-ml-utils = { package = "sml-runtime", path = "../spodeian-core/crates/sml-runtime", version = "^0.1.0" }
 spodeian-parallel = { path = "../spodeian-core/crates/spodeian-parallel", version = "^1.0.0" }
 spodeian-core = { path = "../spodeian-core/crates/spodeian-core", version = "^1.0.0" }
 
