@@ -17,7 +17,7 @@ edition = "2024"
 license = "CC-BY-NC-SA-4.0"
 readme = "README.md"
 description = "RainAI · Real-time neural spatial soundscape synthesis studio in Rust, WebGPU, and WebAssembly"
-repository = "https://github.com/Flaming-Chicken/RainAI"
+repository = "https://github.com/Spodeian/RainAI"
 
 [workspace.dependencies]
 shared = { path = "crates/shared" }
@@ -25,15 +25,15 @@ audio = { path = "crates/audio" }
 inference = { path = "crates/inference" }
 app = { path = "crates/app" }
 utilities = { path = "crates/utilities" }
-spodeian-cache = { path = "../spodeian-core/crates/spodeian-cache", version = "^1.0.0" }
-spodeian-tokens = { path = "../spodeian-core/crates/spodeian-tokens", version = "^1.0.0" }
-spodeian-telemetry = { path = "../spodeian-core/crates/spodeian-telemetry", version = "^1.0.0" }
-spodeian-export = { path = "../spodeian-core/crates/spodeian-export", version = "^1.0.0" }
-spodeian-web-utils = { path = "../spodeian-core/crates/spodeian-web-utils", version = "^1.0.0" }
-spodeian-ui = { path = "../spodeian-core/crates/spodeian-ui", version = "^1.0.0" }
-spodeian-ml-utils = { package = "sml-runtime", path = "../spodeian-core/crates/sml-runtime", version = "^0.1.0" }
-spodeian-parallel = { path = "../spodeian-core/crates/spodeian-parallel", version = "^1.0.0" }
-spodeian-core = { path = "../spodeian-core/crates/spodeian-core", version = "^1.0.0" }
+spodeian-cache = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^1.1.0" }
+spodeian-tokens = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^1.1.0" }
+spodeian-telemetry = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^1.1.0" }
+spodeian-export = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^2.0.0" }
+spodeian-web-utils = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^1.1.0" }
+spodeian-ui = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^1.0.0" }
+spodeian-ml-utils = { package = "sml-runtime", git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^0.1.0" }
+spodeian-parallel = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^1.0.0" }
+spodeian-core = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^2.0.0" }
 
 candle-core = "0.11"
 candle-nn = "0.11"
