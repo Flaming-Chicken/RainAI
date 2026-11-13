@@ -5,8 +5,17 @@ use shared::rain::QualityTier;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Raw embedded slice for default tier 0 (ternary 1.58-bit)
-pub const EMBEDDED_SLICE_0_TERNARY: &[u8] = include_bytes!("../data/slice_0_ternary.bin");
+/// Raw embedded slice for default tier 0 (ternary 1.58-bit), present only when
+/// `data/slice_0_ternary.bin` existed at build time (see build.rs).
+#[cfg(rainai_embedded_weights)]
+pub const EMBEDDED_SLICE_0_TERNARY: &[u8] = include_bytes!(env!("RAINAI_EMBEDDED_WEIGHTS"));
+/// No weights were available at build time; load them with
+/// [`WeightLoader::load_ternary_bytes`] or [`WeightLoader::load_ternary_file`].
+#[cfg(not(rainai_embedded_weights))]
+pub const EMBEDDED_SLICE_0_TERNARY: &[u8] = &[];
+
+/// Environment variable naming a ternary weight file to use when none is embedded.
+pub const WEIGHTS_PATH_ENV: &str = "RAINAI_WEIGHTS";
 
 /// Pre-packed, cache-aligned weight buffer for zero-overhead runtime SIMD execution
 #[derive(Clone, Debug)]
@@ -324,11 +333,39 @@ impl WeightLoader {
         Ok(cache)
     }
 
-    /// Convenience loader to unpack the default embedded Ternary 1.58-bit tier
+    /// Loads the default Ternary 1.58-bit tier.
+    ///
+    /// Uses the embedded weights if the build had them. Otherwise, on native
+    /// targets, reads the file named by `RAINAI_WEIGHTS`. Returns an error
+    /// (callers fall back to an empty cache, i.e. "no model loaded") when
+    /// neither is available; it never panics.
     pub fn load_embedded_ternary() -> Result<WeightCache, String> {
+        if !EMBEDDED_SLICE_0_TERNARY.is_empty() {
+            return Self::load_ternary_bytes(EMBEDDED_SLICE_0_TERNARY);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Ok(path) = std::env::var(WEIGHTS_PATH_ENV) {
+            return Self::load_ternary_file(std::path::Path::new(&path));
+        }
+        Err(format!(
+            "no model weights loaded: none were embedded at build time and {WEIGHTS_PATH_ENV} is not set"
+        ))
+    }
+
+    /// Loads Ternary 1.58-bit weights from bytes fetched or read at runtime
+    /// (for example the release asset on the web build).
+    pub fn load_ternary_bytes(bytes: &[u8]) -> Result<WeightCache, String> {
         let manifest = QuantizedModelManifest::load_default_ternary()
             .map_err(|e| format!("Failed to parse embedded ternary manifest: {e}"))?;
-        Self::load_from_manifest(&manifest, EMBEDDED_SLICE_0_TERNARY, QualityTier::Ternary158)
+        Self::load_from_manifest(&manifest, bytes, QualityTier::Ternary158)
+    }
+
+    /// Reads Ternary 1.58-bit weights from a file.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn load_ternary_file(path: &std::path::Path) -> Result<WeightCache, String> {
+        let bytes = std::fs::read(path)
+            .map_err(|e| format!("failed to read weights {}: {e}", path.display()))?;
+        Self::load_ternary_bytes(&bytes)
     }
 
     /// Deserializes model weights directly from standard Hugging Face SafeTensors byte buffer

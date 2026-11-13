@@ -21,7 +21,12 @@ pub enum RainTab {
 }
 
 pub const DROPLET_PANNING_SHADER_WGSL: &str = include_str!("../shaders/droplet_panning.wgsl");
-pub const ATTRIBUTION_BYTES: &[u8] = include_bytes!("../../../../data/rain/attributions.bin");
+/// Attribution dictionary, embedded when `data/rain/attributions.bin` exists at build time (see build.rs).
+#[cfg(rainai_embedded_attributions)]
+pub const ATTRIBUTION_BYTES: &[u8] = include_bytes!(env!("RAINAI_EMBEDDED_ATTRIBUTIONS"));
+/// No dictionary was available at build time.
+#[cfg(not(rainai_embedded_attributions))]
+pub const ATTRIBUTION_BYTES: &[u8] = &[];
 
 /// Uniform buffer payload matching droplet_panning.wgsl WebGPU shader pipeline
 #[repr(C)]
