@@ -13,6 +13,23 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
+  licenses:
+    name: Dependency Licenses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Check dependency licenses
+        run: cargo deny --all-features check licenses
+
   # 0. No audio, datasets or weights in git (PLAN.md D2)
   no-committed-assets:
     name: No Committed Audio, Data or Weights
