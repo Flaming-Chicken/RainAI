@@ -19,17 +19,25 @@ use tracing::{info, warn};
 use crate::candle_train::{CandleTrainConfig, TrainingPhase, run_candle_training_pipeline};
 
 /// Canonical surface categories used across RainAI physical modeling.
-pub const CANONICAL_SURFACES: [&str; 9] = [
-    "pavement",
-    "tin_roof",
-    "glass",
-    "canvas_tent",
-    "foliage",
-    "wood_deck",
-    "puddle_shallow",
-    "water_deep",
-    "pine_needles",
-];
+/// Derived from `shared::surface::CanonicalSurface`, the single taxonomy. (This
+/// list used to be written out by hand and had `pine_needles` instead of `asphalt`,
+/// so asphalt quotas were never tracked and `pine_needles`, which `from_tag` maps
+/// to foliage, never matched.)
+pub const CANONICAL_SURFACES: [&str; 9] = {
+    use shared::surface::CanonicalSurface as S;
+    let a = S::ALL;
+    [
+        a[0].as_str(),
+        a[1].as_str(),
+        a[2].as_str(),
+        a[3].as_str(),
+        a[4].as_str(),
+        a[5].as_str(),
+        a[6].as_str(),
+        a[7].as_str(),
+        a[8].as_str(),
+    ]
+};
 
 /// AutoPilot Lifecycle Stages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -456,13 +456,6 @@ impl DatabaseHealthWorker {
                         prov_file,
                     ) {
                         if drop_res.standardized_count > 0 {
-                            let _ = git_sync_standardized_data(
-                                &drop_res.standardized_files,
-                                &format!(
-                                    "data(ingest): standardize {} input drop files",
-                                    drop_res.standardized_count
-                                ),
-                            );
                             telemetry.last_action = format!(
                                 "Standardized {} files from drop folder (Quarantined: {})",
                                 drop_res.standardized_count, drop_res.quarantined_count
@@ -1143,9 +1136,22 @@ impl DatabaseHealthWorker {
         ledger_path: &Path,
         _manifest_provenance_path: &Path,
     ) -> Result<usize> {
+        // The maintainer endpoints need RAINAI_MAINTAINER_TOKEN (the worker's
+        // MAINTAINER_TOKEN secret); without it there is nothing to pull.
+        let Ok(token) = std::env::var("RAINAI_MAINTAINER_TOKEN") else {
+            return Ok(0);
+        };
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))?,
+        );
         let client = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(30))
+            .default_headers(headers)
             .build()?;
+        let data_paths = crate::sources::DataPaths::from_rain_dir(target_dir);
+        let mut contribution_ledger = crate::sources::Ledger::load(&data_paths.ledger())?;
 
         let approved_url = format!(
             "{}/api/contribute/approved-list?limit=50",
@@ -1190,6 +1196,39 @@ impl DatabaseHealthWorker {
                 continue;
             }
 
+            // Don't trust the edge's APPROVED status alone: re-check the metadata.
+            let field = |k: &str| rec.get(k).and_then(|v| v.as_str()).map(str::to_string);
+            let first = |k: &str| {
+                rec.get(k)
+                    .and_then(|v| v.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            };
+            let license = field("license");
+            let contributor = field("author").or_else(|| first("contributors"));
+            let title = field("title").or_else(|| field("filename"));
+            let surface_tag = field("surface").or_else(|| first("tags"));
+            let check =
+                crate::contribute::check_contribution(&crate::contribute::ContributionMetadata {
+                    license: license.as_deref(),
+                    contributor: contributor.as_deref(),
+                    title: title.as_deref(),
+                    surface: surface_tag.as_deref(),
+                    rights_warranty: rec
+                        .get("rights_warranty")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
+                    source_url: None,
+                });
+            if !check.is_complete() {
+                tracing::warn!(
+                    "edge record {sha256} is APPROVED but incomplete; skipped (not acknowledged): {}",
+                    check.problems.join("; ")
+                );
+                continue;
+            }
+
             let blob_url = format!(
                 "{}/api/contribute/blob/{}",
                 edge_base_url.trim_end_matches('/'),
@@ -1209,14 +1248,10 @@ impl DatabaseHealthWorker {
                                     &temp_blob, &std_dest, &thresh,
                                 )
                             {
-                                let tag = rec
-                                    .get("tags")
-                                    .and_then(|t| t.as_array())
-                                    .and_then(|arr| arr.first())
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("ambient_broadband");
-                                let canonical_surf =
-                                    shared::surface::CanonicalSurface::from_tag(tag);
+                                let canonical_surf = check
+                                    .surface
+                                    .unwrap_or(shared::surface::CanonicalSurface::Pavement);
+                                let tag = canonical_surf.as_str();
                                 let material_props =
                                     canonical_surf.material_properties().to_array();
                                 let q_score = metrics.spectral_flatness.clamp(0.0, 1.0) * 0.4
@@ -1226,6 +1261,7 @@ impl DatabaseHealthWorker {
                                     compute_geometric_utility_score(q_score, 1.0, 1.0, 1.2, 0, 0.0);
                                 let priority = compute_retraining_priority(q_score, 1.0, 1.0, 1.2);
 
+                                let std_sha_ledger = std_sha.clone();
                                 ledger.upsert_record(DataChunkUtilityRecord {
                                     chunk_id: format!(
                                         "edge_{}_chunk000",
@@ -1248,6 +1284,28 @@ impl DatabaseHealthWorker {
                                     retraining_priority: priority,
                                     is_cached_locally: true,
                                 });
+                                let std_name = std_dest
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .to_string();
+                                if !contribution_ledger
+                                    .iter()
+                                    .any(|r| r.sha256 == std_sha_ledger)
+                                {
+                                    let lrec = crate::sources::LedgerRecord::contribution(
+                                        &std_name,
+                                        &std_sha_ledger,
+                                        contributor.as_deref().unwrap_or_default(),
+                                        title.as_deref().unwrap_or_default(),
+                                        license.as_deref().unwrap_or_default(),
+                                        check.tier,
+                                        tag,
+                                        "web",
+                                    );
+                                    crate::sources::Ledger::append(&data_paths.ledger(), &lrec)?;
+                                    contribution_ledger.push(lrec);
+                                }
                                 newly_standardized.push(std_dest);
                             }
                             let _ = fs::remove_file(temp_blob);
@@ -1270,15 +1328,8 @@ impl DatabaseHealthWorker {
         }
 
         let _ = ledger.save_to_file(ledger_path);
-
         if !newly_standardized.is_empty() {
-            let _ = git_sync_standardized_data(
-                &newly_standardized,
-                &format!(
-                    "data(ingest): sync {} edge staging records from R2/D1",
-                    newly_standardized.len()
-                ),
-            );
+            crate::sources::regenerate_outputs(&data_paths)?;
         }
 
         Ok(newly_standardized.len())
@@ -1319,68 +1370,5 @@ impl Drop for DatabaseHealthWorker {
     }
 }
 
-/// Automatically stages and commits newly standardized data files and updated score ledgers to Git.
-pub fn git_sync_standardized_data(files: &[PathBuf], commit_msg: &str) -> Result<bool> {
-    if files.is_empty() {
-        return Ok(false);
-    }
-
-    let mut cmd = std::process::Command::new("git");
-    cmd.arg("add");
-    for f in files {
-        cmd.arg(f);
-    }
-    cmd.arg("data/rain/data_utility_ledger.json");
-    cmd.arg("data/rain/manifest_provenance.json");
-    let _ = cmd.output();
-
-    let commit_res = std::process::Command::new("git")
-        .args(["commit", "-m", commit_msg])
-        .output();
-
-    if let Ok(out) = commit_res {
-        if out.status.success() {
-            tracing::info!("[+] Auto-synced data to dev Git: {}", commit_msg);
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
-}
-
-/// Automatically stages and commits model weights and session provenance to Git on reaching training milestones.
-/// Strictly decoupled from data commits.
-pub fn git_sync_model_milestone(
-    weight_files: &[PathBuf],
-    session_file: &Path,
-    milestone_name: &str,
-    loss: f32,
-) -> Result<bool> {
-    let mut cmd = std::process::Command::new("git");
-    cmd.arg("add");
-    for w in weight_files {
-        cmd.arg(w);
-    }
-    cmd.arg(session_file);
-    let _ = cmd.output();
-
-    let commit_msg = format!(
-        "weights(checkpoint): milestone {} loss={:.5}",
-        milestone_name, loss
-    );
-    let commit_res = std::process::Command::new("git")
-        .args(["commit", "-m", &commit_msg])
-        .output();
-
-    if let Ok(out) = commit_res {
-        if out.status.success() {
-            tracing::info!(
-                "[+] Auto-synced model checkpoint to dev Git: {}",
-                commit_msg
-            );
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
-}
+// Data and weights are never committed to git (PLAN.md D2), so there is no
+// automatic `git add`/`git commit` here. Weights ship as release assets.

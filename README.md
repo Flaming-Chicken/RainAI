@@ -63,7 +63,7 @@ RainAI/
 ├── Trunk.toml                  # WebAssembly build configuration for Trunk
 ├── deploy.sh                   # Cloudflare Pages / PWA build deployment script
 ├── train.ps1                   # Unified PowerShell training coordinator (Rust / PyTorch)
-├── sources.json                # 130 CC0/CC-BY/Public Domain audio corpus sourcing manifest across 14 platforms
+├── source_registry.json        # Audio sources (platform + query); licenses are read per item at download time
 │
 ├── crates/                     # Pure-Rust Workspace Crates
 │   ├── shared/                 # Common domain models, physical parameters, presets, serialization
@@ -296,9 +296,9 @@ Maintainers and field recordists can drop raw audio recordings directly into `da
 2. **Metadata Extraction**:
    - **Sidecar Files**: Looks for sibling metadata with matching stems: `<stem>.json`, `<stem>.toml`, `<stem>.yaml`, or `<stem>.txt`.
    - **Internal Audio Tags**: If no sidecar is present, ID3, Vorbis Comments, and RIFF INFO chunks are extracted automatically.
-   - **Required Fields**: `license` (must be commercial-safe: CC0, CC-BY, CC-BY-SA, Public Domain, etc.), `source`, and optionally `surface`, `contributor`, `description`.
+   - **Required Fields**: `license` (CC0, public domain, CC BY 3.0/4.0, or the RainAI contributor grant), `source`, and optionally `surface`, `contributor`, `description`.
 3. **Quarantine Handling (`data/quarantine/`)**:
-   - Files lacking valid licensing or audio data (e.g. non-commercial `-NC`, silent/clipped audio, corrupted headers) are immediately moved to `data/quarantine/`.
+   - Files lacking an allowed license or valid audio (e.g. `-NC`, `-SA`, silent/clipped audio, corrupted headers) are immediately moved to `data/quarantine/`.
    - A companion JSON report is generated: `data/quarantine/<sha256>_quarantine.json`, specifying the exact failure reasons and recommended remediation actions.
    - Maintainers can resolve issues by editing the sidecar or metadata and moving the file back to `data/input/`.
 4. **Standardization & Promotion**:
@@ -403,7 +403,7 @@ cargo test --workspace -j 2
 # Run all Candle training pipeline integration tests (30 tests)
 cargo test -p utilities --test candle_train_tests -j 2
 
-# Run audio ingestion & 130-source catalog integrity tests (7 tests)
+# Run audio ingestion, license allow-list and source registry tests
 cargo test -p utilities --test ingest_tests -j 2
 
 # Run WebGPU compute shaders audit (12 WGSL shaders verified)
@@ -436,10 +436,10 @@ trunk build --release crates/web/index.html
 ---
 
 ## 🛡️ Sourcing & Commercial Ethics
-- **Commercial-Safe Corpus**: Audio records in `data/rain/` strictly incorporate Creative Commons Zero (CC0), Creative Commons Attribution (CC-BY), and Public Domain field recordings.
-- **Exclusion of Non-Commercial Media**: Non-Commercial (-NC) audio files are strictly segregated and programmatically excluded from all feature manifests and training batches.
-
----
+- **No data in the repository.** Audio, datasets and weights are never committed; CI fails if any are. `rainai_ingest` downloads training audio from the sources in [`source_registry.json`](source_registry.json).
+- **Allow-list, checked per item.** Each item's license is read from the platform's own metadata at download time. Only CC0, public domain and CC BY 3.0/4.0 are accepted, plus your own recordings and contributions under the RainAI contributor grant. ShareAlike, NonCommercial, NoDerivatives and platform licenses are rejected. See [DATA_BIBLIOGRAPHY.md](DATA_BIBLIOGRAPHY.md).
+- **Credits from a ledger.** Every downloaded file is recorded in `data/rain/ledger.jsonl` with its creator, title, source, license and the processing applied. `ATTRIBUTIONS.txt` is generated from it and published with each model release.
+- **No weights ship yet.** The model is being retrained on the clean corpus; weights will be published as a GitHub release asset with their attribution file. Until then the app starts with no model loaded (set `RAINAI_WEIGHTS` to a local file to use one).
 
 ## 📄 License
 

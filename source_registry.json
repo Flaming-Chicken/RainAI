@@ -1,0 +1,117 @@
+{
+  "$comment": "RainAI source registry (PLAN.md D2). Sources, not files: each adapter reads every item's license from the platform's metadata, and only CC0, public domain and CC BY 3.0/4.0 items are downloaded. Run `cargo run --release --bin rainai_ingest`; Freesound needs FREESOUND_API_KEY. Downloads, the ledger and ATTRIBUTIONS.txt go to data/ and are never committed.",
+  "sources": [
+    {
+      "adapter": "freesound",
+      "id": "freesound-tin-roof",
+      "category": "tin_roof",
+      "query": "rain on tin roof",
+      "max_items": 30
+    },
+    {
+      "adapter": "freesound",
+      "id": "freesound-glass",
+      "category": "glass",
+      "query": "rain on window",
+      "max_items": 30
+    },
+    {
+      "adapter": "freesound",
+      "id": "freesound-canvas-tent",
+      "category": "canvas_tent",
+      "query": "rain on tent",
+      "max_items": 30
+    },
+    {
+      "adapter": "freesound",
+      "id": "freesound-pavement",
+      "category": "pavement",
+      "query": "rain on pavement",
+      "max_items": 30
+    },
+    {
+      "adapter": "freesound",
+      "id": "freesound-asphalt",
+      "category": "asphalt",
+      "query": "rain on road",
+      "max_items": 30
+    },
+    {
+      "adapter": "freesound",
+      "id": "freesound-foliage",
+      "category": "foliage",
+      "query": "rain in forest leaves",
+      "max_items": 30
+    },
+    {
+      "adapter": "freesound",
+      "id": "freesound-wood-deck",
+      "category": "wood_deck",
+      "query": "rain on wooden deck",
+      "max_items": 30
+    },
+    {
+      "adapter": "freesound",
+      "id": "freesound-puddle-shallow",
+      "category": "puddle_shallow",
+      "query": "rain puddle splash",
+      "max_items": 30
+    },
+    {
+      "adapter": "freesound",
+      "id": "freesound-water-deep",
+      "category": "water_deep",
+      "query": "rain on lake",
+      "max_items": 30
+    },
+    {
+      "adapter": "freesound",
+      "id": "freesound-gentle-drizzle",
+      "category": "gentle_drizzle",
+      "query": "light rain drizzle",
+      "max_items": 30
+    },
+    {
+      "adapter": "freesound",
+      "id": "freesound-steady-rain",
+      "category": "steady_rain",
+      "query": "steady rain",
+      "max_items": 30
+    },
+    {
+      "adapter": "freesound",
+      "id": "freesound-heavy-rain-thunder",
+      "category": "heavy_rain_thunder",
+      "query": "heavy rain thunder",
+      "max_items": 30
+    },
+    {
+      "adapter": "freesound",
+      "id": "freesound-thunderstorm",
+      "category": "thunderstorm",
+      "query": "thunderstorm",
+      "max_items": 30
+    },
+    {
+      "adapter": "wikimedia_commons",
+      "id": "commons-sounds-of-rain",
+      "category": "steady_rain",
+      "commons_category": "Sounds of rain",
+      "max_items": 50
+    },
+    {
+      "adapter": "wikimedia_commons",
+      "id": "commons-thunder",
+      "category": "thunderstorm",
+      "commons_category": "Audio files of thunder",
+      "max_items": 50
+    },
+    {
+      "adapter": "internet_archive",
+      "id": "ia-aporee-rain",
+      "category": "steady_rain",
+      "query": "collection:radio-aporee-maps AND rain",
+      "max_items": 60
+    }
+  ]
+}

@@ -302,6 +302,9 @@ pub struct RainContributionManifest {
     pub default_license: Option<String>,
     #[serde(default)]
     pub default_tags: Vec<String>,
+    /// The contributor confirmed `CONTRIBUTOR_WARRANTY_STATEMENT` for every source.
+    #[serde(default)]
+    pub rights_warranty: bool,
     pub sources: Vec<RainSourceEntry>,
 }
 
@@ -314,6 +317,7 @@ impl RainContributionManifest {
             contributor_contact: None,
             default_license: None,
             default_tags: Vec::new(),
+            rights_warranty: false,
             sources: Vec::new(),
         }
     }
@@ -405,6 +409,9 @@ pub struct LocalImportOptions {
     pub default_mic: Option<MicrophoneSetup>,
     pub default_license: Option<String>,
     pub author: Option<String>,
+    /// The maintainer confirms the contributor gave the rights warranty
+    /// (`import-dir --rights-warranty`).
+    pub rights_warranty: bool,
     pub target_dir: PathBuf,
     pub update_sources_json: bool,
     pub update_attributions: bool,
@@ -423,6 +430,7 @@ impl Default for LocalImportOptions {
             default_mic: None,
             default_license: None,
             author: None,
+            rights_warranty: false,
             target_dir: base_dir,
             update_sources_json: true,
             update_attributions: true,
@@ -647,26 +655,45 @@ pub fn validate_manifest(
     let mut license_tiers = HashMap::new();
 
     for entry in &manifest.sources {
-        // 1. Verify ethical open license
-        let license_str = entry.license.as_deref().unwrap_or("Unknown");
-        let (ok, tier, reason) = LicenseVerifier::verify(license_str);
-        *license_tiers.entry(tier).or_insert(0) += 1;
-
-        if !ok {
-            rejected_entries.push(RejectedSourceEntry {
-                source_id: entry.id.clone(),
-                file_path: entry.file_path.clone(),
-                rejection_reason: format!("License rejected: {}", reason),
-            });
-            continue;
-        }
-
-        // 2. Resolve audio file path
+        // 1. Resolve audio file path
         let resolved_path = if let Some(base) = base_dir {
             base.join(&entry.file_path)
         } else {
             PathBuf::from(&entry.file_path)
         };
+
+        // 2. Completeness (license, contributor, warranty, surface, no link-only).
+        let check = check_contribution(&ContributionMetadata {
+            license: entry
+                .license
+                .as_deref()
+                .or(manifest.default_license.as_deref()),
+            contributor: entry
+                .author
+                .as_deref()
+                .or(Some(manifest.contributor_name.as_str())),
+            title: Some(entry.id.as_str()),
+            surface: entry
+                .tags
+                .first()
+                .or(manifest.default_tags.first())
+                .map(|t| t.as_str()),
+            rights_warranty: manifest.rights_warranty,
+            source_url: if resolved_path.exists() {
+                None
+            } else {
+                entry.url.as_deref()
+            },
+        });
+        *license_tiers.entry(check.tier).or_insert(0) += 1;
+        if !check.is_complete() {
+            rejected_entries.push(RejectedSourceEntry {
+                source_id: entry.id.clone(),
+                file_path: entry.file_path.clone(),
+                rejection_reason: check.reason(),
+            });
+            continue;
+        }
 
         if resolved_path.exists() {
             // 3. Perform objective acoustic screening
@@ -677,6 +704,28 @@ pub fn validate_manifest(
                         .iter_mut()
                         .find(|v| v.computed_sha256 == sha256)
                     {
+                        if provenance_conflicts(
+                            existing.source.license.as_deref(),
+                            &existing
+                                .source
+                                .author
+                                .iter()
+                                .cloned()
+                                .chain(existing.source.contributors.iter().cloned())
+                                .collect::<Vec<_>>(),
+                            entry.license.as_deref(),
+                            entry.author.as_deref(),
+                        ) {
+                            rejected_entries.push(RejectedSourceEntry {
+                                source_id: entry.id.clone(),
+                                file_path: entry.file_path.clone(),
+                                rejection_reason: format!(
+                                    "CONFLICTING_PROVENANCE: same audio as '{}' with a different license or contributor",
+                                    existing.source.id
+                                ),
+                            });
+                            continue;
+                        }
                         for tag in &entry.tags {
                             if !existing.source.tags.contains(tag) {
                                 *surface_counts.entry(tag.clone()).or_insert(0) += 1;
@@ -895,13 +944,24 @@ pub fn import_local_directory(
     let mut provenance_records = Vec::new();
     let mut attributions_to_append = Vec::new();
 
-    // Verify default license if provided
-    if let Some(lic) = &options.default_license {
-        let (ok, _tier, reason) = LicenseVerifier::verify(lic);
-        if !ok {
-            bail!("Default contribution license rejected: {}", reason);
-        }
+    // The same completeness rules as public contributions. A maintainer import
+    // fails fast instead of triaging (the per-file title is the file name).
+    let check = check_contribution(&ContributionMetadata {
+        license: options.default_license.as_deref(),
+        contributor: options.author.as_deref(),
+        title: Some("per-file"),
+        surface: options.default_tags.first().map(|t| t.as_str()),
+        rights_warranty: options.rights_warranty,
+        source_url: None,
+    });
+    if !check.is_complete() {
+        bail!(
+            "import-dir needs --license, --author, --surface and --rights-warranty: {}",
+            check.problems.join("; ")
+        );
     }
+    let data_paths = crate::sources::DataPaths::from_rain_dir(&options.target_dir);
+    let mut contribution_ledger = crate::sources::Ledger::load(&data_paths.ledger())?;
 
     let license_tier = if let Some(lic) = &options.default_license {
         LicenseVerifier::verify(lic).1
@@ -986,10 +1046,32 @@ pub fn import_local_directory(
         if let Some(ref mut manifest) = existing_manifest {
             if let Some(existing_record) = manifest.records.iter_mut().find(|r| r.sha256 == sha256)
             {
+                if provenance_conflicts(
+                    existing_record.license.as_deref(),
+                    &existing_record.contributors,
+                    options.default_license.as_deref(),
+                    options.author.as_deref(),
+                ) {
+                    warn!(
+                        "  [!] {:?} is already recorded under a different license or contributor; not imported",
+                        file
+                    );
+                    rejected_reasons.push(RejectedSourceEntry {
+                        source_id: file_stem.clone(),
+                        file_path: file.display().to_string(),
+                        rejection_reason: format!(
+                            "CONFLICTING_PROVENANCE: already recorded as {:?} by {:?} under {:?}",
+                            existing_record.filename,
+                            existing_record.contributors,
+                            existing_record.license
+                        ),
+                    });
+                    continue;
+                }
                 is_dedup = true;
                 let incoming = ProvenanceRecord {
                     filename: existing_record.filename.clone(),
-                    source_url: format!("local://{}", file.display()),
+                    source_url: format!("contribution://{}/{}", author_str, sha256),
                     source_platform: format!("Community Contribution ({})", author_str),
                     tags: tags.clone(),
                     license: options.default_license.clone(),
@@ -1074,7 +1156,7 @@ pub fn import_local_directory(
         // 5. Record provenance entry
         let prov = ProvenanceRecord {
             filename: dest_filename.clone(),
-            source_url: format!("local://{}", file.display()),
+            source_url: format!("contribution://{}/{}", author_str, sha256),
             source_platform: format!("Community Contribution ({})", author_str),
             tags,
             license: options.default_license.clone(),
@@ -1087,10 +1169,24 @@ pub fn import_local_directory(
             contributors: contrib_list,
         };
         provenance_records.push(prov);
+        if !contribution_ledger.iter().any(|r| r.sha256 == sha256) {
+            let rec = crate::sources::LedgerRecord::contribution(
+                &dest_filename,
+                &sha256,
+                options.author.as_deref().unwrap_or_default(),
+                &file_stem,
+                options.default_license.as_deref().unwrap_or_default(),
+                license_tier,
+                check.surface.map(|s| s.as_str()).unwrap_or_default(),
+                "import-dir",
+            );
+            crate::sources::Ledger::append(&data_paths.ledger(), &rec)?;
+            contribution_ledger.push(rec);
+        }
 
         // 6. Append DownloadItem for sources.json
         new_sources.push(DownloadItem {
-            url: format!("local://{}", dest_filename),
+            url: format!("contribution://{}/{}", author_str, sha256),
             filename: dest_filename.clone(),
             category: "auto_imported".to_string(), // Legacy field on DownloadItem
             license: options.default_license.clone().unwrap_or_default(),
@@ -1165,6 +1261,9 @@ pub fn import_local_directory(
         }
     }
 
+    // The provenance ledger is the source of truth; regenerate its outputs.
+    crate::sources::regenerate_outputs(&data_paths)?;
+
     info!(
         "[+] Import complete: {} / {} files accepted ({:.1}s total duration).",
         successfully_imported,
@@ -1201,10 +1300,117 @@ fn find_audio_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+/// What a public contribution must carry before it can enter the corpus.
+/// Anything missing sends it to triage (the quarantine folder / `QUARANTINE`
+/// status) with the reasons listed, never straight to training.
+#[derive(Debug, Clone, Default)]
+pub struct ContributionMetadata<'a> {
+    pub license: Option<&'a str>,
+    pub contributor: Option<&'a str>,
+    pub title: Option<&'a str>,
+    pub surface: Option<&'a str>,
+    pub rights_warranty: bool,
+    /// A link instead of an uploaded file (e.g. a YouTube or Drive URL).
+    pub source_url: Option<&'a str>,
+}
+
+/// Result of [`check_contribution`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContributionCheck {
+    pub tier: LicenseTier,
+    pub surface: Option<shared::surface::CanonicalSurface>,
+    /// Empty when the contribution is complete.
+    pub problems: Vec<String>,
+}
+
+impl ContributionCheck {
+    pub fn is_complete(&self) -> bool {
+        self.problems.is_empty()
+    }
+    /// One-line reason for quarantine records and logs.
+    pub fn reason(&self) -> String {
+        format!("INCOMPLETE_CONTRIBUTION: {}", self.problems.join("; "))
+    }
+}
+
+fn is_placeholder_name(s: &str) -> bool {
+    matches!(
+        s.trim().to_lowercase().as_str(),
+        "" | "anonymous" | "anon" | "unknown" | "n/a" | "none" | "rainai community" | "community"
+    )
+}
+
+/// Checks that a contribution has enough information to be lawful (an allowed
+/// license, a named contributor who confirmed the rights warranty, and an
+/// uploaded file rather than a link to someone else's content) and useful (a
+/// recognised surface). Audio quality is checked separately.
+pub fn check_contribution(m: &ContributionMetadata) -> ContributionCheck {
+    let mut problems = Vec::new();
+    let (ok, tier, reason) = LicenseVerifier::verify(m.license.unwrap_or(""));
+    if !ok {
+        problems.push(format!("license: {reason}"));
+    }
+    if m.contributor.is_none_or(is_placeholder_name) {
+        problems.push("no contributor name (needed for credit and accountability)".to_string());
+    }
+    if !m.rights_warranty {
+        problems.push("rights warranty not confirmed".to_string());
+    }
+    let surface = m
+        .surface
+        .and_then(shared::surface::CanonicalSurface::try_from_tag);
+    match (m.surface, surface) {
+        (None, _) => problems.push("no surface tag (e.g. tin_roof, glass, foliage)".to_string()),
+        (Some(t), None) => problems.push(format!("surface '{t}' isn't a recognised surface")),
+        _ => {}
+    }
+    if let Some(url) = m.source_url.filter(|u| !u.trim().is_empty()) {
+        if url.starts_with("http://") || url.starts_with("https://") {
+            problems.push(format!(
+                "link-only submission ({url}); only uploaded recordings you made can be accepted"
+            ));
+        }
+    }
+    if tier == LicenseTier::AttributionOnly && m.title.is_none_or(|t| t.trim().is_empty()) {
+        problems.push("CC BY contribution has no title to credit".to_string());
+    }
+    ContributionCheck {
+        tier,
+        surface,
+        problems,
+    }
+}
+
+/// True when two records for the same audio disagree about who made it or how
+/// it's licensed. That can't be resolved automatically (one of them may be
+/// claiming someone else's recording), so the newer one goes to triage.
+pub fn provenance_conflicts(
+    existing_license: Option<&str>,
+    existing_contributors: &[String],
+    incoming_license: Option<&str>,
+    incoming_contributor: Option<&str>,
+) -> bool {
+    let norm = |s: Option<&str>| s.map(|x| x.trim().to_lowercase()).unwrap_or_default();
+    let lic_differs = !norm(existing_license).is_empty()
+        && !norm(incoming_license).is_empty()
+        && norm(existing_license) != norm(incoming_license);
+    let who_differs = match incoming_contributor.filter(|c| !is_placeholder_name(c)) {
+        Some(c) if !existing_contributors.is_empty() => !existing_contributors
+            .iter()
+            .any(|e| e.trim().eq_ignore_ascii_case(c.trim())),
+        _ => false,
+    };
+    lic_differs || who_differs
+}
+
 /// Extracted or sidecar metadata for contributed precipitation audio assets.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ExtractedAudioMetadata {
     pub license: Option<String>,
+    /// The contributor confirmed `CONTRIBUTOR_WARRANTY_STATEMENT` (sidecar key
+    /// `rights_warranty: true`).
+    #[serde(default)]
+    pub rights_warranty: bool,
     pub author: Option<String>,
     pub title: Option<String>,
     pub surface_tag: Option<String>,
@@ -1215,6 +1421,7 @@ pub struct ExtractedAudioMetadata {
 
 impl ExtractedAudioMetadata {
     pub fn merge_with(&mut self, other: ExtractedAudioMetadata) {
+        self.rights_warranty |= other.rights_warranty;
         if other.license.is_some() {
             self.license = other.license;
         }
@@ -1273,6 +1480,11 @@ pub fn extract_sidecar_metadata(audio_path: &Path) -> Result<Option<ExtractedAud
                         if let Some(lic) = val.get("license").and_then(|v| v.as_str()) {
                             meta.license = Some(lic.to_string());
                         }
+                        meta.rights_warranty = val
+                            .get("rights_warranty")
+                            .or_else(|| val.get("warranty"))
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
                         if let Some(auth) = val
                             .get("author")
                             .or_else(|| val.get("artist"))
@@ -1342,6 +1554,10 @@ pub fn extract_sidecar_metadata(audio_path: &Path) -> Result<Option<ExtractedAud
                             if !val.is_empty() {
                                 match key.as_str() {
                                     "license" => meta.license = Some(val.to_string()),
+                                    "rights_warranty" | "warranty" => {
+                                        meta.rights_warranty =
+                                            matches!(val.to_lowercase().as_str(), "true" | "yes")
+                                    }
                                     "author" | "artist" | "contributor" => {
                                         meta.author = Some(val.to_string())
                                     }
@@ -1633,14 +1849,9 @@ pub fn process_input_drop_folder(
     );
 
     let mut ledger = crate::data_worker::DataUtilityLedger::load_or_create(ledger_path);
-    let mut prov_manifest = if manifest_provenance_path.exists() {
-        fs::read_to_string(manifest_provenance_path)
-            .ok()
-            .and_then(|c| serde_json::from_str::<ProvenanceManifest>(&c).ok())
-            .unwrap_or_default()
-    } else {
-        ProvenanceManifest::default()
-    };
+    // manifest_provenance.json is generated from the provenance ledger now.
+    let data_paths = crate::sources::DataPaths::from_rain_dir(target_dir);
+    let mut contribution_ledger = crate::sources::Ledger::load(&data_paths.ledger())?;
 
     for audio_path in audio_files {
         let filename = audio_path
@@ -1662,40 +1873,26 @@ pub fn process_input_drop_folder(
             meta.merge_with(s);
         }
 
-        // 2. Validate Ethical License
-        let license_str = meta.license.as_deref().unwrap_or("Unknown");
-        let (license_approved, license_tier, license_reason) = LicenseVerifier::verify(license_str);
-
-        if !license_approved {
-            // Quarantine: Missing or unapproved license
-            let file_sha =
-                compute_file_sha256(&audio_path).unwrap_or_else(|_| format!("unknown_{}", stem));
-            let quar_dest = quarantine_dir.join(&filename);
-            let _ = fs::rename(&audio_path, &quar_dest);
-
-            let quar_json_path = quarantine_dir.join(format!("{}_quarantine.json", stem));
-            let quar_record = QuarantineRecord {
-                filename: filename.clone(),
-                original_path: audio_path.display().to_string(),
-                sha256: file_sha,
-                status: "QUARANTINE".to_string(),
-                quarantine_reason: format!("UNAPPROVED_OR_MISSING_LICENSE: {}", license_reason),
-                extracted_metadata: meta.clone(),
-                created_at: crate::ingest::chrono_lite_timestamp(),
-            };
-            let _ = atomic_write(
-                &quar_json_path,
-                serde_json::to_string_pretty(&quar_record)?.as_bytes(),
-            );
-
-            warn!(
-                "  [!] Quarantined {:?}: Unapproved or missing license ({})",
-                filename, license_reason
-            );
+        // 2. Completeness: license, contributor, warranty, surface. Gaps go to triage.
+        let check = check_contribution(&ContributionMetadata {
+            license: meta.license.as_deref(),
+            contributor: meta.author.as_deref(),
+            title: meta.title.as_deref().or(Some(stem.as_str())),
+            surface: meta
+                .surface_tag
+                .as_deref()
+                .or(meta.tags.first().map(|t| t.as_str())),
+            rights_warranty: meta.rights_warranty,
+            source_url: None,
+        });
+        if !check.is_complete() {
+            let dest = quarantine_input(&audio_path, quarantine_dir, &check.reason(), &meta)?;
             result.quarantined_count += 1;
-            result.quarantined_files.push(quar_dest);
+            result.quarantined_files.push(dest);
             continue;
         }
+        let license_tier = check.tier;
+        let surface_name = check.surface.map(|s| s.as_str()).unwrap_or_default();
 
         // 3. License is approved: attempt audio standardization to 48kHz stereo WAV
         let temp_std_path = target_dir.join(format!("temp_std_{}.wav", stem));
@@ -1705,13 +1902,35 @@ pub fn process_input_drop_folder(
                 let final_std_path = target_dir.join(&final_filename);
                 let _ = fs::rename(&temp_std_path, &final_std_path);
 
-                // Determine surface tag
-                let surface_tag = meta
-                    .surface_tag
-                    .clone()
-                    .or_else(|| meta.tags.first().cloned())
-                    .unwrap_or_else(|| "ambient_broadband".to_string());
-                let canonical_surf = shared::surface::CanonicalSurface::from_tag(&surface_tag);
+                // Same audio already in the ledger under a different license or
+                // contributor: we can't tell which claim is true, so triage it.
+                if let Some(prev) = contribution_ledger.iter().find(|r| r.sha256 == std_sha256) {
+                    let conflict = provenance_conflicts(
+                        Some(prev.license.as_str()),
+                        std::slice::from_ref(&prev.creator),
+                        meta.license.as_deref(),
+                        meta.author.as_deref(),
+                    );
+                    let note = format!(
+                        "CONFLICTING_PROVENANCE: already recorded as \"{}\" by {} under {}",
+                        prev.title, prev.creator, prev.license
+                    );
+                    let _ = fs::remove_file(&final_std_path);
+                    if conflict {
+                        let dest = quarantine_input(&audio_path, quarantine_dir, &note, &meta)?;
+                        result.quarantined_count += 1;
+                        result.quarantined_files.push(dest);
+                    } else {
+                        info!("  [=] {:?} is already in the ledger", filename);
+                        let _ = fs::remove_file(&audio_path);
+                    }
+                    continue;
+                }
+
+                let surface_tag = surface_name.to_string();
+                let canonical_surf = check
+                    .surface
+                    .unwrap_or(shared::surface::CanonicalSurface::Pavement);
                 let material_props = canonical_surf.material_properties().to_array();
 
                 let q_score = metrics.spectral_flatness.clamp(0.0, 1.0) * 0.4
@@ -1743,34 +1962,19 @@ pub fn process_input_drop_folder(
                 };
                 ledger.upsert_record(utility_record);
 
-                // Register in Provenance Manifest
-                let prov_record = ProvenanceRecord {
-                    filename: final_filename.clone(),
-                    source_url: format!("local_drop://{}", filename),
-                    source_platform: format!(
-                        "Local Drop Intake ({})",
-                        meta.author.as_deref().unwrap_or("Contributor")
-                    ),
-                    tags: if meta.tags.is_empty() {
-                        vec![surface_tag.clone()]
-                    } else {
-                        meta.tags.clone()
-                    },
-                    license: meta.license.clone(),
+                // Credit comes from the provenance ledger; outputs are regenerated below.
+                let rec = crate::sources::LedgerRecord::contribution(
+                    &final_filename,
+                    &std_sha256,
+                    meta.author.as_deref().unwrap_or_default(),
+                    meta.title.as_deref().unwrap_or(&stem),
+                    meta.license.as_deref().unwrap_or_default(),
                     license_tier,
-                    sha256: std_sha256.clone(),
-                    file_size_bytes: fs::metadata(&final_std_path).map(|m| m.len()).unwrap_or(0),
-                    quality: Some(metrics),
-                    descriptions: meta.descriptions.clone(),
-                    alternate_licenses: Vec::new(),
-                    contributors: meta.author.clone().map(|a| vec![a]).unwrap_or_default(),
-                };
-                prov_manifest.records.push(prov_record);
-                prov_manifest.total_sources = prov_manifest.records.len();
-                *prov_manifest
-                    .tags_distribution
-                    .entry(surface_tag)
-                    .or_insert(0) += 1;
+                    &surface_tag,
+                    "drop-folder",
+                );
+                crate::sources::Ledger::append(&data_paths.ledger(), &rec)?;
+                contribution_ledger.push(rec);
 
                 // Remove original audio and any sidecar from input_dir
                 let _ = fs::remove_file(&audio_path);
@@ -1789,43 +1993,69 @@ pub fn process_input_drop_folder(
                 result.standardized_files.push(final_std_path);
             }
             Err(e) => {
-                // Audio standardization or DSP screening failed -> Quarantine
+                // Audio standardization or DSP screening failed -> triage
                 let _ = fs::remove_file(&temp_std_path);
-                let file_sha = compute_file_sha256(&audio_path)
-                    .unwrap_or_else(|_| format!("unknown_{}", stem));
-                let quar_dest = quarantine_dir.join(&filename);
-                let _ = fs::rename(&audio_path, &quar_dest);
-
-                let quar_json_path = quarantine_dir.join(format!("{}_quarantine.json", stem));
-                let quar_record = QuarantineRecord {
-                    filename: filename.clone(),
-                    original_path: audio_path.display().to_string(),
-                    sha256: file_sha,
-                    status: "QUARANTINE".to_string(),
-                    quarantine_reason: format!("ACOUSTIC_SCREENING_FAILED: {}", e),
-                    extracted_metadata: meta.clone(),
-                    created_at: crate::ingest::chrono_lite_timestamp(),
-                };
-                let _ = atomic_write(
-                    &quar_json_path,
-                    serde_json::to_string_pretty(&quar_record)?.as_bytes(),
-                );
-
-                warn!(
-                    "  [!] Quarantined {:?}: Acoustic screening failed: {}",
-                    filename, e
-                );
+                let dest = quarantine_input(
+                    &audio_path,
+                    quarantine_dir,
+                    &format!("ACOUSTIC_SCREENING_FAILED: {e}"),
+                    &meta,
+                )?;
                 result.quarantined_count += 1;
-                result.quarantined_files.push(quar_dest);
+                result.quarantined_files.push(dest);
             }
         }
     }
 
-    // Persist updated ledger and provenance manifest
+    // Persist the utility ledger, then regenerate attributions, provenance and
+    // the catalog from the provenance ledger.
     let _ = ledger.save_to_file(ledger_path);
-    if let Ok(json) = serde_json::to_string_pretty(&prov_manifest) {
-        let _ = atomic_write(manifest_provenance_path, json.as_bytes());
+    if result.standardized_count > 0 {
+        crate::sources::regenerate_outputs(&data_paths)?;
+        // Callers may keep the provenance manifest elsewhere; mirror it there.
+        if manifest_provenance_path != data_paths.provenance() {
+            let _ = fs::copy(data_paths.provenance(), manifest_provenance_path);
+        }
     }
 
     Ok(result)
+}
+
+/// Moves a contribution to the triage folder with a JSON note of why.
+fn quarantine_input(
+    audio_path: &Path,
+    quarantine_dir: &Path,
+    reason: &str,
+    meta: &ExtractedAudioMetadata,
+) -> Result<PathBuf> {
+    let filename = audio_path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let stem = audio_path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let sha256 = compute_file_sha256(audio_path).unwrap_or_else(|_| format!("unknown_{stem}"));
+    let dest = quarantine_dir.join(&filename);
+    fs::rename(audio_path, &dest)
+        .or_else(|_| fs::copy(audio_path, &dest).and_then(|_| fs::remove_file(audio_path)))
+        .with_context(|| format!("moving {audio_path:?} to triage"))?;
+    let record = QuarantineRecord {
+        filename: filename.clone(),
+        original_path: audio_path.display().to_string(),
+        sha256,
+        status: "QUARANTINE".to_string(),
+        quarantine_reason: reason.to_string(),
+        extracted_metadata: meta.clone(),
+        created_at: crate::ingest::chrono_lite_timestamp(),
+    };
+    atomic_write(
+        &quarantine_dir.join(format!("{stem}_quarantine.json")),
+        serde_json::to_string_pretty(&record)?.as_bytes(),
+    )?;
+    warn!("  [!] Triaged {filename:?}: {reason}");
+    Ok(dest)
 }

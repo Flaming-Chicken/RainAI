@@ -34,6 +34,7 @@ pub mod features;
 pub mod golden_vectors;
 pub mod ingest;
 pub mod pipeline;
+pub mod sources;
 pub mod spatial_upmix;
 pub mod stft_loss;
 pub mod synth_rain;

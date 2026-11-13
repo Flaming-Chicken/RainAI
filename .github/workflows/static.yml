@@ -31,18 +31,6 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Checkout spodeian-core dependency
-        uses: actions/checkout@v4
-        with:
-          repository: Spodeian/spodeian-core
-          ref: dev
-          path: spodeian-core
-          token: ${{ secrets.PRIVATE_READ_ACCESS || secrets.SPODEIAN_CORE_TOKEN || secrets.GH_PAT || secrets.PAT || secrets.SPODEIAN_TOKEN || github.token }}
-
-      - name: Link spodeian-core to parent directory
-        shell: bash
-        run: ln -s "$PWD/spodeian-core" "$PWD/../spodeian-core"
-
       - name: Install Rust Stable Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:

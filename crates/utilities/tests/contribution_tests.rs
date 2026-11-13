@@ -106,8 +106,9 @@ fn test_manifest_serialization_and_template() {
 #[test]
 fn test_license_and_quality_screening_in_manifest_validation() {
     let mut manifest = RainContributionManifest::new("Test Contribution", "Researcher");
+    manifest.rights_warranty = true;
 
-    // Approved license entry (remote URL)
+    // CC0 entry, but a link rather than an uploaded recording: triaged
     manifest.add_source(RainSourceEntry {
         id: "valid_cc0_src".to_string(),
         file_path: "remote_rain.wav".to_string(),
@@ -147,12 +148,17 @@ fn test_license_and_quality_screening_in_manifest_validation() {
 
     let res = validate_manifest(&manifest, None, None).expect("Validation execution failed");
 
-    assert_eq!(res.valid_entries.len(), 1);
-    assert_eq!(res.rejected_entries.len(), 1);
-    assert_eq!(res.valid_entries[0].source.id, "valid_cc0_src");
-    assert_eq!(res.rejected_entries[0].source_id, "rejected_nc_src");
+    assert_eq!(res.valid_entries.len(), 0);
+    assert_eq!(res.rejected_entries.len(), 2);
+    assert_eq!(res.rejected_entries[0].source_id, "valid_cc0_src");
     assert!(
         res.rejected_entries[0]
+            .rejection_reason
+            .contains("link-only")
+    );
+    assert_eq!(res.rejected_entries[1].source_id, "rejected_nc_src");
+    assert!(
+        res.rejected_entries[1]
             .rejection_reason
             .contains("NonCommercial")
     );
@@ -244,11 +250,12 @@ fn test_import_local_directory_end_to_end() {
     create_silent_wav(&input_dir.join("bad_silent_recording.wav"), 2.5, 48000);
 
     let options = LocalImportOptions {
-        default_tags: Vec::new(),
+        default_tags: vec!["glass".to_string()],
         default_rate: Some(PrecipitationRate::ModerateRain),
         default_mic: Some(MicrophoneSetup::StereoSpaced),
         default_license: Some("CC0 1.0 Universal".to_string()),
         author: Some("Alice Cooper".to_string()),
+        rights_warranty: true,
         target_dir: target_dir.clone(),
         update_sources_json: false,
         update_attributions: false,
@@ -413,6 +420,7 @@ fn test_validate_manifest_content_addressed_deduplication() {
     create_synthetic_rain_wav(&wav_path, 2.0, 48000, 0.20, false);
 
     let mut manifest = RainContributionManifest::new("Deduplication Test", "Curator");
+    manifest.rights_warranty = true;
 
     // First entry pointing to the WAV file
     manifest.add_source(RainSourceEntry {
@@ -455,27 +463,21 @@ fn test_validate_manifest_content_addressed_deduplication() {
     let res =
         validate_manifest(&manifest, Some(&temp_dir), None).expect("Manifest validation failed");
 
-    // Only 1 unique valid entry exists after content-addressed deduplication
+    // The same audio claimed by a second person under another license can't be
+    // merged (one claim may be false): it goes to triage, and Alice's CC BY
+    // license, with its attribution requirement, stands.
     assert_eq!(res.valid_entries.len(), 1);
-    assert_eq!(res.rejected_entries.len(), 0);
-
-    // Duration is counted only once (2.0s, not 4.0s)
-    assert!((1.9..=2.1).contains(&res.total_duration_secs));
-
-    // Metadata is reconciled
-    let reconciled = &res.valid_entries[0].source;
-    assert_eq!(reconciled.tags, vec!["pavement", "asphalt"]);
-    assert_eq!(
-        reconciled.license.as_deref(),
-        Some("RainAI-FC-Proprietary-License")
-    );
+    assert_eq!(res.rejected_entries.len(), 1);
+    assert_eq!(res.rejected_entries[0].source_id, "duplicate_submission");
     assert!(
-        reconciled
-            .alternate_licenses
-            .contains(&"CC-BY 4.0".to_string())
+        res.rejected_entries[0]
+            .rejection_reason
+            .contains("CONFLICTING_PROVENANCE")
     );
-    assert_eq!(reconciled.contributors, vec!["Alice", "Bob"]);
-    assert_eq!(reconciled.descriptions.len(), 2);
+    assert!((1.9..=2.1).contains(&res.total_duration_secs));
+    let kept = &res.valid_entries[0].source;
+    assert_eq!(kept.license.as_deref(), Some("CC-BY 4.0"));
+    assert_eq!(kept.contributors, vec!["Alice"]);
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
@@ -500,6 +502,7 @@ fn test_import_local_directory_content_addressed_deduplication() {
         default_mic: Some(MicrophoneSetup::StereoSpaced),
         default_license: Some("CC-BY 4.0".to_string()),
         author: Some("Recordist_A".to_string()),
+        rights_warranty: true,
         target_dir: target_dir.clone(),
         update_sources_json: false,
         update_attributions: false,
@@ -529,6 +532,7 @@ fn test_import_local_directory_content_addressed_deduplication() {
         default_mic: Some(MicrophoneSetup::StereoSpaced),
         default_license: Some("RainAI-FC-Proprietary-License".to_string()),
         author: Some("Recordist_B".to_string()),
+        rights_warranty: true,
         target_dir: target_dir.clone(),
         update_sources_json: false,
         update_attributions: false,
@@ -537,7 +541,14 @@ fn test_import_local_directory_content_addressed_deduplication() {
 
     let report2 =
         import_local_directory(&duplicate_input_dir, &options2).expect("Second import failed");
-    assert_eq!(report2.successfully_imported, 1);
+    // Recordist_B claims Recordist_A's audio under another license: triaged.
+    assert_eq!(report2.successfully_imported, 0);
+    assert_eq!(report2.rejected_count, 1);
+    assert!(
+        report2.rejected_reasons[0]
+            .rejection_reason
+            .contains("CONFLICTING_PROVENANCE")
+    );
 
     // CRITICAL: Binary storage was NOT duplicated! Still only 1 WAV file on disk!
     let audio_files_after_run2: Vec<_> = fs::read_dir(&target_dir)
@@ -552,19 +563,12 @@ fn test_import_local_directory_content_addressed_deduplication() {
     let content = fs::read_to_string(&prov_path).unwrap();
     let manifest: utilities::ingest::ProvenanceManifest = serde_json::from_str(&content).unwrap();
 
-    // Still only 1 record, but reconciled
+    // Still one record, unchanged: Recordist_A's CC BY 4.0.
     assert_eq!(manifest.records.len(), 1);
     let record = &manifest.records[0];
     assert!(record.tags.contains(&"tin_roof".to_string()));
-    assert!(record.tags.contains(&"metal_surface".to_string()));
-    assert!(record.tags.contains(&"monsoon".to_string()));
-    assert_eq!(
-        record.license.as_deref(),
-        Some("RainAI-FC-Proprietary-License")
-    );
-    assert!(record.alternate_licenses.contains(&"CC-BY 4.0".to_string()));
-    assert!(record.contributors.contains(&"Recordist_A".to_string()));
-    assert!(record.contributors.contains(&"Recordist_B".to_string()));
+    assert_eq!(record.license.as_deref(), Some("CC-BY 4.0"));
+    assert_eq!(record.contributors, vec!["Recordist_A".to_string()]);
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
@@ -668,7 +672,9 @@ fn test_process_input_drop_folder_quarantine_routing() {
         &silent_sidecar,
         serde_json::json!({
             "license": "CC0 1.0 Universal",
-            "author": "Someone"
+            "author": "Someone",
+            "surface": "glass",
+            "rights_warranty": true
         })
         .to_string(),
     )
@@ -710,7 +716,17 @@ fn test_process_input_drop_folder_quarantine_routing() {
     assert!(
         quar_meta
             .quarantine_reason
-            .contains("UNAPPROVED_OR_MISSING_LICENSE")
+            .contains("INCOMPLETE_CONTRIBUTION")
+    );
+    assert!(quar_meta.quarantine_reason.contains("license"));
+    let silent_meta: utilities::contribute::QuarantineRecord = serde_json::from_str(
+        &fs::read_to_string(quar_dir.join("silent_rain_quarantine.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        silent_meta
+            .quarantine_reason
+            .contains("ACOUSTIC_SCREENING_FAILED")
     );
 
     let _ = fs::remove_dir_all(&temp_dir);
@@ -743,6 +759,8 @@ fn test_process_input_drop_folder_standardization_and_promotion() {
         serde_json::json!({
             "license": "CC-BY-4.0",
             "author": "AcousticRecordist",
+            "title": "Tin shed downpour",
+            "rights_warranty": true,
             "surface": "tin_roof",
             "tags": ["tin_roof", "corrugated_metal"],
             "descriptions": ["Loud rain droplets hitting tin shed"]
@@ -921,4 +939,118 @@ fn test_smooth_rolling_quota_eviction() {
     assert!(evicted_records.iter().any(|r| r.chunk_id == "chunk_002"));
 
     let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_contribution_completeness_check() {
+    use utilities::contribute::{ContributionMetadata, check_contribution};
+    let ok = ContributionMetadata {
+        license: Some("CC0 1.0 Universal"),
+        contributor: Some("Alice"),
+        title: Some("Rain on a tin shed"),
+        surface: Some("corrugated_tin_roof"),
+        rights_warranty: true,
+        source_url: None,
+    };
+    let c = check_contribution(&ok);
+    assert!(c.is_complete(), "{:?}", c.problems);
+    assert_eq!(c.surface, Some(shared::surface::CanonicalSurface::TinRoof));
+
+    let gaps: [(ContributionMetadata, &str); 7] = [
+        (
+            ContributionMetadata {
+                license: None,
+                ..ok.clone()
+            },
+            "license",
+        ),
+        (
+            ContributionMetadata {
+                license: Some("CC-BY-SA 4.0"),
+                ..ok.clone()
+            },
+            "ShareAlike",
+        ),
+        (
+            ContributionMetadata {
+                contributor: Some("Anonymous"),
+                ..ok.clone()
+            },
+            "contributor",
+        ),
+        (
+            ContributionMetadata {
+                rights_warranty: false,
+                ..ok.clone()
+            },
+            "warranty",
+        ),
+        (
+            ContributionMetadata {
+                surface: Some("ambient"),
+                ..ok.clone()
+            },
+            "recognised surface",
+        ),
+        (
+            ContributionMetadata {
+                source_url: Some("https://youtube.com/watch?v=x"),
+                ..ok.clone()
+            },
+            "link-only",
+        ),
+        (
+            ContributionMetadata {
+                license: Some("CC-BY 4.0"),
+                title: Some(" "),
+                ..ok.clone()
+            },
+            "title",
+        ),
+    ];
+    for (m, expect) in gaps {
+        let c = check_contribution(&m);
+        assert!(!c.is_complete());
+        assert!(c.reason().contains(expect), "{expect}: {}", c.reason());
+    }
+}
+
+#[test]
+fn test_provenance_conflict_detection() {
+    use utilities::contribute::provenance_conflicts;
+    let alice = vec!["Alice".to_string()];
+    // Same person re-submitting: fine. Different license or person: conflict.
+    assert!(!provenance_conflicts(
+        Some("CC0"),
+        &alice,
+        Some("cc0"),
+        Some("alice")
+    ));
+    assert!(provenance_conflicts(
+        Some("CC-BY-NC 4.0"),
+        &alice,
+        Some("CC0"),
+        Some("Alice")
+    ));
+    assert!(provenance_conflicts(
+        Some("CC0"),
+        &alice,
+        Some("CC0"),
+        Some("Mallory")
+    ));
+    // Missing incoming details aren't a conflict on their own (completeness catches them).
+    assert!(!provenance_conflicts(Some("CC0"), &alice, None, None));
+}
+
+#[test]
+fn test_surface_taxonomy_is_single_source() {
+    use shared::surface::CanonicalSurface;
+    assert_eq!(CanonicalSurface::try_from_tag("ambient_broadband"), None);
+    assert_eq!(
+        CanonicalSurface::from_tag("ambient_broadband"),
+        CanonicalSurface::Pavement
+    );
+    let names: Vec<&str> = CanonicalSurface::ALL.iter().map(|s| s.as_str()).collect();
+    assert_eq!(utilities::autopilot::CANONICAL_SURFACES.to_vec(), names);
+    assert!(names.contains(&"asphalt"));
 }
