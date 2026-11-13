@@ -11,7 +11,7 @@ To capture the vast diversity of global rain textures—from tropical monsoon de
 The easiest way to contribute is directly through the RainAI Web Application:
 1. Open the RainAI Studio interface.
 2. Click the **🌧 Contribute Data** button in the top navigation bar.
-3. Select your local audio/video file or paste a remote URL (YouTube, Freesound, Google Drive).
+3. Select an audio or video file **you recorded yourself**. (Links to YouTube or other people's uploads are not accepted.)
 4. The browser will automatically:
    - Run Web Audio API DSP checks (RMS & clipping) directly on your device.
    - Compress uncompressed PCM/WAV to **FLAC Level 8** (100% bit-for-bit lossless, zero quality drop).
@@ -38,7 +38,7 @@ The easiest way to contribute is directly through the RainAI Web Application:
 
 ## 3. Licensing Options & Contributor Warranty
 
-RainAI features an **Explainable AI (XAI)** architecture that natively tracks data provenance, mapping model outputs back to input attribution metadata. In RainAI, all training data is **permanently attributed upon ingestion** into [`data/rain/ATTRIBUTIONS.txt`](data/rain/ATTRIBUTIONS.txt) and project documentation, ensuring that model generation is **never blocked at runtime**. Real-time XAI explainability operates as an optional feature.
+RainAI features an **Explainable AI (XAI)** architecture that natively tracks data provenance, mapping model outputs back to input attribution metadata. In RainAI, all training data is **permanently attributed upon ingestion** into the provenance ledger, from which `ATTRIBUTIONS.txt` is generated for each model release, ensuring that model generation is **never blocked at runtime**. Real-time XAI explainability operates as an optional feature.
 
 ### 3.1 `RainAI-FC-Proprietary-License` (Default / Recommended)
 This is the default option when submitting audio data:
@@ -47,12 +47,15 @@ This is the default option when submitting audio data:
 **Our Transparency Commitment:**
 > *"While this license allows us to use your data freely to build RainAI, our system is designed for transparency. We track the metadata of all contributions, meaning you will always be credited when your specific data directly influences our explainable AI's outputs."*
 
-### 3.2 Compatible Open Licenses
-Contributors may choose from a wide range of compatible open licenses:
-- **`CC0 1.0 Universal` / Public Domain:** Unconstrained dedication (includes `Unlicense`, `WTFPL`, `ODC-PDDL`).
-- **`CC-BY 4.0` (Permissive Attribution):** Commercial attribution (also covers `CC-BY 3.0/2.0`, `MIT`, `Apache-2.0`, `BSD`, `ISC`, `ODC-By`). Permanently attributed upon ingestion.
-- **`CC-BY-SA 4.0` (Commercial Share-Alike):** Copyleft commercial compatibility with derivative attribution.
-- **`Custom`:** Other verified open content licenses.
+### 3.2 Open Licenses
+If you'd rather license your recording openly, these are accepted:
+- **`CC0 1.0 Universal` / Public Domain**
+- **`CC BY 4.0` (or 3.0):** you'll be credited by name in the generated attributions.
+
+Nothing else is accepted for training: no ShareAlike (CC BY-SA), NonCommercial
+(-NC) or NoDerivatives (-ND) licenses, no software licenses (MIT, Apache, ...),
+and no platform licenses (Mixkit, Pixabay, ...). See
+[DATA_BIBLIOGRAPHY.md](DATA_BIBLIOGRAPHY.md) for the full policy.
 
 ### 3.3 `Unknown / Unspecified` (Immediate Quarantine)
 If you do not know the exact license of a recording or stream:
@@ -64,7 +67,7 @@ If you do not know the exact license of a recording or stream:
 Before staging any audio or URL, you must confirm:
 > *"I represent and warrant that I own or have the necessary rights to grant this license."*
 
-*Note: Submissions containing Non-Commercial (`-NC`) or No-Derivatives (`-ND`) clauses are ineligible for commercial neural training and are automatically quarantined or rejected.*
+*Note: Submissions under a ShareAlike, NonCommercial (`-NC`) or NoDerivatives (`-ND`) license, or with no license, are not used for training.*
 
 ---
 

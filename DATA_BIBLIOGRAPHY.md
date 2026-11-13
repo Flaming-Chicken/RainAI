@@ -6,30 +6,43 @@ This register provides formal accounting, academic literature citations, licensi
 
 ---
 
-## 1. Academic & Open Audio Datasets
+## 1. Training Audio: Sources and Licenses
 
-### 1.1 Environmental Sound Classification (ESC-50)
-- **Primary Citation**:
-  - Piczak, K. J. (2015). *ESC: Dataset for Environmental Sound Classification*. Proceedings of the 23rd ACM International Conference on Multimedia, 1015–1018.
-- **License**: Creative Commons Attribution 3.0 Unported (CC BY 3.0)
-- **Categories Utilized**: Rain, Thunderstorm, Wind, Water drops, Stream.
-- **Processing**: Resampled to 48 kHz / 24-bit floating point, multi-channel ambisonic spatialization.
+RainAI ships **no audio, datasets or weights** in git. Training audio is
+downloaded by `rainai_ingest` from the sources listed in
+[`source_registry.json`](source_registry.json), and each item's license is read
+from the platform's own metadata at download time.
 
-### 1.2 Freesound Environmental Audio Corpus
-- **Primary Platform**: Freesound.org API (Universitat Pompeu Fabra)
-- **Licenses**: Creative Commons 0 (CC0), CC-BY 4.0, CC-BY-SA 4.0
-- **Attribution**: Complete itemized attribution list maintained in [`data/rain/ATTRIBUTIONS.txt`](data/rain/ATTRIBUTIONS.txt).
-- **Acoustic Categories**: Foliage canopies (oak, pine needle, bamboo), asphalt impacts, puddle cavitation, metal roofs, window glass resonant panes.
+**Allowed licenses, and nothing else:**
+- CC0 1.0 and public domain (including the Public Domain Mark)
+- CC BY 3.0 / 4.0, with creator, title, source URL, license URL and changes recorded
+- audio you record or generate yourself (for example `synth_rain`), and
+  contributions under the RainAI contributor grant (see
+  [CONTRIBUTING_DATA.md](CONTRIBUTING_DATA.md))
 
-### 1.3 National Park Service (NPS) Soundscapes
-- **Primary Source**: US National Park Service Natural Sounds and Night Skies Division
-- **License**: US Government Public Domain
-- **Recordings**: Olympic National Park temperate rainforest, Great Smoky Mountains stream and precipitation acoustics.
+**Excluded:** anything NonCommercial, NoDerivatives or ShareAlike; platform
+licenses (Mixkit, Videvo, Pixabay, BigSoundBank, Zapsplat and similar);
+YouTube or AudioSet audio; ESC-50 (CC BY-NC); datasets whose card states a
+license but whose files have no per-item provenance; any file with no
+recorded source.
 
-### 1.4 Hugging Face Environmental Audio Collection
-- **Repository**: `environmental-audio/rain-sounds`
-- **License**: CC0 1.0 Universal Public Domain Dedication
-- **Coverage**: Porous tarmac mist, gravel driveway deluge, forest understory rain.
+| Source | How the license is read | Notes |
+|---|---|---|
+| [Freesound](https://freesound.org) | `license` field of each sound (API search filtered to CC0 and Attribution) | Needs `FREESOUND_API_KEY`; downloads the HQ preview |
+| [Wikimedia Commons](https://commons.wikimedia.org) | `extmetadata.LicenseShortName` per file | Commons rain audio is mostly CC BY-SA, which is rejected |
+| [Internet Archive](https://archive.org) (Radio Aporee) | `licenseurl` per item | PD Mark and CC BY 3.0 items only |
+
+**Credits.** Every downloaded file gets a record in `data/rain/ledger.jsonl`
+(source, item URL, creator, title, license, license URL, retrieval date,
+SHA-256 and the processing applied). `data/rain/ATTRIBUTIONS.txt` and the app's
+attribution data are generated from that ledger and published with each model
+release; they are never committed. Files used in training that have no ledger
+record are reported and should be removed.
+
+**History.** Before 13 Nov 2026 the repository committed audio from sources
+that don't meet this standard (ESC-50, Mixkit, Videvo, BigSoundBank,
+CC BY-SA files, YouTube-derived AudioSet clips, and files with no recorded
+source). That audio and the models trained on it were removed from the history.
 
 ---
 
