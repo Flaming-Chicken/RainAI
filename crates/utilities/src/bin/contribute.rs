@@ -11,7 +11,7 @@
 //! cargo run -p utilities --bin rainai_contribute -- validate /path/to/my/recordings
 //!
 //! # Import a local directory of audio recordings:
-//! cargo run -p utilities --bin rainai_contribute -- import-dir /path/to/recordings --surface tin_roof --license "CC0" --author "Alice"
+//! cargo run -p utilities --bin rainai_contribute -- import-dir /path/to/recordings --surface tin_roof --license "CC0" --author "Alice" --rights-warranty
 //!
 //! # Inspect current dataset balance and underrepresented surfaces:
 //! cargo run -p utilities --bin rainai_contribute -- quota
@@ -52,6 +52,7 @@ SUBCOMMANDS:
         --mic <MIC>              Microphone geometry (mono, stereo_spaced, stereo_ortf, binaural_in_ear, etc.)
         --license <LICENSE>      Open license string (e.g. "CC0 1.0 Universal", "CC-BY 4.0")
         --author <AUTHOR>        Contributor / field recordist name
+        --rights-warranty        Confirm the contributor warranted they own the recording (required)
         --target <DIR>           Target destination directory (default: Data/rain)
 
     import-manifest <FILE>       Import all files declared in a contribution manifest
@@ -68,7 +69,7 @@ SUBCOMMANDS:
 EXAMPLES:
     rainai_contribute template --out contribution.json
     rainai_contribute validate ./my_recordings/
-    rainai_contribute import-dir ./my_recordings/ --surface tin_roof --author "Liam" --license "CC0"
+    rainai_contribute import-dir ./my_recordings/ --surface tin_roof --author "Liam" --license "CC0" --rights-warranty
     rainai_contribute quota
     rainai_contribute triage
     rainai_contribute reconcile
@@ -251,6 +252,9 @@ fn main() -> Result<()> {
                         options.author = Some(args[i + 1].clone());
                         i += 1;
                     }
+                    "--rights-warranty" => {
+                        options.rights_warranty = true;
+                    }
                     "--target" if i + 1 < args.len() => {
                         options.target_dir = PathBuf::from(&args[i + 1]);
                         i += 1;
@@ -292,6 +296,7 @@ fn main() -> Result<()> {
                 manifest.sources.len()
             );
 
+            let data_paths = utilities::sources::DataPaths::from_rain_dir(&options.target_dir);
             let mut imported = 0;
             for entry in &res.valid_entries {
                 let src_path = if let Some(base) = base_dir {
@@ -307,12 +312,19 @@ fn main() -> Result<()> {
                         .first()
                         .cloned()
                         .unwrap_or_else(|| "audio".to_string());
-                    let author_str = entry
+                    // validate_manifest guarantees a named contributor and license.
+                    let contributor = entry
                         .source
                         .author
-                        .as_deref()
-                        .unwrap_or("Anonymous")
-                        .replace(' ', "_");
+                        .clone()
+                        .unwrap_or_else(|| manifest.contributor_name.clone());
+                    let license = entry
+                        .source
+                        .license
+                        .clone()
+                        .or_else(|| manifest.default_license.clone())
+                        .unwrap_or_default();
+                    let author_str = contributor.replace(' ', "_");
                     let dest_name = format!(
                         "contrib_{}_{}_{}",
                         first_tag,
@@ -322,9 +334,25 @@ fn main() -> Result<()> {
                     let dest = options.target_dir.join(&dest_name);
                     fs::create_dir_all(&options.target_dir)?;
                     fs::copy(&src_path, &dest)?;
+                    let tier = utilities::ingest::LicenseVerifier::verify(&license).1;
+                    let surface = shared::surface::CanonicalSurface::from_tag(&first_tag);
+                    utilities::sources::Ledger::append(
+                        &data_paths.ledger(),
+                        &utilities::sources::LedgerRecord::contribution(
+                            &dest_name,
+                            &entry.computed_sha256,
+                            &contributor,
+                            &entry.source.id,
+                            &license,
+                            tier,
+                            surface.as_str(),
+                            "manifest",
+                        ),
+                    )?;
                     imported += 1;
                 }
             }
+            utilities::sources::regenerate_outputs(&data_paths)?;
             println!(
                 "[+] Imported {} audio files into {:?}",
                 imported, options.target_dir
@@ -649,19 +677,31 @@ fn main() -> Result<()> {
             let manifest: ProvenanceManifest = serde_json::from_str(&content)?;
 
             let mut inputs = Vec::with_capacity(manifest.records.len());
+            let mut skipped = 0usize;
             for rec in manifest.records {
-                let contributor = if !rec.contributors.is_empty() {
-                    rec.contributors.join(", ")
-                } else {
-                    "RainAI Community".to_string()
+                // Only credit what may be used, and never invent a name or license.
+                let contributors: Vec<&String> = rec
+                    .contributors
+                    .iter()
+                    .filter(|c| !c.trim().is_empty())
+                    .collect();
+                let (Some(license), Some(surface)) =
+                    (rec.license.clone(), rec.tags.first().cloned())
+                else {
+                    skipped += 1;
+                    continue;
                 };
-
-                let license = rec.license.unwrap_or_else(|| "Unknown".to_string());
-                let surface = rec
-                    .tags
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| "ambient".to_string());
+                if !rec.license_tier.is_approved()
+                    || (rec.license_tier.requires_attribution() && contributors.is_empty())
+                {
+                    skipped += 1;
+                    continue;
+                }
+                let contributor = contributors
+                    .iter()
+                    .map(|c| c.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 let tier = rec.license_tier.preference_rank();
 
                 inputs.push(shared::attribution::AttributionRecordInput {
@@ -687,6 +727,11 @@ fn main() -> Result<()> {
                 out_path,
                 binary_data.len()
             );
+            if skipped > 0 {
+                println!(
+                    "[i] Skipped {skipped} records with no allowed license, contributor or surface."
+                );
+            }
         }
         _ => {
             print_usage();

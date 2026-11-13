@@ -135,6 +135,42 @@ pub struct LedgerRecord {
     pub changes: String,
 }
 
+impl LedgerRecord {
+    /// A record for a public contribution that passed `check_contribution`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn contribution(
+        file: &str,
+        sha256: &str,
+        contributor: &str,
+        title: &str,
+        license: &str,
+        tier: LicenseTier,
+        surface: &str,
+        intake: &str,
+    ) -> Self {
+        Self {
+            file: file.to_string(),
+            sha256: sha256.to_string(),
+            source_id: format!("contribution-{intake}"),
+            platform: "RainAI contribution".to_string(),
+            category: surface.to_string(),
+            item_url: format!(
+                "contribution://{}/{}",
+                contributor.replace(' ', "_"),
+                sha256
+            ),
+            download_url: String::new(),
+            creator: contributor.to_string(),
+            title: title.to_string(),
+            license: license.to_string(),
+            license_url: String::new(),
+            license_tier: tier,
+            retrieved_utc: chrono_lite_timestamp(),
+            changes: STANDARD_CHANGES.to_string(),
+        }
+    }
+}
+
 /// Append-only JSON-lines ledger.
 pub struct Ledger;
 
@@ -552,6 +588,16 @@ impl DataPaths {
         Self {
             rain_dir: root.join("data").join("rain"),
             catalog: root.join("data").join("sources.json"),
+        }
+    }
+    /// Paths for a `.../data/rain` directory (the catalog sits next to it).
+    pub fn from_rain_dir(rain_dir: &Path) -> Self {
+        Self {
+            rain_dir: rain_dir.to_path_buf(),
+            catalog: rain_dir
+                .parent()
+                .unwrap_or(Path::new("."))
+                .join("sources.json"),
         }
     }
     pub fn ledger(&self) -> PathBuf {
