@@ -5,66 +5,52 @@
  * Directly leverages Cloudflare R2 object storage for both audio payloads and metadata JSON sidecars.
  */
 
+// Mirrors LicenseVerifier in crates/utilities/src/ingest.rs (PLAN.md D2):
+// only CC0 / public domain, CC BY 3.0/4.0 and the RainAI contributor grant are
+// approved. Matching is on whole tokens, so "Unlicense" doesn't contain "nc".
 function getLicenseRank(lic) {
   if (!lic) return { rank: 2, tier: "Unknown", approved: false };
   const clean = lic.trim().toLowerCase();
+  const tokens = clean.split(/[^a-z0-9.]+/).filter(Boolean);
+  const has = (t) => tokens.includes(t);
   if (
     clean === "" ||
-    clean === "unknown" ||
-    clean === "unspecified" ||
-    clean.includes("pending") ||
-    clean === "none" ||
-    clean === "to be scraped"
+    ["unknown", "unspecified", "none", "to be scraped", "n/a"].includes(clean) ||
+    clean.includes("pending")
   ) {
     return { rank: 2, tier: "Unknown", approved: false };
   }
   if (
     clean.includes("rainai-fc") ||
     clean.includes("rainai-proprietary") ||
-    clean.includes("spodeian-permission") ||
-    clean.includes("flaming chicken") ||
-    clean.includes("spodeian")
+    clean.includes("spodeian-permission")
   ) {
     return { rank: 6, tier: "ProjectProprietary", approved: true };
   }
   if (
-    clean.includes("nc") ||
-    clean.includes("noncommercial") ||
-    clean.includes("nd") ||
-    clean.includes("noderivatives")
+    has("nc") || clean.includes("noncommercial") || clean.includes("non-commercial") || clean.includes("/by-nc") ||
+    has("nd") || clean.includes("noderivatives") || clean.includes("no-derivatives") || clean.includes("/by-nd")
   ) {
     return { rank: 1, tier: "Restricted", approved: false };
   }
-  if (clean.includes("cc-by-sa")) {
-    return { rank: 3, tier: "ShareAlike", approved: true };
+  if (has("sa") || clean.includes("sharealike") || clean.includes("share-alike") || clean.includes("/by-sa")) {
+    return { rank: 3, tier: "ShareAlike", approved: false };
   }
   if (
-    clean.includes("cc-by") ||
-    clean.includes("attribution") ||
-    clean.includes("mit") ||
-    clean.includes("apache") ||
-    clean.includes("bsd") ||
-    clean.includes("isc") ||
-    clean.includes("odc-by") ||
-    clean.includes("mixkit")
-  ) {
-    return { rank: 4, tier: "AttributionOnly", approved: true };
-  }
-  if (
-    clean.includes("cc0") ||
-    clean.includes("public domain") ||
-    clean.includes("unlicense") ||
-    clean.includes("wtfpl") ||
-    clean.includes("pddl") ||
-    clean.includes("open access") ||
-    clean.includes("nps natural sound")
+    has("cc0") || clean.includes("publicdomain/zero") || clean.includes("public domain") ||
+    has("pdm") || clean.includes("publicdomain/mark") || clean.includes("licenses/publicdomain")
   ) {
     return { rank: 5, tier: "PublicDomain", approved: true };
   }
-  return { rank: 2, tier: "Unknown", approved: false };
+  if ((has("cc") && has("by")) || has("attribution") || clean.includes("creativecommons.org/licenses/by/")) {
+    if (has("4.0") || has("3.0") || clean.includes("/by/4.0") || clean.includes("/by/3.0")) {
+      return { rank: 4, tier: "AttributionOnly", approved: true };
+    }
+    return { rank: 2, tier: "Unknown", approved: false };
+  }
+  return { rank: 1, tier: "Restricted", approved: false };
 }
 
-let dbInitialized = false;
 async function ensureDbSchema(db) {
   if (!db || dbInitialized) return;
   try {

@@ -456,13 +456,6 @@ impl DatabaseHealthWorker {
                         prov_file,
                     ) {
                         if drop_res.standardized_count > 0 {
-                            let _ = git_sync_standardized_data(
-                                &drop_res.standardized_files,
-                                &format!(
-                                    "data(ingest): standardize {} input drop files",
-                                    drop_res.standardized_count
-                                ),
-                            );
                             telemetry.last_action = format!(
                                 "Standardized {} files from drop folder (Quarantined: {})",
                                 drop_res.standardized_count, drop_res.quarantined_count
@@ -1271,16 +1264,6 @@ impl DatabaseHealthWorker {
 
         let _ = ledger.save_to_file(ledger_path);
 
-        if !newly_standardized.is_empty() {
-            let _ = git_sync_standardized_data(
-                &newly_standardized,
-                &format!(
-                    "data(ingest): sync {} edge staging records from R2/D1",
-                    newly_standardized.len()
-                ),
-            );
-        }
-
         Ok(newly_standardized.len())
     }
 
@@ -1319,68 +1302,5 @@ impl Drop for DatabaseHealthWorker {
     }
 }
 
-/// Automatically stages and commits newly standardized data files and updated score ledgers to Git.
-pub fn git_sync_standardized_data(files: &[PathBuf], commit_msg: &str) -> Result<bool> {
-    if files.is_empty() {
-        return Ok(false);
-    }
-
-    let mut cmd = std::process::Command::new("git");
-    cmd.arg("add");
-    for f in files {
-        cmd.arg(f);
-    }
-    cmd.arg("data/rain/data_utility_ledger.json");
-    cmd.arg("data/rain/manifest_provenance.json");
-    let _ = cmd.output();
-
-    let commit_res = std::process::Command::new("git")
-        .args(["commit", "-m", commit_msg])
-        .output();
-
-    if let Ok(out) = commit_res {
-        if out.status.success() {
-            tracing::info!("[+] Auto-synced data to dev Git: {}", commit_msg);
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
-}
-
-/// Automatically stages and commits model weights and session provenance to Git on reaching training milestones.
-/// Strictly decoupled from data commits.
-pub fn git_sync_model_milestone(
-    weight_files: &[PathBuf],
-    session_file: &Path,
-    milestone_name: &str,
-    loss: f32,
-) -> Result<bool> {
-    let mut cmd = std::process::Command::new("git");
-    cmd.arg("add");
-    for w in weight_files {
-        cmd.arg(w);
-    }
-    cmd.arg(session_file);
-    let _ = cmd.output();
-
-    let commit_msg = format!(
-        "weights(checkpoint): milestone {} loss={:.5}",
-        milestone_name, loss
-    );
-    let commit_res = std::process::Command::new("git")
-        .args(["commit", "-m", &commit_msg])
-        .output();
-
-    if let Ok(out) = commit_res {
-        if out.status.success() {
-            tracing::info!(
-                "[+] Auto-synced model checkpoint to dev Git: {}",
-                commit_msg
-            );
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
-}
+// Data and weights are never committed to git (PLAN.md D2), so there is no
+// automatic `git add`/`git commit` here. Weights ship as release assets.

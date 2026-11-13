@@ -172,57 +172,31 @@ impl AsyncAttributionRecorder {
         });
     }
 
+    /// Checks that a file used in training has a ledger record. Credits are
+    /// generated from the ledger (`data/rain/ATTRIBUTIONS.txt`), so nothing is
+    /// written here; a file without a record has no known source or license
+    /// and is reported (PLAN.md D2).
     fn process_attribution_item(item: TrainingAttributionItem) {
         let filename = &item.filename;
-        let mut platform = "RainAI-Acoustic-Archive".to_string();
-        let mut license = "CC0".to_string();
-        let mut tier = "PublicDomain".to_string();
-        let mut url = format!("local://rainai/{}", filename);
-        let mut category = item.surface_tag.clone();
-
-        if let Some(sources_path) = WorkspacePaths::resolve_sources() {
-            if let Ok(content) = std::fs::read_to_string(&sources_path) {
-                if let Ok(items) =
-                    serde_json::from_str::<Vec<crate::ingest::DownloadItem>>(&content)
-                {
-                    if let Some(src) = items.iter().find(|i| {
-                        i.filename == *filename
-                            || filename.starts_with(
-                                &i.filename
-                                    .replace(".mp3", "")
-                                    .replace(".wav", "")
-                                    .replace(".ogg", ""),
-                            )
-                    }) {
-                        platform = src.source_platform.clone();
-                        license = src.license.clone();
-                        let (_, lt, _) = crate::ingest::LicenseVerifier::verify(&src.license);
-                        tier = format!("{:?}", lt);
-                        url = src.url.clone();
-                        category = src.category.clone();
-                    }
-                }
-            }
-        }
-
-        let attr_line = format!(
-            "Platform: {} | File: {} | Category: {} (Surface: {}) | Tier: {} | License: {} | URL: {}\n",
-            platform, filename, category, item.surface_tag, tier, license, url
-        );
-
-        let target_path = WorkspacePaths::resolve_attributions()
-            .unwrap_or_else(|| std::path::PathBuf::from("data/rain/ATTRIBUTIONS.txt"));
-
-        if let Some(parent) = target_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&target_path)
-        {
-            use std::io::Write;
-            let _ = f.write_all(attr_line.as_bytes());
+        let known = WorkspacePaths::resolve_sources()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|c| serde_json::from_str::<Vec<crate::ingest::DownloadItem>>(&c).ok())
+            .is_some_and(|items| {
+                items.iter().any(|i| {
+                    i.filename == *filename
+                        || filename.starts_with(
+                            i.filename
+                                .rsplit_once('.')
+                                .map_or(i.filename.as_str(), |(stem, _)| stem),
+                        )
+                })
+            });
+        if !known {
+            tracing::warn!(
+                "{filename} (surface {}): no ledger record, so its source and license are \
+                 unknown; it shouldn't be in the training set. Run rainai_ingest.",
+                item.surface_tag
+            );
         }
     }
 }

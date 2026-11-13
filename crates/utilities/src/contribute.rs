@@ -989,7 +989,7 @@ pub fn import_local_directory(
                 is_dedup = true;
                 let incoming = ProvenanceRecord {
                     filename: existing_record.filename.clone(),
-                    source_url: format!("local://{}", file.display()),
+                    source_url: format!("contribution://{}/{}", author_str, sha256),
                     source_platform: format!("Community Contribution ({})", author_str),
                     tags: tags.clone(),
                     license: options.default_license.clone(),
@@ -1074,7 +1074,7 @@ pub fn import_local_directory(
         // 5. Record provenance entry
         let prov = ProvenanceRecord {
             filename: dest_filename.clone(),
-            source_url: format!("local://{}", file.display()),
+            source_url: format!("contribution://{}/{}", author_str, sha256),
             source_platform: format!("Community Contribution ({})", author_str),
             tags,
             license: options.default_license.clone(),
@@ -1090,7 +1090,7 @@ pub fn import_local_directory(
 
         // 6. Append DownloadItem for sources.json
         new_sources.push(DownloadItem {
-            url: format!("local://{}", dest_filename),
+            url: format!("contribution://{}/{}", author_str, sha256),
             filename: dest_filename.clone(),
             category: "auto_imported".to_string(), // Legacy field on DownloadItem
             license: options.default_license.clone().unwrap_or_default(),

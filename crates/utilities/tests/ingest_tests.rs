@@ -1,75 +1,91 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use utilities::ingest::{
-    AttributionPolicyOutcome, CONTRIBUTOR_WARRANTY_STATEMENT, DownloadItem, LicenseTier,
-    LicenseVerifier, ProvenanceManifest, ProvenanceRecord, RAINAI_FC_PROPRIETARY_LICENSE_TEXT,
+    AttributionPolicyOutcome, CONTRIBUTOR_WARRANTY_STATEMENT, LicenseTier, LicenseVerifier,
+    ProvenanceManifest, ProvenanceRecord, RAINAI_FC_PROPRIETARY_LICENSE_TEXT,
     RAINAI_FC_TRANSPARENCY_NOTE, TagBalanceQuota, analyze_pcm_samples, compute_file_sha256,
     evaluate_attribution_policy,
 };
 
 #[test]
 fn test_license_verifier_logic() {
-    // Approved tiers
-    let (ok, tier, _) = LicenseVerifier::verify("RainAI-FC-Proprietary-License");
-    assert!(ok);
-    assert_eq!(tier, LicenseTier::ProjectProprietary);
+    // Allowed (PLAN.md D2): CC0 / public domain, CC BY 3.0/4.0, and the contributor grant.
+    for (lic, tier) in [
+        (
+            "RainAI-FC-Proprietary-License",
+            LicenseTier::ProjectProprietary,
+        ),
+        ("CC0 1.0 Universal", LicenseTier::PublicDomain),
+        ("Public Domain", LicenseTier::PublicDomain),
+        (
+            "https://creativecommons.org/publicdomain/zero/1.0/",
+            LicenseTier::PublicDomain,
+        ),
+        (
+            "http://creativecommons.org/publicdomain/mark/1.0/",
+            LicenseTier::PublicDomain,
+        ),
+        (
+            "http://creativecommons.org/licenses/publicdomain/",
+            LicenseTier::PublicDomain,
+        ),
+        ("CC-BY 4.0", LicenseTier::AttributionOnly),
+        (
+            "Attribution 4.0 International",
+            LicenseTier::AttributionOnly,
+        ),
+        (
+            "https://creativecommons.org/licenses/by/3.0/",
+            LicenseTier::AttributionOnly,
+        ),
+    ] {
+        let (ok, t, reason) = LicenseVerifier::verify(lic);
+        assert!(ok, "{lic} should be allowed: {reason}");
+        assert_eq!(t, tier, "{lic}");
+    }
 
-    let (ok, tier, _) = LicenseVerifier::verify("CC0 1.0 Universal");
-    assert!(ok);
-    assert_eq!(tier, LicenseTier::PublicDomain);
-
-    let (ok, tier, _) = LicenseVerifier::verify("Public Domain");
-    assert!(ok);
-    assert_eq!(tier, LicenseTier::PublicDomain);
-
-    let (ok, tier, _) = LicenseVerifier::verify("CC-BY 4.0");
-    assert!(ok);
-    assert_eq!(tier, LicenseTier::AttributionOnly);
-
-    let (ok, tier, _) = LicenseVerifier::verify("CC-BY-SA 4.0");
-    assert!(ok);
+    // ShareAlike is recognised but excluded.
+    let (ok, tier, reason) = LicenseVerifier::verify("CC-BY-SA 4.0");
+    assert!(!ok);
     assert_eq!(tier, LicenseTier::ShareAlike);
+    assert!(reason.contains("ShareAlike"));
 
-    // Permissive compatible open licenses
-    let (ok, tier, _) = LicenseVerifier::verify("MIT");
-    assert!(ok);
-    assert_eq!(tier, LicenseTier::AttributionOnly);
+    // NonCommercial / NoDerivatives, as names and as URLs.
+    for lic in [
+        "CC-BY-NC 4.0",
+        "CC-BY-ND 3.0",
+        "Attribution-NonCommercial 4.0 International",
+        "https://creativecommons.org/licenses/by-nc-nd/3.0/",
+    ] {
+        let (ok, tier, _) = LicenseVerifier::verify(lic);
+        assert!(!ok, "{lic}");
+        assert_eq!(tier, LicenseTier::Restricted, "{lic}");
+    }
 
-    let (ok, tier, _) = LicenseVerifier::verify("Apache 2.0");
-    assert!(ok);
-    assert_eq!(tier, LicenseTier::AttributionOnly);
+    // Platform and software licenses aren't on the allow-list. Whole-token
+    // matching: "Unlicense" isn't "nc", "Standard" isn't "nd".
+    for lic in [
+        "Mixkit Free License",
+        "Pixabay Content License",
+        "MIT",
+        "Apache 2.0",
+        "Unlicense",
+        "ODC-By",
+        "Standard License",
+        "All Rights Reserved Proprietary",
+    ] {
+        let (ok, tier, _) = LicenseVerifier::verify(lic);
+        assert!(!ok, "{lic} should be rejected");
+        assert_eq!(tier, LicenseTier::Restricted, "{lic}");
+    }
 
-    let (ok, tier, _) = LicenseVerifier::verify("Unlicense");
-    assert!(ok);
-    assert_eq!(tier, LicenseTier::PublicDomain);
-
-    let (ok, tier, _) = LicenseVerifier::verify("ODC-By");
-    assert!(ok);
-    assert_eq!(tier, LicenseTier::AttributionOnly);
-
-    // Unknown tier -> Immediately quarantined pending discovery / scraping
-    let (ok, tier, reason) = LicenseVerifier::verify("Unknown");
-    assert!(!ok);
-    assert_eq!(tier, LicenseTier::Unknown);
-    assert!(reason.contains("Quarantined"));
-
-    let (ok, tier, _) = LicenseVerifier::verify("unspecified");
-    assert!(!ok);
-    assert_eq!(tier, LicenseTier::Unknown);
-
-    // Rejected tiers (NonCommercial / NoDerivs)
-    let (ok, tier, reason) = LicenseVerifier::verify("CC-BY-NC 4.0");
-    assert!(!ok);
-    assert_eq!(tier, LicenseTier::Restricted);
-    assert!(reason.contains("NonCommercial"));
-
-    let (ok, tier, _) = LicenseVerifier::verify("CC-BY-ND 3.0");
-    assert!(!ok);
-    assert_eq!(tier, LicenseTier::Restricted);
-
-    let (ok, tier, _) = LicenseVerifier::verify("All Rights Reserved Proprietary");
-    assert!(!ok);
-    assert_eq!(tier, LicenseTier::Restricted);
+    // CC BY without a usable version, and unknown licenses, are quarantined.
+    for lic in ["CC-BY 2.0", "Unknown", "unspecified", ""] {
+        let (ok, tier, reason) = LicenseVerifier::verify(lic);
+        assert!(!ok, "{lic}");
+        assert_eq!(tier, LicenseTier::Unknown, "{lic}");
+        assert!(reason.contains("Quarantined"), "{lic}");
+    }
 }
 
 #[test]
@@ -169,56 +185,32 @@ fn test_compute_file_sha256() {
 }
 
 #[test]
-fn test_sources_json_catalog_integrity() {
-    let candidates = [
-        PathBuf::from("sources.json"),
-        PathBuf::from("../../sources.json"),
-        PathBuf::from("../sources.json"),
-    ];
-    let path = candidates
-        .iter()
-        .find(|p| p.exists())
-        .expect("sources.json not found in search paths");
-    let content = std::fs::read_to_string(path).expect("Failed to read sources.json");
-    let items: Vec<DownloadItem> =
-        serde_json::from_str(&content).expect("Failed to parse sources.json");
-
-    assert!(
-        items.len() >= 120,
-        "Expected at least 120 sources, found {}",
-        items.len()
-    );
-
-    let mut urls = HashSet::new();
-    let mut filenames = HashSet::new();
-    let mut category_counts = HashMap::new();
-
-    for item in &items {
-        // 1. Uniqueness
-        assert!(
-            urls.insert(&item.url),
-            "Duplicate URL in sources.json: {}",
-            item.url
-        );
-        assert!(
-            filenames.insert(&item.filename),
-            "Duplicate filename in sources.json: {}",
-            item.filename
-        );
-
-        // 2. Ethical Licensing
-        let (approved, tier, reason) = LicenseVerifier::verify(&item.license);
-        assert!(
-            approved,
-            "Unapproved license for item {}: {} ({})",
-            item.filename, item.license, reason
-        );
-        assert_ne!(tier, LicenseTier::Restricted);
-
-        *category_counts.entry(item.category.clone()).or_insert(0) += 1;
+fn test_source_registry_integrity() {
+    use utilities::sources::{SourceRegistry, SourceSpec};
+    let path = [
+        "source_registry.json",
+        "../../source_registry.json",
+        "../source_registry.json",
+    ]
+    .iter()
+    .map(PathBuf::from)
+    .find(|p| p.exists())
+    .expect("source_registry.json not found");
+    let reg = SourceRegistry::load(&path).expect("source_registry.json parses, ids unique");
+    assert!(!reg.sources.is_empty());
+    for s in &reg.sources {
+        assert!(!s.category().is_empty(), "{} has no category", s.id());
+        // Sources, not files: no source may point at a single file URL.
+        let q = match s {
+            SourceSpec::Freesound { query, .. } | SourceSpec::InternetArchive { query, .. } => {
+                query
+            }
+            SourceSpec::WikimediaCommons {
+                commons_category, ..
+            } => commons_category,
+        };
+        assert!(!q.starts_with("http"), "{} looks like a file URL", s.id());
     }
-
-    assert!(!category_counts.is_empty());
 }
 
 #[test]
@@ -257,7 +249,7 @@ fn test_attribution_policy_and_tiers() {
     // Approved for raw training corpus
     assert!(LicenseTier::PublicDomain.is_approved());
     assert!(LicenseTier::AttributionOnly.is_approved());
-    assert!(LicenseTier::ShareAlike.is_approved());
+    assert!(!LicenseTier::ShareAlike.is_approved()); // excluded by D2
     assert!(LicenseTier::ProjectProprietary.is_approved());
     assert!(!LicenseTier::Unknown.is_approved());
     assert!(!LicenseTier::Restricted.is_approved());
@@ -356,7 +348,7 @@ fn test_provenance_record_reconciliation_multi_license() {
 
     let rec2 = ProvenanceRecord {
         filename: "storm_001.flac".to_string(),
-        source_url: "local://recontributed.flac".to_string(),
+        source_url: "contribution://tester/recontributed".to_string(),
         source_platform: "Community Contribution".to_string(),
         tags: vec!["heavy_rain".to_string(), "thunder".to_string()],
         license: Some("RainAI-FC-Proprietary-License".to_string()),
