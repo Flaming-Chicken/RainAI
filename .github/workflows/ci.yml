@@ -13,6 +13,25 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
+  # 0. No audio, datasets or weights in git (PLAN.md D2)
+  no-committed-assets:
+    name: No Committed Audio, Data or Weights
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fail if any audio, dataset or weight file is tracked
+        shell: bash
+        run: |
+          bad=$(git ls-files | grep -Ei '\.(wav|mp3|flac|ogg|opus|m4a|aiff?|safetensors|onnx|onnx\.data|pt|pth|ckpt|bin|parquet|npz|npy)$|^data/|^Data/|(^|/)ATTRIBUTIONS\.txt$|(^|/)ledger\.jsonl$|(^|/)manifest_provenance\.json$' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::These files must not be committed (RainAI ships no data; see PLAN.md D2):"
+            echo "$bad"
+            exit 1
+          fi
+          echo "No audio, dataset or weight files tracked."
+
   version-bump-check:
     name: Enforce Version Bump on Main PR
     runs-on: ubuntu-latest
@@ -128,25 +147,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Checkout spodeian-core dependency
-        uses: actions/checkout@v4
-        with:
-          repository: Spodeian/spodeian-core
-          ref: dev
-          path: spodeian-core
-          token: ${{ secrets.PRIVATE_READ_ACCESS || secrets.SPODEIAN_CORE_TOKEN || secrets.GH_PAT || secrets.PAT || secrets.SPODEIAN_TOKEN || github.token }}
-
-      - name: Link spodeian-core to parent directory
-        shell: bash
-        run: |
-          if [ ! -d "../spodeian-core" ]; then
-            if [ "$RUNNER_OS" == "Windows" ]; then
-              cp -r spodeian-core ../spodeian-core
-            else
-              ln -s "$PWD/spodeian-core" "$PWD/../spodeian-core"
-            fi
-          fi
-
       - name: Install Linux Audio & Windowing Dependencies
         run: |
           sudo apt-get update
@@ -173,25 +173,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Checkout spodeian-core dependency
-        uses: actions/checkout@v4
-        with:
-          repository: Spodeian/spodeian-core
-          ref: dev
-          path: spodeian-core
-          token: ${{ secrets.PRIVATE_READ_ACCESS || secrets.SPODEIAN_CORE_TOKEN || secrets.GH_PAT || secrets.PAT || secrets.SPODEIAN_TOKEN || github.token }}
-
-      - name: Link spodeian-core to parent directory
-        shell: bash
-        run: |
-          if [ ! -d "../spodeian-core" ]; then
-            if [ "$RUNNER_OS" == "Windows" ]; then
-              cp -r spodeian-core ../spodeian-core
-            else
-              ln -s "$PWD/spodeian-core" "$PWD/../spodeian-core"
-            fi
-          fi
 
       - name: Install Linux Audio & Windowing Dependencies
         run: |
@@ -223,25 +204,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Checkout spodeian-core dependency
-        uses: actions/checkout@v4
-        with:
-          repository: Spodeian/spodeian-core
-          ref: dev
-          path: spodeian-core
-          token: ${{ secrets.PRIVATE_READ_ACCESS || secrets.SPODEIAN_CORE_TOKEN || secrets.GH_PAT || secrets.PAT || secrets.SPODEIAN_TOKEN || github.token }}
-
-      - name: Link spodeian-core to parent directory
-        shell: bash
-        run: |
-          if [ ! -d "../spodeian-core" ]; then
-            if [ "$RUNNER_OS" == "Windows" ]; then
-              cp -r spodeian-core ../spodeian-core
-            else
-              ln -s "$PWD/spodeian-core" "$PWD/../spodeian-core"
-            fi
-          fi
 
       - name: Setup Rust with WASM Target
         uses: dtolnay/rust-toolchain@stable
@@ -301,25 +263,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Checkout spodeian-core dependency
-        uses: actions/checkout@v4
-        with:
-          repository: Spodeian/spodeian-core
-          ref: dev
-          path: spodeian-core
-          token: ${{ secrets.PRIVATE_READ_ACCESS || secrets.SPODEIAN_CORE_TOKEN || secrets.GH_PAT || secrets.PAT || secrets.SPODEIAN_TOKEN || github.token }}
-
-      - name: Link spodeian-core to parent directory
-        shell: bash
-        run: |
-          if [ ! -d "../spodeian-core" ]; then
-            if [ "$RUNNER_OS" == "Windows" ]; then
-              cp -r spodeian-core ../spodeian-core
-            else
-              ln -s "$PWD/spodeian-core" "$PWD/../spodeian-core"
-            fi
-          fi
-
       - name: Install Linux Audio & GUI Dependencies
         if: runner.os == 'Linux'
         run: |
@@ -377,25 +320,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Checkout spodeian-core dependency
-        uses: actions/checkout@v4
-        with:
-          repository: Spodeian/spodeian-core
-          ref: dev
-          path: spodeian-core
-          token: ${{ secrets.PRIVATE_READ_ACCESS || secrets.SPODEIAN_CORE_TOKEN || secrets.GH_PAT || secrets.PAT || secrets.SPODEIAN_TOKEN || github.token }}
-
-      - name: Link spodeian-core to parent directory
-        shell: bash
-        run: |
-          if [ ! -d "../spodeian-core" ]; then
-            if [ "$RUNNER_OS" == "Windows" ]; then
-              cp -r spodeian-core ../spodeian-core
-            else
-              ln -s "$PWD/spodeian-core" "$PWD/../spodeian-core"
-            fi
-          fi
 
       - name: Setup Rust with Mobile Targets
         uses: dtolnay/rust-toolchain@stable

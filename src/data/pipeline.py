@@ -128,40 +128,16 @@ def main():
     parser.add_argument("--prepare-data", action="store_true", help="Execute the full data standardization pipeline.")
     args = parser.parse_args()
 
-    if not DB_PATH.exists():
-        print(f"Database {DB_PATH} missing.")
-        sys.exit(1)
-        
     # Standardize invocation to align with TUI dispatches
     if args.prepare_data:
         extract_archives()
         standardize_and_generate_manifest()
     else:
-        with open(DB_PATH, "r", encoding="utf-8") as f:
-            sources = json.load(f)
-        
-        print("[Pipeline] Initiating Rust high-speed HTTP phase...")
-        subprocess.run(["cargo", "run", "--release", "--bin", "rainai_ingest"])
-        
-        print("\n[Pipeline] Initiating external API/CLI phase...")
-        for item in sources:
-            method = item.get("ingest_method", "direct_http")
-            if method == "direct_http": 
-                continue
-                
-            target = BASE_DIR / "rain" / item.get("media_type", "audio")
-            target.mkdir(parents=True, exist_ok=True)
-            
-            if method == "kaggle_cli":
-                cmd = ["kaggle", "datasets", "download", "-d", item["url"], "-p", str(target)]
-                subprocess.run(cmd, check=True)
-            elif method == "yt_dlp":
-                cmd = ["yt-dlp", "-o", str(target / f"{item['filename']}.%(ext)s")]
-                if item.get("media_type") == "audio":
-                    cmd.extend(["-x", "--audio-format", "wav"])
-                cmd.append(item["url"])
-                subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL)
-                
+        # Downloads come only from the Rust ingest, which reads source_registry.json
+        # and checks every item's license (PLAN.md D2). There is no Kaggle or
+        # yt-dlp path.
+        print("[Pipeline] Running the Rust ingest (source_registry.json)...")
+        subprocess.run(["cargo", "run", "--release", "--bin", "rainai_ingest"], check=True)
         extract_archives()
         standardize_and_generate_manifest()
 
