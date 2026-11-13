@@ -242,6 +242,7 @@ fn test_e2e_full_contribution_lifecycle() {
         default_mic: Some(MicrophoneSetup::StereoOrtf),
         default_license: Some("RainAI-FC-Proprietary-License".to_string()),
         author: Some("Alice".to_string()),
+        rights_warranty: true,
         target_dir: dataset_dir.clone(),
         update_sources_json: false,
         update_attributions: false,
@@ -270,6 +271,7 @@ fn test_e2e_full_contribution_lifecycle() {
         default_mic: Some(MicrophoneSetup::StereoOrtf),
         default_license: Some("RainAI-FC-Proprietary-License".to_string()),
         author: Some("Bob".to_string()),
+        rights_warranty: true,
         target_dir: dataset_dir.clone(),
         update_sources_json: false,
         update_attributions: false,
@@ -277,7 +279,14 @@ fn test_e2e_full_contribution_lifecycle() {
     };
 
     let report2 = import_local_directory(&duplicate_dir, &options2).expect("Import 2 failed");
-    assert_eq!(report2.successfully_imported, 1);
+    // Bob claims Alice's audio: a provenance conflict, so it's triaged, not merged.
+    assert_eq!(report2.successfully_imported, 0);
+    assert_eq!(report2.rejected_count, 1);
+    assert!(
+        report2.rejected_reasons[0]
+            .rejection_reason
+            .contains("CONFLICTING_PROVENANCE")
+    );
 
     // ZERO BINARY DUPLICATION ASSERTION:
     // Still exactly 1 physical WAV file on disk!
@@ -297,10 +306,7 @@ fn test_e2e_full_contribution_lifecycle() {
     let record = &prov_manifest.records[0];
     assert_eq!(record.sha256, sha256);
     assert!(record.tags.contains(&"canvas_tent".to_string()));
-    assert!(record.tags.contains(&"waterproof_fabric".to_string()));
-    assert!(record.tags.contains(&"monsoon".to_string()));
-    assert!(record.contributors.contains(&"Alice".to_string()));
-    assert!(record.contributors.contains(&"Bob".to_string()));
+    assert_eq!(record.contributors, vec!["Alice".to_string()]);
     assert_eq!(
         record.license.as_deref(),
         Some("RainAI-FC-Proprietary-License")

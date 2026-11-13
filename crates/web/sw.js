@@ -10,7 +10,6 @@ const PRECACHE_ASSETS = [
   'favicon.svg',
   'favicon.ico',
   'inference_worklet.js',
-  'attributions.bin',
   'pkg/web.js',
   'pkg/web_bg.wasm'
 ];

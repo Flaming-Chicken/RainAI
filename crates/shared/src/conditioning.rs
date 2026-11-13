@@ -12,6 +12,7 @@
 //! - 39     (1 dim):   Physical Parameter Drift
 //! - 40..46 (6 dims):  Physical Acoustic Summary Metrics
 //! - 46..64 (18 dims): Expanded Open Semantic Projection
+//!
 //! Total = 64 dimensions.
 
 use std::ops::Range;

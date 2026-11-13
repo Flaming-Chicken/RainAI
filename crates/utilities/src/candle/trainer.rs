@@ -1246,12 +1246,6 @@ pub fn run_candle_training_pipeline_with_steering(
                         "[*] New best VAE checkpoint atomically saved -> {:?}",
                         best_path
                     ));
-                    let _ = crate::data_worker::git_sync_model_milestone(
-                        &[best_path],
-                        &session_path,
-                        "vae_best",
-                        best_vae_val_loss,
-                    );
                 }
                 let _ = AtomicCheckpointManager::atomic_save_json(&session, &session_path);
             }
@@ -1261,12 +1255,6 @@ pub fn run_candle_training_pipeline_with_steering(
             AtomicCheckpointManager::atomic_save_safetensors(&vae_varmap, &vae_path)?;
             session.completed_vae = true;
             let _ = AtomicCheckpointManager::atomic_save_json(&session, &session_path);
-            let _ = crate::data_worker::git_sync_model_milestone(
-                &[vae_path.clone()],
-                &session_path,
-                "vae_completed",
-                session.last_vae_loss,
-            );
             log_msg(&format!(
                 "[+] Verified and atomically saved final Spatial VAE weights -> {:?}",
                 vae_path
@@ -1926,12 +1914,6 @@ pub fn run_candle_training_pipeline_with_steering(
                         "[*] New best Mamba-2 MoE checkpoint atomically saved -> {:?}",
                         best_path
                     ));
-                    let _ = crate::data_worker::git_sync_model_milestone(
-                        &[best_path],
-                        &session_path,
-                        "mamba2_moe_best",
-                        best_mamba_val_loss,
-                    );
                 }
                 let _ = AtomicCheckpointManager::atomic_save_json(&session, &session_path);
             }
@@ -1962,12 +1944,6 @@ pub fn run_candle_training_pipeline_with_steering(
 
             session.completed_mamba = true;
             let _ = AtomicCheckpointManager::atomic_save_json(&session, &session_path);
-            let _ = crate::data_worker::git_sync_model_milestone(
-                &[mamba_path.clone(), soup_path.clone()],
-                &session_path,
-                "mamba_soup_completed",
-                session.last_mamba_loss,
-            );
         }
     }
 

@@ -5,66 +5,128 @@
  * Directly leverages Cloudflare R2 object storage for both audio payloads and metadata JSON sidecars.
  */
 
+// Mirrors LicenseVerifier in crates/utilities/src/ingest.rs (PLAN.md D2):
+// only CC0 / public domain, CC BY 3.0/4.0 and the RainAI contributor grant are
+// approved. Matching is on whole tokens, so "Unlicense" doesn't contain "nc".
 function getLicenseRank(lic) {
   if (!lic) return { rank: 2, tier: "Unknown", approved: false };
   const clean = lic.trim().toLowerCase();
+  const tokens = clean.split(/[^a-z0-9.]+/).filter(Boolean);
+  const has = (t) => tokens.includes(t);
   if (
     clean === "" ||
-    clean === "unknown" ||
-    clean === "unspecified" ||
-    clean.includes("pending") ||
-    clean === "none" ||
-    clean === "to be scraped"
+    ["unknown", "unspecified", "none", "to be scraped", "n/a"].includes(clean) ||
+    clean.includes("pending")
   ) {
     return { rank: 2, tier: "Unknown", approved: false };
   }
   if (
     clean.includes("rainai-fc") ||
     clean.includes("rainai-proprietary") ||
-    clean.includes("spodeian-permission") ||
-    clean.includes("flaming chicken") ||
-    clean.includes("spodeian")
+    clean.includes("spodeian-permission")
   ) {
     return { rank: 6, tier: "ProjectProprietary", approved: true };
   }
   if (
-    clean.includes("nc") ||
-    clean.includes("noncommercial") ||
-    clean.includes("nd") ||
-    clean.includes("noderivatives")
+    has("nc") || clean.includes("noncommercial") || clean.includes("non-commercial") || clean.includes("/by-nc") ||
+    has("nd") || clean.includes("noderivatives") || clean.includes("no-derivatives") || clean.includes("/by-nd")
   ) {
     return { rank: 1, tier: "Restricted", approved: false };
   }
-  if (clean.includes("cc-by-sa")) {
-    return { rank: 3, tier: "ShareAlike", approved: true };
+  if (has("sa") || clean.includes("sharealike") || clean.includes("share-alike") || clean.includes("/by-sa")) {
+    return { rank: 3, tier: "ShareAlike", approved: false };
   }
   if (
-    clean.includes("cc-by") ||
-    clean.includes("attribution") ||
-    clean.includes("mit") ||
-    clean.includes("apache") ||
-    clean.includes("bsd") ||
-    clean.includes("isc") ||
-    clean.includes("odc-by") ||
-    clean.includes("mixkit")
-  ) {
-    return { rank: 4, tier: "AttributionOnly", approved: true };
-  }
-  if (
-    clean.includes("cc0") ||
-    clean.includes("public domain") ||
-    clean.includes("unlicense") ||
-    clean.includes("wtfpl") ||
-    clean.includes("pddl") ||
-    clean.includes("open access") ||
-    clean.includes("nps natural sound")
+    has("cc0") || clean.includes("publicdomain/zero") || clean.includes("public domain") ||
+    has("pdm") || clean.includes("publicdomain/mark") || clean.includes("licenses/publicdomain")
   ) {
     return { rank: 5, tier: "PublicDomain", approved: true };
   }
-  return { rank: 2, tier: "Unknown", approved: false };
+  if ((has("cc") && has("by")) || has("attribution") || clean.includes("creativecommons.org/licenses/by/")) {
+    if (has("4.0") || has("3.0") || clean.includes("/by/4.0") || clean.includes("/by/3.0")) {
+      return { rank: 4, tier: "AttributionOnly", approved: true };
+    }
+    return { rank: 2, tier: "Unknown", approved: false };
+  }
+  return { rank: 1, tier: "Restricted", approved: false };
 }
 
-let dbInitialized = false;
+// The 9 canonical surfaces (shared::surface::CanonicalSurface). Contributions
+// must name one; the local pipeline re-checks with the full tag matcher.
+const CANONICAL_SURFACES = [
+  "asphalt", "pavement", "tin_roof", "canvas_tent", "foliage",
+  "wood_deck", "glass", "puddle_shallow", "water_deep",
+];
+const PLACEHOLDER_NAMES = new Set([
+  "", "anonymous", "anon", "unknown", "n/a", "none", "rainai community", "community",
+]);
+const AUDIO_EXTENSIONS = ["flac", "wav", "ogg", "opus", "mp3", "m4a", "aac"];
+const SHA256_RE = /^[0-9a-f]{64}$/;
+
+// Mirrors check_contribution in crates/utilities/src/contribute.rs: what a
+// contribution needs to be lawful (allowed license, named contributor who
+// confirmed the rights warranty, an uploaded recording rather than a link) and
+// useful (a canonical surface). Returns the list of problems; empty = complete.
+function checkContribution(rec) {
+  const problems = [];
+  const lic = getLicenseRank(rec.license || "");
+  if (!lic.approved || lic.tier === "ShareAlike") {
+    problems.push(`license '${rec.license || ""}' is not allowed (CC0, public domain, CC BY 3.0/4.0, or the RainAI grant)`);
+  }
+  if (PLACEHOLDER_NAMES.has(String(rec.author || "").trim().toLowerCase())) {
+    problems.push("no contributor name");
+  }
+  if (rec.rights_warranty !== true) {
+    problems.push("rights warranty not confirmed");
+  }
+  if (!CANONICAL_SURFACES.includes(String(rec.surface || "").trim().toLowerCase())) {
+    problems.push(`surface must be one of ${CANONICAL_SURFACES.join(", ")}`);
+  }
+  if (rec.is_url_only) {
+    problems.push("link-only submission; only uploaded recordings you made can be accepted");
+  }
+  if (lic.tier === "AttributionOnly" && !String(rec.title || "").trim()) {
+    problems.push("CC BY contribution has no title to credit");
+  }
+  if (rec.dsp_passed === false) {
+    problems.push("audio failed the in-browser quality check");
+  }
+  return problems;
+}
+
+// Same audio, different license or contributor: can't tell which claim is
+// true, so the record goes to triage instead of picking the "best" license.
+function provenanceConflicts(existing, incoming) {
+  if (!existing) return false;
+  const norm = (x) => String(x || "").trim().toLowerCase();
+  const licDiffers = norm(existing.license) && norm(incoming.license) &&
+    norm(existing.license) !== norm(incoming.license);
+  const who = norm(incoming.author);
+  const known = (existing.contributors || []).map(norm).concat(norm(existing.author)).filter(Boolean);
+  const whoDiffers = who && !PLACEHOLDER_NAMES.has(who) && known.length > 0 && !known.includes(who);
+  return Boolean(licDiffers || whoDiffers);
+}
+
+async function sha256Hex(data) {
+  const buf = typeof data === "string" ? new TextEncoder().encode(data) : data;
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Maintainer endpoints (listing, blob download, acknowledgement) need
+// `Authorization: Bearer <MAINTAINER_TOKEN>`. Fails closed if the secret is unset.
+function requireMaintainer(request, env, corsHeaders) {
+  const json = { ...corsHeaders, "Content-Type": "application/json" };
+  if (!env.MAINTAINER_TOKEN) {
+    return new Response(JSON.stringify({ error: "MAINTAINER_TOKEN is not configured" }), { status: 503, headers: json });
+  }
+  const auth = request.headers.get("Authorization") || "";
+  if (auth !== `Bearer ${env.MAINTAINER_TOKEN}`) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: json });
+  }
+  return null;
+}
+
 async function ensureDbSchema(db) {
   if (!db || dbInitialized) return;
   try {
@@ -79,6 +141,9 @@ async function ensureDbSchema(db) {
         license_approved INTEGER NOT NULL DEFAULT 0,
         dsp_passed INTEGER NOT NULL DEFAULT 0,
         author TEXT,
+        title TEXT,
+        surface TEXT,
+        rights_warranty INTEGER NOT NULL DEFAULT 0,
         tags_json TEXT NOT NULL DEFAULT '[]',
         descriptions_json TEXT NOT NULL DEFAULT '[]',
         contributors_json TEXT NOT NULL DEFAULT '[]',
@@ -92,6 +157,12 @@ async function ensureDbSchema(db) {
     await db.prepare(`
       CREATE INDEX IF NOT EXISTS idx_records_status ON records(status)
     `).run();
+    // Columns added after the first schema; ignore "duplicate column" on re-run.
+    for (const col of ["title TEXT", "surface TEXT", "rights_warranty INTEGER NOT NULL DEFAULT 0"]) {
+      try {
+        await db.prepare(`ALTER TABLE records ADD COLUMN ${col}`).run();
+      } catch (_) {}
+    }
     dbInitialized = true;
   } catch (err) {
     console.error("D1 schema initialization error:", err);
@@ -246,7 +317,15 @@ export default {
           });
         }
 
-        const secretKey = env.TURNSTILE_SECRET_KEY || "1x0000000000000000000000000000000AA";
+        // No fallback: Cloudflare's test secret always passes, which would
+        // silently disable bot protection.
+        const secretKey = env.TURNSTILE_SECRET_KEY;
+        if (!secretKey) {
+          return new Response(JSON.stringify({ error: "TURNSTILE_SECRET_KEY is not configured" }), {
+            status: 503,
+            headers: { ...corsHeaders, "Content-Type": "application/json" }
+          });
+        }
         const formData = new FormData();
         formData.append("secret", secretKey);
         formData.append("response", turnstileToken);
@@ -265,8 +344,23 @@ export default {
           });
         }
 
-        const sha256 = body.sha256 || `url_${Date.now()}`;
         const isUrlOnly = !!body.is_url_only;
+        let sha256;
+        if (isUrlOnly) {
+          if (!body.url) {
+            return new Response(JSON.stringify({ error: "url is required for a link submission" }), {
+              status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+          sha256 = `url_${await sha256Hex(String(body.url))}`;
+        } else {
+          sha256 = String(body.sha256 || "").toLowerCase();
+          if (!SHA256_RE.test(sha256)) {
+            return new Response(JSON.stringify({ error: "sha256 must be the 64-character hex SHA-256 of the audio file" }), {
+              status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+        }
 
         let existingRecord = null;
         let existingKey = null;
@@ -289,6 +383,9 @@ export default {
               dsp_passed: d1Row.dsp_passed === 1,
               license_approved: d1Row.license_approved === 1,
               author: d1Row.author,
+              title: d1Row.title,
+              surface: d1Row.surface,
+              rights_warranty: d1Row.rights_warranty === 1,
               file_size_bytes: d1Row.file_size_bytes || 0,
             };
             existingKey = `ingest/${d1Row.status.toLowerCase()}/${sha256}.json`;
@@ -332,55 +429,55 @@ export default {
           ...incomingContribs
         ].map(s => s && s.trim()).filter(Boolean)));
 
-        // Multi-license aggregation and predominant license selection
-        const candidateLicenses = Array.from(new Set([
+        // License: the first recorded license stands. A different license or
+        // contributor for the same audio is a conflict and goes to triage.
+        const conflict = provenanceConflicts(existingRecord, body);
+        const bestLic = existingRecord?.license || body.license || "Unknown";
+        const bestRankInfo = getLicenseRank(bestLic);
+        const alternateLicenses = Array.from(new Set([
           ...(existingRecord?.alternate_licenses || []),
-          existingRecord?.license,
-          ...(body.alternate_licenses || []),
-          body.license
-        ].filter(Boolean)));
-
-        let bestLic = body.license || "Unknown";
-        let bestRankInfo = getLicenseRank(bestLic);
-
-        for (const lic of candidateLicenses) {
-          const info = getLicenseRank(lic);
-          if (info.rank > bestRankInfo.rank) {
-            bestRankInfo = info;
-            bestLic = lic;
-          }
-        }
-
-        const alternateLicenses = candidateLicenses.filter(l => l !== bestLic);
-        const licenseApproved = bestRankInfo.approved;
+          ...(body.license && body.license !== bestLic ? [body.license] : []),
+        ]));
+        const licenseApproved = bestRankInfo.approved && bestRankInfo.tier !== "ShareAlike";
         const dspPassed = (existingRecord?.dsp_passed !== false) && (body.dsp_passed !== false);
+        const author = existingRecord?.author || body.author || null;
+        const title = existingRecord?.title || body.title || body.filename || null;
+        const surface = String(existingRecord?.surface || body.surface || mergedTags[0] || "").trim().toLowerCase();
+        const rightsWarranty = existingRecord?.rights_warranty === true || body.rights_warranty === true;
 
-        let targetPrefix = `ingest/approved`;
-        let targetStatus = "APPROVED";
-        if (!licenseApproved || !dspPassed) {
-          targetPrefix = `ingest/quarantine`;
-          targetStatus = "QUARANTINE";
-        } else if (isUrlOnly) {
-          targetPrefix = `ingest/urls`;
-          targetStatus = "URL_ONLY";
+        const problems = checkContribution({
+          license: bestLic,
+          author,
+          title,
+          surface,
+          rights_warranty: rightsWarranty,
+          is_url_only: isUrlOnly,
+          dsp_passed: dspPassed,
+        });
+        if (conflict) {
+          problems.push("conflicting provenance: this audio was already submitted with a different license or contributor");
         }
+
+        // APPROVED means the metadata is complete; the local pipeline still
+        // re-checks it and re-runs the audio screening before training.
+        const targetStatus = problems.length === 0 ? "APPROVED" : "QUARANTINE";
+        const targetPrefix = targetStatus === "APPROVED" ? "ingest/approved" : "ingest/quarantine";
 
         const objectKey = `${targetPrefix}/${sha256}.json`;
         const wasPromoted = (existingRecord?.status === "QUARANTINE" || (existingKey && existingKey.startsWith(`ingest/quarantine/`))) && targetStatus === "APPROVED";
 
-        const quarantineReason = (!licenseApproved)
-          ? "UNAPPROVED_OR_MISSING_LICENSE"
-          : (!dspPassed ? "ACOUSTIC_DSP_SCREENING_FAILED" : null);
+        const quarantineReason = problems.length ? problems.join("; ") : null;
 
         // 2a. Update D1 if bound (Atomic UPSERT with ACID guarantees)
         if (env.DB) {
           const insertSql = `
             INSERT INTO records (
               sha256, filename, status, license, license_tier, license_rank,
-              license_approved, dsp_passed, author, tags_json, descriptions_json,
+              license_approved, dsp_passed, author, title, surface, rights_warranty,
+              tags_json, descriptions_json,
               contributors_json, alternate_licenses_json, file_size_bytes, quarantine_reason,
               updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
             ON CONFLICT(sha256) DO UPDATE SET
               filename = excluded.filename,
               status = excluded.status,
@@ -390,6 +487,9 @@ export default {
               license_approved = excluded.license_approved,
               dsp_passed = excluded.dsp_passed,
               author = excluded.author,
+              title = excluded.title,
+              surface = excluded.surface,
+              rights_warranty = excluded.rights_warranty,
               tags_json = excluded.tags_json,
               descriptions_json = excluded.descriptions_json,
               contributors_json = excluded.contributors_json,
@@ -407,7 +507,10 @@ export default {
             bestRankInfo.rank,
             licenseApproved ? 1 : 0,
             dspPassed ? 1 : 0,
-            body.author || existingRecord?.author || null,
+            author,
+            title,
+            surface || null,
+            rightsWarranty ? 1 : 0,
             JSON.stringify(mergedTags),
             JSON.stringify(mergedDescriptions),
             JSON.stringify(mergedContributors),
@@ -419,8 +522,16 @@ export default {
 
         // 2b. Update R2 metadata sidecar and migrate blob if R2 is bound
         const metadataPayload = {
-          ...existingRecord,
-          ...body,
+          sha256,
+          filename: body.filename || existingRecord?.filename || "unknown_audio",
+          url: isUrlOnly ? String(body.url) : undefined,
+          is_url_only: isUrlOnly,
+          author,
+          title,
+          surface: surface || null,
+          rights_warranty: rightsWarranty,
+          file_size_bytes: body.file_size_bytes || existingRecord?.file_size_bytes || 0,
+          status: targetStatus,
           tags: mergedTags,
           descriptions: mergedDescriptions,
           contributors: mergedContributors,
@@ -473,7 +584,8 @@ export default {
             status: targetStatus,
             reconciled: !!existingRecord,
             promoted: wasPromoted,
-            predominant_license: bestLic,
+            license: bestLic,
+            problems,
           }),
           {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -494,16 +606,40 @@ export default {
           );
         }
 
-        const sha256 = url.pathname.replace("/api/contribute/upload-blob/", "");
-        const targetStatus = request.headers.get("X-Target-Status") || "approved";
-        const fileExt = request.headers.get("X-File-Extension") || "flac";
-        const objectKey = `ingest/${targetStatus}/${sha256}.${fileExt}`;
+        const jsonHeaders = { ...corsHeaders, "Content-Type": "application/json" };
+        const sha256 = url.pathname.replace("/api/contribute/upload-blob/", "").toLowerCase();
+        const fileExt = String(request.headers.get("X-File-Extension") || "flac").toLowerCase();
+        if (!SHA256_RE.test(sha256) || !AUDIO_EXTENSIONS.includes(fileExt)) {
+          return new Response(JSON.stringify({ error: "invalid sha256 or file extension" }), { status: 400, headers: jsonHeaders });
+        }
 
+        // The folder comes from the submitted record, never from the client:
+        // a blob can only be uploaded for a record that went through
+        // submit-record (Turnstile + completeness check).
+        let recordStatus = null;
+        if (env.DB) {
+          const row = await env.DB.prepare("SELECT status FROM records WHERE sha256 = ?").bind(sha256).first();
+          recordStatus = row?.status || null;
+        } else if (env.DATA_BUCKET) {
+          if (await env.DATA_BUCKET.head(`ingest/approved/${sha256}.json`)) recordStatus = "APPROVED";
+          else if (await env.DATA_BUCKET.head(`ingest/quarantine/${sha256}.json`)) recordStatus = "QUARANTINE";
+        }
+        if (!recordStatus || recordStatus === "URL_ONLY") {
+          return new Response(JSON.stringify({ error: "submit the record first" }), { status: 409, headers: jsonHeaders });
+        }
+
+        const bytes = await request.arrayBuffer();
+        if (bytes.byteLength > 50 * 1024 * 1024) {
+          return new Response(JSON.stringify({ error: "Payload Too Large: Audio files must not exceed 50 MB." }), { status: 413, headers: jsonHeaders });
+        }
+        if (await sha256Hex(bytes) !== sha256) {
+          return new Response(JSON.stringify({ error: "file does not match its sha256" }), { status: 400, headers: jsonHeaders });
+        }
+
+        const objectKey = `ingest/${recordStatus === "APPROVED" ? "approved" : "quarantine"}/${sha256}.${fileExt}`;
         if (env.DATA_BUCKET) {
-          await env.DATA_BUCKET.put(objectKey, request.body, {
-            httpMetadata: {
-              contentType: request.headers.get("Content-Type") || "audio/flac",
-            },
+          await env.DATA_BUCKET.put(objectKey, bytes, {
+            httpMetadata: { contentType: `audio/${fileExt === "mp3" ? "mpeg" : fileExt}` },
           });
         }
 
@@ -524,6 +660,8 @@ export default {
 
       // 3b. Retrieve Audio Blob from R2 for Local Maintenance / Automatic Pipeline Ingestion
       if (url.pathname.startsWith("/api/contribute/blob/") && request.method === "GET") {
+        const denied = requireMaintainer(request, env, corsHeaders);
+        if (denied) return denied;
         const sha256 = url.pathname.replace("/api/contribute/blob/", "");
         if (!env.DATA_BUCKET || !sha256) {
           return new Response("Not Found", { status: 404, headers: corsHeaders });
@@ -548,6 +686,8 @@ export default {
 
       // 4. Maintainer Triage: List Quarantined Records (Capped at 50 to avoid high D1/R2 scan fees)
       if (url.pathname === "/api/contribute/quarantine-list" && request.method === "GET") {
+        const denied = requireMaintainer(request, env, corsHeaders);
+        if (denied) return denied;
         const urlLimit = parseInt(url.searchParams.get("limit") || "50", 10);
         const limit = Math.min(Math.max(urlLimit || 50, 1), 50);
         const offset = Math.max(parseInt(url.searchParams.get("offset") || "0", 10), 0);
@@ -566,6 +706,9 @@ export default {
             license_approved: r.license_approved === 1,
             dsp_passed: r.dsp_passed === 1,
             author: r.author,
+            title: r.title,
+            surface: r.surface,
+            rights_warranty: r.rights_warranty === 1,
             tags: JSON.parse(r.tags_json || "[]"),
             descriptions: JSON.parse(r.descriptions_json || "[]"),
             contributors: JSON.parse(r.contributors_json || "[]"),
@@ -603,6 +746,8 @@ export default {
 
       // 5. Maintainer Pull-Approved: List Approved Records (Capped at 50 to avoid high D1/R2 scan fees)
       if (url.pathname === "/api/contribute/approved-list" && request.method === "GET") {
+        const denied = requireMaintainer(request, env, corsHeaders);
+        if (denied) return denied;
         const urlLimit = parseInt(url.searchParams.get("limit") || "50", 10);
         const limit = Math.min(Math.max(urlLimit || 50, 1), 50);
         const offset = Math.max(parseInt(url.searchParams.get("offset") || "0", 10), 0);
@@ -621,6 +766,9 @@ export default {
             license_approved: r.license_approved === 1,
             dsp_passed: r.dsp_passed === 1,
             author: r.author,
+            title: r.title,
+            surface: r.surface,
+            rights_warranty: r.rights_warranty === 1,
             tags: JSON.parse(r.tags_json || "[]"),
             descriptions: JSON.parse(r.descriptions_json || "[]"),
             contributors: JSON.parse(r.contributors_json || "[]"),
@@ -658,6 +806,8 @@ export default {
 
       // 6. Ephemeral Sync Purge: Acknowledge and Remove Records Committed to Git/LFS
       if (url.pathname === "/api/contribute/ack-ingested" && request.method === "POST") {
+        const denied = requireMaintainer(request, env, corsHeaders);
+        if (denied) return denied;
         const body = await request.json();
         const shas = body.sha256_list || (body.sha256 ? [body.sha256] : []);
         let purgedCount = 0;
@@ -694,7 +844,8 @@ export default {
 
       return new Response("Not Found", { status: 404, headers: corsHeaders });
     } catch (err) {
-      return new Response(JSON.stringify({ error: err.message }), {
+      console.error(err);
+      return new Response(JSON.stringify({ error: "Internal error" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });

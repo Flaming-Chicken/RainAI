@@ -81,14 +81,14 @@ impl LicenseTier {
         matches!(self, LicenseTier::AttributionOnly | LicenseTier::ShareAlike)
     }
 
-    /// Whether this tier is approved for direct ingestion into the primary training corpus.
+    /// Whether this tier is approved for the training corpus (PLAN.md D2).
+    /// ShareAlike is recognised but excluded.
     #[inline]
     pub fn is_approved(&self) -> bool {
         matches!(
             self,
             LicenseTier::PublicDomain
                 | LicenseTier::AttributionOnly
-                | LicenseTier::ShareAlike
                 | LicenseTier::ProjectProprietary
         )
     }
@@ -124,18 +124,14 @@ impl LicenseTier {
     /// Returns human-readable label for the policy tier.
     pub fn policy_description(&self) -> &'static str {
         match self {
-            Self::PublicDomain => {
-                "Public Domain (CC0 / Unlicense / PDDL / Government unconstrained)"
-            }
-            Self::AttributionOnly => {
-                "Permissive Attribution (CC-BY 4.0/3.0/2.0, MIT, Apache 2.0, BSD, ISC, ODC-By)"
-            }
-            Self::ShareAlike => "Share-Alike (CC-BY-SA 4.0/3.0)",
+            Self::PublicDomain => "Public Domain (CC0 1.0 / public domain / PD Mark)",
+            Self::AttributionOnly => "Attribution (CC BY 3.0 / 4.0)",
+            Self::ShareAlike => "Share-Alike (CC BY-SA; excluded from the corpus)",
             Self::ProjectProprietary => {
                 "RainAI / Spodeian / Flaming Chicken Proprietary (Commercial grant with XAI transparency)"
             }
             Self::Unknown => "Unknown / Pending License Scraping (Immediately Quarantined)",
-            Self::Restricted => "Restricted / Ineligible (-NC or -ND)",
+            Self::Restricted => "Restricted / Ineligible (NC, ND, platform or unlisted license)",
         }
     }
 }
@@ -219,100 +215,134 @@ pub fn evaluate_attribution_policy(
     }
 }
 
+/// Decides whether a license string is allowed into the training corpus (PLAN.md D2).
+///
+/// Allowed, and nothing else:
+/// - CC0 1.0 and public domain (including the PD Mark) -> [`LicenseTier::PublicDomain`]
+/// - CC BY 3.0 / 4.0 -> [`LicenseTier::AttributionOnly`]
+/// - the RainAI contributor grant -> [`LicenseTier::ProjectProprietary`]
+///
+/// ShareAlike, NonCommercial and NoDerivatives licenses, platform licenses
+/// (Mixkit, Pixabay, ...), software licenses (MIT, Apache, ...) and anything
+/// unrecognised are rejected. Matching is on whole tokens, so "Unlicense" is
+/// not read as containing "nc", nor "standard" as containing "nd".
 pub struct LicenseVerifier;
 
 impl LicenseVerifier {
+    fn tokens(clean: &str) -> Vec<&str> {
+        clean
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '.'))
+            .filter(|t| !t.is_empty())
+            .collect()
+    }
+
     pub fn verify(license: &str) -> (bool, LicenseTier, &'static str) {
         let clean = license.trim().to_lowercase();
+        let tokens = Self::tokens(&clean);
+        let has = |t: &str| tokens.contains(&t);
 
-        // 1. Unknown / Unspecified -> Immediately quarantined pending discovery / scraping
+        // 1. Unknown / unspecified: quarantined until a license is read from the source.
         if clean.is_empty()
-            || clean == "unknown"
-            || clean == "unspecified"
+            || matches!(
+                clean.as_str(),
+                "unknown" | "unspecified" | "none" | "to be scraped" | "n/a"
+            )
             || clean.contains("pending")
-            || clean == "none"
-            || clean == "to be scraped"
         {
             return (
                 false,
                 LicenseTier::Unknown,
-                "Quarantined: License unknown or unspecified; pending automated scraping or maintainer discovery during data processing",
+                "Quarantined: no license recorded; read it from the source's metadata first",
             );
         }
 
-        // 2. Proprietary Default
+        // 2. The RainAI contributor grant (see RAINAI_FC_PROPRIETARY_LICENSE_TEXT).
         if clean.contains("rainai-fc")
             || clean.contains("rainai-proprietary")
             || clean.contains("spodeian-permission")
-            || clean.contains("flaming chicken")
-            || clean.contains("spodeian")
         {
             return (
                 true,
                 LicenseTier::ProjectProprietary,
-                "Approved: RainAI-FC-Proprietary-License (Commercial ML grant for RainAI, Spodeian, & Flaming Chicken with XAI transparency)",
+                "Approved: RainAI contributor grant (contributor warrants they hold the rights)",
             );
         }
 
-        // 3. Ineligible: NonCommercial / NoDerivatives
-        if clean.contains("nc")
+        // 3. NonCommercial / NoDerivatives, on whole tokens or creativecommons.org URLs.
+        if has("nc")
             || clean.contains("noncommercial")
-            || clean.contains("nd")
-            || clean.contains("noderivatives")
+            || clean.contains("non-commercial")
+            || clean.contains("/by-nc")
         {
             return (
                 false,
                 LicenseTier::Restricted,
-                "Rejected: NonCommercial or NoDerivatives clause detected",
+                "Rejected: NonCommercial clause",
             );
         }
-
-        // 4. Commercial ShareAlike
-        if clean.contains("cc-by-sa") {
-            return (
-                true,
-                LicenseTier::ShareAlike,
-                "Approved: CC-BY-SA (Commercial compatible with share-alike)",
-            );
-        }
-
-        // 5. Permissive Attribution (CC-BY, MIT, Apache, BSD, ISC, ODC-By, Mixkit)
-        if clean.contains("cc-by")
-            || clean.contains("attribution")
-            || clean.contains("mit")
-            || clean.contains("apache")
-            || clean.contains("bsd")
-            || clean.contains("isc")
-            || clean.contains("odc-by")
-            || clean.contains("mixkit free license")
+        if has("nd")
+            || clean.contains("noderivatives")
+            || clean.contains("no-derivatives")
+            || clean.contains("/by-nd")
         {
             return (
-                true,
-                LicenseTier::AttributionOnly,
-                "Approved: Permissive Attribution (Commercial compatible with permanent training attribution)",
+                false,
+                LicenseTier::Restricted,
+                "Rejected: NoDerivatives clause",
             );
         }
 
-        // 6. Public Domain / CC0 / Unlicense / PDDL
-        if clean.contains("cc0")
+        // 4. ShareAlike: recognised, but excluded by D2.
+        if has("sa")
+            || clean.contains("sharealike")
+            || clean.contains("share-alike")
+            || clean.contains("/by-sa")
+        {
+            return (
+                false,
+                LicenseTier::ShareAlike,
+                "Rejected: ShareAlike is excluded from the corpus (D2)",
+            );
+        }
+
+        // 5. CC0 and public domain.
+        if has("cc0")
+            || clean.contains("publicdomain/zero")
             || clean.contains("public domain")
-            || clean.contains("unlicense")
-            || clean.contains("wtfpl")
-            || clean.contains("pddl")
-            || clean.contains("open access")
-            || clean.contains("nps natural sound")
+            || has("pdm")
+            || clean.contains("publicdomain/mark")
+            || clean.contains("licenses/publicdomain")
         {
             return (
                 true,
                 LicenseTier::PublicDomain,
-                "Approved: Public domain / CC0 / Unlicense / Government unconstrained",
+                "Approved: CC0 1.0 / public domain",
+            );
+        }
+
+        // 6. CC BY 3.0 / 4.0 ("CC-BY 4.0", "Attribution 4.0", or the license URL).
+        let is_cc_by = (has("cc") && has("by"))
+            || has("attribution")
+            || clean.contains("creativecommons.org/licenses/by/");
+        if is_cc_by {
+            if has("4.0") || has("3.0") || clean.contains("/by/4.0") || clean.contains("/by/3.0") {
+                return (
+                    true,
+                    LicenseTier::AttributionOnly,
+                    "Approved: CC BY 3.0 / 4.0 (creator, title, source and changes must be recorded)",
+                );
+            }
+            return (
+                false,
+                LicenseTier::Unknown,
+                "Quarantined: CC BY without a 3.0/4.0 version; confirm the version at the source",
             );
         }
 
         (
             false,
             LicenseTier::Restricted,
-            "Rejected: Unverified or restrictive license format",
+            "Rejected: not on the allow-list (CC0, public domain, CC BY 3.0/4.0)",
         )
     }
 }
@@ -758,10 +788,28 @@ pub fn run_ingestion_pipeline(
     rt.block_on(run_ingestion_pipeline_async(stop_signal, log_tx))
 }
 
+/// Candidate locations of the committed source registry.
+pub const SOURCE_REGISTRY_CANDIDATES: &[&str] = &[
+    "source_registry.json",
+    "../source_registry.json",
+    "../../source_registry.json",
+];
+
+/// Downloads every allowed item from the sources in `source_registry.json`
+/// (PLAN.md D2). Each item's license is read from the platform's metadata and
+/// checked with [`LicenseVerifier`]; anything not allowed is skipped and
+/// logged. Every downloaded file gets a ledger record, and the attribution
+/// file, provenance manifest and local catalog are regenerated from the
+/// ledger. Returns the number of newly downloaded files.
 pub async fn run_ingestion_pipeline_async(
     stop_signal: Arc<AtomicBool>,
     log_tx: Option<Sender<String>>,
 ) -> Result<usize> {
+    use crate::sources::{
+        DataPaths, Ledger, LedgerRecord, STANDARD_CHANGES, SourceRegistry, fetch_candidates,
+        ledger_filename, regenerate_outputs,
+    };
+
     let emit_log = |msg: String| {
         tracing::info!("{}", msg);
         if let Some(ref tx) = log_tx {
@@ -769,161 +817,140 @@ pub async fn run_ingestion_pipeline_async(
         }
     };
 
-    emit_log(
-        "[*] Starting in-process Asynchronous Multi-Source Audio Ingest (Pure-Rust)...".to_string(),
-    );
-
-    let db_path = shared::paths::WorkspacePaths::resolve_sources()
-        .unwrap_or_else(|| PathBuf::from("sources.json"));
-    if !db_path.exists() {
-        emit_log("[!] sources.json catalog not found.".to_string());
+    let Some(registry_path) = SOURCE_REGISTRY_CANDIDATES
+        .iter()
+        .map(PathBuf::from)
+        .find(|p| p.exists())
+    else {
+        emit_log("[!] source_registry.json not found.".to_string());
         return Ok(0);
-    }
-
-    let db_content = tokio::fs::read_to_string(&db_path).await?;
-    let curated_sources: Vec<DownloadItem> = serde_json::from_str(&db_content)?;
-
-    let attr_path = shared::paths::WorkspacePaths::resolve_attributions()
-        .unwrap_or_else(|| PathBuf::from("Data/rain/ATTRIBUTIONS.txt"));
-    let target_dir = attr_path
+    };
+    let registry = SourceRegistry::load(&registry_path)?;
+    let root = registry_path
         .parent()
-        .unwrap_or(Path::new("Data/rain"))
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
         .to_path_buf();
-    tokio::fs::create_dir_all(&target_dir).await?;
-    let provenance_file = target_dir.join("manifest_provenance.json");
+    let paths = DataPaths::under(&root);
+    tokio::fs::create_dir_all(&paths.rain_dir).await?;
+
+    let mut ledger = Ledger::load(&paths.ledger())?;
+    let mut known_items: std::collections::HashSet<String> =
+        ledger.iter().map(|r| r.item_url.clone()).collect();
+    let mut known_hashes: std::collections::HashSet<String> =
+        ledger.iter().map(|r| r.sha256.clone()).collect();
+
+    emit_log(format!(
+        "[*] {} sources in {}; {} files already in the ledger",
+        registry.sources.len(),
+        registry_path.display(),
+        ledger.len()
+    ));
 
     let client = reqwest::Client::builder()
-        .user_agent("RainAI-Dataset-Collector/4.0 (Pure-Rust; Zero-Python)")
-        .timeout(Duration::from_secs(45))
+        .user_agent("RainAI-Dataset-Collector/5.0 (+https://github.com/Spodeian/RainAI)")
+        .timeout(Duration::from_secs(60))
         .pool_idle_timeout(Duration::from_secs(15))
         .build()?;
 
-    let mut quota = TagBalanceQuota::new();
-    for item in &curated_sources {
-        quota.record(std::slice::from_ref(&item.category));
-    }
-
-    emit_log(format!(
-        "[*] Catalog: {} candidate sources across diverse surfaces",
-        curated_sources.len(),
-    ));
-
     let mut downloaded_count = 0usize;
-    let mut provenance_records = Vec::new();
-    let mut tags_distribution: HashMap<String, usize> = HashMap::new();
-
-    for item in curated_sources {
+    'sources: for spec in &registry.sources {
         if stop_signal.load(Ordering::Relaxed) {
             emit_log("[!] Audio ingest aborted by user token.".to_string());
             break;
         }
-
-        let (allowed, tier, reason) = LicenseVerifier::verify(&item.license);
-        if !allowed {
-            emit_log(format!(
-                "  [i] Skipping non-approved source '{}': {}",
-                item.filename, reason
-            ));
-            continue;
-        }
-
-        // Account for absence of easily accessed Python environment:
-        // Validate direct HTTP/HTTPS endpoint. If an external CLI method is declared,
-        // log a clear informative note and skip rather than attempting an invalid request.
-        if item.ingest_method != "direct_http"
-            || (!item.url.starts_with("http://") && !item.url.starts_with("https://"))
-        {
-            emit_log(format!(
-                "  [i] Skipping source '{}' (Method: {}, requires external Python CLI; pure-Rust HTTP mode active)",
-                item.filename, item.ingest_method
-            ));
-            continue;
-        }
-
-        let dest = target_dir.join(&item.filename);
-        let already_existed = dest.exists();
-
-        if !already_existed {
-            emit_log(format!("  -> Downloading '{}' ({:?})", item.filename, tier));
-            match download_file_with_retry(&client, &item.url, &dest).await {
-                Ok(()) => {
-                    downloaded_count += 1;
-                }
-                Err(e) => {
-                    emit_log(format!("  [!] Failed downloading {}: {}", item.filename, e));
-                    if dest.exists() {
-                        let _ = tokio::fs::remove_file(&dest).await;
-                    }
-                    continue;
-                }
+        let candidates = match fetch_candidates(&client, spec).await {
+            Ok(c) => c,
+            Err(e) => {
+                emit_log(format!(
+                    "  [!] {} ({}): {:#}",
+                    spec.id(),
+                    spec.adapter_name(),
+                    e
+                ));
+                continue;
             }
-        }
-
-        // Provenance metadata & acoustic screening
-        let sha256 = compute_file_sha256(&dest).unwrap_or_else(|_| "hash_error".to_string());
-        let file_size_bytes = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
-
-        let quality = if item.filename.ends_with(".wav") {
-            analyze_wav_file(&dest).ok()
-        } else {
-            None
         };
+        emit_log(format!(
+            "  [*] {} ({}): {} candidates",
+            spec.id(),
+            spec.adapter_name(),
+            candidates.len()
+        ));
 
-        let log_line = format!(
-            "Platform: {} | File: {} | Tags: {} | Tier: {:?} | License: {} | SHA256: {} | URL: {}\n",
-            item.source_platform,
-            item.filename,
-            item.category,
-            tier,
-            item.license,
-            sha256,
-            item.url
-        );
-
-        // Append to ATTRIBUTIONS.txt if newly acquired
-        if !already_existed {
-            if let Ok(mut f) = tokio::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&attr_path)
-                .await
-            {
-                let _ = f.write_all(log_line.as_bytes()).await;
+        for cand in candidates {
+            if stop_signal.load(Ordering::Relaxed) {
+                emit_log("[!] Audio ingest aborted by user token.".to_string());
+                break 'sources;
             }
+            if known_items.contains(&cand.item_url) {
+                continue;
+            }
+            let (allowed, tier, reason) = LicenseVerifier::verify(&cand.license);
+            if !allowed || tier == LicenseTier::ProjectProprietary {
+                emit_log(format!("    [-] {}: {}", cand.item_url, reason));
+                continue;
+            }
+            if tier == LicenseTier::AttributionOnly && cand.creator.trim().is_empty() {
+                emit_log(format!(
+                    "    [-] {}: CC BY item has no creator to credit",
+                    cand.item_url
+                ));
+                continue;
+            }
+
+            let file = ledger_filename(spec.id(), &cand);
+            let dest = paths.rain_dir.join(&file);
+            if let Some(dir) = dest.parent() {
+                tokio::fs::create_dir_all(dir).await?;
+            }
+            if let Err(e) = download_file_with_retry(&client, &cand.download_url, &dest).await {
+                emit_log(format!("    [!] {}: {}", cand.download_url, e));
+                let _ = tokio::fs::remove_file(&dest).await;
+                continue;
+            }
+            let sha256 = compute_file_sha256(&dest)?;
+            if !known_hashes.insert(sha256.clone()) {
+                emit_log(format!(
+                    "    [=] {}: duplicate of a ledgered file",
+                    cand.item_url
+                ));
+                let _ = tokio::fs::remove_file(&dest).await;
+                continue;
+            }
+
+            let rec = LedgerRecord {
+                file,
+                sha256,
+                source_id: spec.id().to_string(),
+                platform: spec.adapter_name().to_string(),
+                category: spec.category().to_string(),
+                item_url: cand.item_url.clone(),
+                download_url: cand.download_url,
+                creator: cand.creator,
+                title: cand.title,
+                license: cand.license,
+                license_url: cand.license_url,
+                license_tier: tier,
+                retrieved_utc: chrono_lite_timestamp(),
+                changes: STANDARD_CHANGES.to_string(),
+            };
+            Ledger::append(&paths.ledger(), &rec)?;
+            emit_log(format!("    [+] {} ({:?})", rec.file, tier));
+            known_items.insert(cand.item_url);
+            ledger.push(rec);
+            downloaded_count += 1;
         }
-
-        *tags_distribution.entry(item.category.clone()).or_insert(0) += 1;
-
-        provenance_records.push(ProvenanceRecord {
-            filename: item.filename,
-            source_url: item.url,
-            source_platform: item.source_platform,
-            tags: vec![item.category],
-            license: Some(item.license),
-            license_tier: tier,
-            sha256,
-            file_size_bytes,
-            quality,
-            descriptions: Vec::new(),
-            alternate_licenses: Vec::new(),
-            contributors: Vec::new(),
-        });
     }
 
-    // Persist complete provenance manifest
-    let manifest = ProvenanceManifest {
-        generated_at_utc: chrono_lite_timestamp(),
-        total_sources: provenance_records.len(),
-        tags_distribution,
-        records: provenance_records,
-    };
-    if let Ok(json_str) = serde_json::to_string_pretty(&manifest) {
-        let _ = tokio::fs::write(&provenance_file, json_str).await;
-    }
-
+    let total = regenerate_outputs(&paths)?;
     emit_log(format!(
-        "[+] Ingestion finished. {} new sources acquired (total verified: {}). Provenance saved to {:?}.",
-        downloaded_count, manifest.total_sources, provenance_file
+        "[+] Ingest finished: {} new files, {} in the ledger. Regenerated {}, {} and {}.",
+        downloaded_count,
+        total,
+        paths.attributions().display(),
+        paths.provenance().display(),
+        paths.catalog.display()
     ));
     Ok(downloaded_count)
 }

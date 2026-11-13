@@ -250,19 +250,10 @@ impl MuonOptimizer {
 }
 
 /// Configuration for Muon + Lion Hybrid Optimizer.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MuonLionHybridConfig {
     pub muon: MuonConfig,
     pub lion: LionConfig,
-}
-
-impl Default for MuonLionHybridConfig {
-    fn default() -> Self {
-        Self {
-            muon: MuonConfig::default(),
-            lion: LionConfig::default(),
-        }
-    }
 }
 
 /// Hybrid Optimizer: Automatically routes 2D parameter matrices to Muon
