@@ -1262,7 +1262,7 @@ pub fn run_candle_training_pipeline_with_steering(
             session.completed_vae = true;
             let _ = AtomicCheckpointManager::atomic_save_json(&session, &session_path);
             let _ = crate::data_worker::git_sync_model_milestone(
-                &[vae_path.clone()],
+                std::slice::from_ref(&vae_path),
                 &session_path,
                 "vae_completed",
                 session.last_vae_loss,
