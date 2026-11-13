@@ -206,16 +206,17 @@ pub fn load_settings_state(
 
     // Migration fallback: check older PersistentSessionState
     let session = load_session_state(storage);
-    let mut defaults = crate::settings::SettingsState::default();
-    defaults.master_volume = session.master_volume;
-    defaults.noise_masking_enabled = session.noise_masking_enabled;
-    defaults.noise_masking_threshold_db = session.noise_masking_threshold_db;
-    defaults.hrtf_profile = session.hrtf_profile;
-    defaults.custom_ir_hash = session.custom_ir_hash;
-    defaults.show_spectrogram = session.show_spectrogram;
-    defaults.show_advanced_settings = session.show_advanced_inspector;
-    defaults.active_preset_name = session.active_preset_name;
-    defaults
+    crate::settings::SettingsState {
+        master_volume: session.master_volume,
+        noise_masking_enabled: session.noise_masking_enabled,
+        noise_masking_threshold_db: session.noise_masking_threshold_db,
+        hrtf_profile: session.hrtf_profile,
+        custom_ir_hash: session.custom_ir_hash,
+        show_spectrogram: session.show_spectrogram,
+        show_advanced_settings: session.show_advanced_inspector,
+        active_preset_name: session.active_preset_name,
+        ..Default::default()
+    }
 }
 
 pub fn save_settings_state(

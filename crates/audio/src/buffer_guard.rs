@@ -56,11 +56,7 @@ impl BufferGuard {
         let slew = (dt / 0.100).clamp(0.0, 1.0);
         self.current_blend += (target_blend - self.current_blend) * slew;
 
-        let frames_to_generate = if available_frames < target_frames {
-            target_frames - available_frames
-        } else {
-            0
-        };
+        let frames_to_generate = target_frames.saturating_sub(available_frames);
 
         BufferGuardAction {
             synthesis_blend: self.current_blend,

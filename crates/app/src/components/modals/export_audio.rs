@@ -321,8 +321,8 @@ fn execute_offline_export(
 
             let _ = std::fs::remove_file(&temp_wav_path);
             status
-                .map(|s| if s.success() { () } else { () })
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                .map(|s| if s.success() {})
+                .map_err(std::io::Error::other)
         }
         OfflineAudioFormat::Mp3320k => {
             let status = Command::new("ffmpeg")
@@ -342,8 +342,8 @@ fn execute_offline_export(
 
             let _ = std::fs::remove_file(&temp_wav_path);
             status
-                .map(|s| if s.success() { () } else { () })
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                .map(|s| if s.success() {})
+                .map_err(std::io::Error::other)
         }
         OfflineAudioFormat::Opus160k => {
             let status = Command::new("ffmpeg")
@@ -361,8 +361,8 @@ fn execute_offline_export(
 
             let _ = std::fs::remove_file(&temp_wav_path);
             status
-                .map(|s| if s.success() { () } else { () })
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                .map(|s| if s.success() {})
+                .map_err(std::io::Error::other)
         }
     };
 
