@@ -217,7 +217,7 @@ fn test_source_registry_integrity() {
 fn test_license_policy_and_warranty_constants() {
     // 1. Full proprietary legal grant text checks
     assert!(RAINAI_FC_PROPRIETARY_LICENSE_TEXT.contains("Spodeian"));
-    assert!(RAINAI_FC_PROPRIETARY_LICENSE_TEXT.contains("Flaming Chicken"));
+    assert!(!RAINAI_FC_PROPRIETARY_LICENSE_TEXT.contains("Flaming Chicken"));
     assert!(RAINAI_FC_PROPRIETARY_LICENSE_TEXT.contains("commercial and non-commercial"));
     assert!(
         RAINAI_FC_PROPRIETARY_LICENSE_TEXT
