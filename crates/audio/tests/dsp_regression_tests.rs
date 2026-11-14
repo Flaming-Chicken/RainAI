@@ -28,7 +28,10 @@ fn test_procedural_synth_finite_bounded_output() {
         }
     }
 
-    assert!(max_abs > 0.0, "Procedural synthesizer output should be non-silent");
+    assert!(
+        max_abs > 0.0,
+        "Procedural synthesizer output should be non-silent"
+    );
     assert!(sum_sq > 0.0);
 }
 
