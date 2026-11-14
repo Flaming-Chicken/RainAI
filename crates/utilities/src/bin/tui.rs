@@ -71,7 +71,7 @@ pub const COLOR_SUCCESS: Color = Color::Rgb(80, 220, 120); // Emerald Green
 pub const COLOR_ALERT: Color = Color::Rgb(255, 180, 50); // Amber
 pub const COLOR_ERROR: Color = Color::Rgb(255, 75, 75); // Vivid Coral
 
-/// Granular Hyperparameter Tuning State for On-Demand Drawer ([g]).
+/// Granular Hyperparameter Tuning State for On-Demand Drawer (`[g]`).
 #[derive(Clone, Debug)]
 pub struct GranularTuningState {
     pub learning_rate: f64,
@@ -3396,7 +3396,7 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-/// Granular Hyperparameter Tuning Drawer Modal Overlay ([g]).
+/// Granular Hyperparameter Tuning Drawer Modal Overlay (`[g]`).
 fn render_tuning_modal(f: &mut ratatui::Frame, app: &App, area: Rect) {
     let popup = centered_rect(60, 65, area);
     f.render_widget(Clear, popup);
@@ -3435,7 +3435,7 @@ fn render_tuning_modal(f: &mut ratatui::Frame, app: &App, area: Rect) {
     f.render_widget(list, popup);
 }
 
-/// Human-in-the-Loop Audio Audit Modal Overlay ([r]).
+/// Human-in-the-Loop Audio Audit Modal Overlay (`[r]`).
 fn render_audit_modal(f: &mut ratatui::Frame, app: &App, area: Rect) {
     let popup = centered_rect(65, 60, area);
     f.render_widget(Clear, popup);
