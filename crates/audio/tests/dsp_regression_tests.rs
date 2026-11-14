@@ -72,3 +72,28 @@ fn test_wav_header_and_stream_export_layout() {
     assert_eq!(&raw[0..4], b"RIFF");
     assert!(last_progress > 0.0);
 }
+
+#[test]
+fn test_sleep_timer_preset_bank_and_provenance_reexport() {
+    let mut timer = shared::SleepTimer::default();
+    timer.start(60.0, 20.0);
+    let (g1, done1) = timer.advance(30.0);
+    assert!(!done1 && (g1 - 1.0).abs() < 1e-6);
+    let (g2, done2) = timer.advance(20.0);
+    assert!(!done2 && g2 > 0.0 && g2 < 1.0);
+    let (g3, done3) = timer.advance(15.0);
+    assert!(done3 && g3 == 0.0);
+
+    let mut bank = shared::PresetBankState {
+        slot_a: Some("tin_roof".to_string()),
+        slot_b: Some("canopy".to_string()),
+        ..Default::default()
+    };
+    assert_eq!(bank.toggle_ab(), Some("canopy"));
+    assert!(bank.toggle_favorite("tin_roof"));
+    assert!(!bank.toggle_favorite("tin_roof"));
+
+    let verifier = shared::spodeian_provenance::LicenseVerifier::commercial_safe_default();
+    assert!(verifier.is_allowed("CC0-1.0"));
+    assert!(!verifier.is_allowed("CC-BY-NC-4.0"));
+}

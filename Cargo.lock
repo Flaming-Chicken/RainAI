@@ -5262,6 +5262,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spodeian-export",
+ "spodeian-provenance",
  "spodeian-tokens",
  "thiserror 2.0.20",
 ]
@@ -5524,6 +5525,15 @@ name = "spodeian-parallel"
 version = "1.0.0"
 dependencies = [
  "rayon",
+]
+
+[[package]]
+name = "spodeian-provenance"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
