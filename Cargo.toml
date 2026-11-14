@@ -35,6 +35,7 @@ sml-runtime = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0
 spodeian-parallel = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^1.0.0" }
 spodeian-core = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^3.0.0" }
 spodeian-provenance = { path = "../spodeian-core/crates/spodeian-provenance" }
+spodeian-audio = { path = "../spodeian-core/crates/spodeian-audio" }
 
 candle-core = "0.11"
 candle-nn = "0.11"

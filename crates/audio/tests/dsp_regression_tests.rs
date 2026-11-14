@@ -96,4 +96,15 @@ fn test_sleep_timer_preset_bank_and_provenance_reexport() {
     let verifier = shared::spodeian_provenance::LicenseVerifier::commercial_safe_default();
     assert!(verifier.is_allowed("CC0-1.0"));
     assert!(!verifier.is_allowed("CC-BY-NC-4.0"));
+
+    // Verify spodeian_audio re-export for 24-bit WAV + metrics
+    let wav = audio::spodeian_audio::encode_wav_bytes(
+        &[0.25, -0.25, 0.5, -0.5],
+        1,
+        48_000,
+        audio::spodeian_audio::PcmFormat::Pcm24,
+    )
+    .expect("spodeian_audio encode");
+    let decoded = audio::spodeian_audio::decode_wav_bytes(&wav).expect("spodeian_audio decode");
+    assert_eq!(decoded.samples.len(), 4);
 }

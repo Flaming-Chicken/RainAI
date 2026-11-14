@@ -484,6 +484,7 @@ dependencies = [
  "serde_json",
  "shared",
  "sml-runtime",
+ "spodeian-audio",
  "spodeian-cache",
  "spodeian-parallel",
  "thiserror 2.0.20",
@@ -5491,6 +5492,14 @@ dependencies = [
  "nom",
  "serde",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "spodeian-audio"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
