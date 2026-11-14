@@ -46,7 +46,7 @@ fn default_ingest_method() -> String {
 
 /// Canonical grant text for user contributions under the default proprietary license.
 pub const RAINAI_FC_PROPRIETARY_LICENSE_TEXT: &str = "\
-By submitting this data and metadata, I grant Spodeian, Flaming Chicken, and their respective affiliates, \
+By submitting this data and metadata, I grant Spodeian and its affiliates, \
 successors, and assigns a worldwide, non-exclusive, royalty-free, perpetual, irrevocable, and sublicensable \
 right to use, reproduce, modify, adapt, publish, translate, create derivative works from, distribute, and \
 publicly display this data for any purpose, including commercial and non-commercial applications. This \
@@ -128,7 +128,7 @@ impl LicenseTier {
             Self::AttributionOnly => "Attribution (CC BY 3.0 / 4.0)",
             Self::ShareAlike => "Share-Alike (CC BY-SA; excluded from the corpus)",
             Self::ProjectProprietary => {
-                "RainAI / Spodeian / Flaming Chicken Proprietary (Commercial grant with XAI transparency)"
+                "RainAI / Spodeian Proprietary (Commercial grant with XAI transparency)"
             }
             Self::Unknown => "Unknown / Pending License Scraping (Immediately Quarantined)",
             Self::Restricted => "Restricted / Ineligible (NC, ND, platform or unlisted license)",

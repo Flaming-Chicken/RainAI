@@ -85,9 +85,9 @@ Explainable AI (XAI) runtime output tracing is provided as an **optional transpa
 | **Restricted: Ineligible** | Non-Commercial (`-NC`), No-Derivatives (`-ND`), All Rights Reserved | **Rejected** | Prohibited from ingestion and quarantine promotion |
 
 ### 4.2 The Default Proprietary License (`RainAI-FC-Proprietary-License`)
-This is the default option for user submissions, providing a broad perpetual grant for RainAI, Spodeian, and Flaming Chicken projects:
+This is the default option for user submissions, providing a broad perpetual grant for RainAI and Spodeian projects:
 
-> *"By submitting this data and metadata, I grant Spodeian, Flaming Chicken, and their respective affiliates, successors, and assigns a worldwide, non-exclusive, royalty-free, perpetual, irrevocable, and sublicensable right to use, reproduce, modify, adapt, publish, translate, create derivative works from, distribute, and publicly display this data for any purpose, including commercial and non-commercial applications. This explicitly includes, without limitation, the right to use the data to train, test, and validate machine learning models for the RainAI project and any other current or future projects. I represent and warrant that I own or have the necessary rights to grant this license."*
+> *"By submitting this data and metadata, I grant Spodeian and its affiliates, successors, and assigns a worldwide, non-exclusive, royalty-free, perpetual, irrevocable, and sublicensable right to use, reproduce, modify, adapt, publish, translate, create derivative works from, distribute, and publicly display this data for any purpose, including commercial and non-commercial applications. This explicitly includes, without limitation, the right to use the data to train, test, and validate machine learning models for the RainAI project and any other current or future projects. I represent and warrant that I own or have the necessary rights to grant this license."*
 
 **UI Transparency Copy:**
 > *"While this license allows us to use your data freely to build RainAI, our system is designed for transparency. We track the metadata of all contributions, meaning you will always be credited when your specific data directly influences our explainable AI's outputs."*

@@ -1,7 +1,7 @@
 # 🌧️ RainAI: Real-Time Neural & Physical Spatial Rain Audio Engine
 
 [![CI](https://github.com/Spodeian/RainAI/actions/workflows/ci.yml/badge.svg)](https://github.com/Spodeian/RainAI/actions/workflows/ci.yml)
-[![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC_BY--NC--SA_4.0-lightgrey.svg)](LICENSE)
+[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg)](LICENSE.md)
 [![PyTorch 2.0+](https://img.shields.io/badge/PyTorch-2.0%2B-EE4C2C.svg?logo=pytorch)](https://pytorch.org)
 [![Rust 1.85+](https://img.shields.io/badge/Rust-1.85%2B-orange.svg?logo=rust)](https://www.rust-lang.org)
 [![WebGPU / WASM](https://img.shields.io/badge/WebGPU-Enabled-blue.svg)](https://www.w3.org/TR/webgpu/)
@@ -443,4 +443,10 @@ trunk build --release crates/web/index.html
 
 ## 📄 License
 
-This repository is licensed under the **Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International Public License (CC BY-NC-SA 4.0)**.
+Licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE.md). You may use,
+change and share this software for any noncommercial purpose. For a
+commercial license, contact [Spodeian](https://github.com/Spodeian). Earlier
+releases keep the license they were published under.
+
+Model weights, once published as release assets, carry the same license plus
+an `ATTRIBUTIONS.txt` crediting every training recording.
