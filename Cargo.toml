@@ -31,9 +31,9 @@ spodeian-telemetry = { git = "https://github.com/Spodeian/spodeian-core", tag = 
 spodeian-export = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^2.0.0" }
 spodeian-web-utils = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^1.1.0" }
 spodeian-ui = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^1.0.0" }
-sml-runtime = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^0.1.0" }
+sml-runtime = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^0.2.0" }
 spodeian-parallel = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^1.0.0" }
-spodeian-core = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^2.0.0" }
+spodeian-core = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^3.0.0" }
 
 candle-core = "0.11"
 candle-nn = "0.11"
@@ -130,3 +130,14 @@ debug = true
 [profile.dev.build-override]
 opt-level = 2
 overflow-checks = false
+
+[patch."https://github.com/Spodeian/spodeian-core"]
+spodeian-cache = { path = "../spodeian-core/crates/spodeian-cache" }
+spodeian-tokens = { path = "../spodeian-core/crates/spodeian-tokens" }
+spodeian-telemetry = { path = "../spodeian-core/crates/spodeian-telemetry" }
+spodeian-export = { path = "../spodeian-core/crates/spodeian-export" }
+spodeian-web-utils = { path = "../spodeian-core/crates/spodeian-web-utils" }
+spodeian-ui = { path = "../spodeian-core/crates/spodeian-ui" }
+sml-runtime = { path = "../spodeian-core/crates/sml-runtime" }
+spodeian-parallel = { path = "../spodeian-core/crates/spodeian-parallel" }
+spodeian-core = { path = "../spodeian-core/crates/spodeian-core" }

@@ -39,13 +39,23 @@ pub fn render_navbar(app: &mut TemplateApp, ui: &mut egui::Ui, constraints: &Scr
                     app.persist_state();
                 }
 
-                // 2. Contribute Data
+                // 2. Contribute Data (web-only Turnstile flow: desktop opens browser at /#contribute)
                 let contribute_text = if constraints.is_mobile { "Contribute" } else { "🌧 Contribute" };
                 if ui
                     .button(contribute_text)
-                    .on_hover_text("Contribute your own precipitation audio recordings to train RainAI")
+                    .on_hover_text("Contribute precipitation audio recordings via the web Turnstile portal (/#contribute)")
                     .clicked()
                 {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let portal_url = std::env::var("RAINAI_CONTRIBUTE_URL")
+                            .or_else(|_| std::env::var("RAINAI_PORTAL_URL"))
+                            .unwrap_or_else(|_| "https://rainai.spodeian.trade/#contribute".to_string());
+                        ui.ctx().open_url(egui::OpenUrl::new_tab(&portal_url));
+                        app.contribute_state.status_message = Some(Ok(format!(
+                            "Launched Web Contribution Portal ({portal_url}) in your browser — Turnstile tokens are handled exclusively on web."
+                        )));
+                    }
                     app.show_contribute_dialog = true;
                 }
 

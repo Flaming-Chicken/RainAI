@@ -247,8 +247,9 @@ pub fn render_contribute_dialog(app: &mut TemplateApp, ui: &mut egui::Ui) {
                                 .clicked()
                             {
                                 let portal_url = std::env::var("RAINAI_CONTRIBUTE_URL")
+                                    .or_else(|_| std::env::var("RAINAI_PORTAL_URL"))
                                     .unwrap_or_else(|_| {
-                                        "https://rainai.pages.dev/#contribute".to_string()
+                                        "https://rainai.spodeian.trade/#contribute".to_string()
                                     });
                                 ui.ctx().open_url(egui::OpenUrl::new_tab(&portal_url));
                                 app.contribute_state.status_message = Some(Ok(format!(

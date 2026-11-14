@@ -306,3 +306,19 @@ impl MuonLionHybrid {
         Ok(())
     }
 }
+
+pub use sml_runtime::optim::{SelfOptimizingMeta, SelfOptimizingMetaConfig};
+
+/// Constructs a `SelfOptimizingMeta` optimizer from `sml-runtime` for RainAI Candle training.
+pub fn create_self_optimizing_meta(
+    vars: Vec<Var>,
+    lr: f64,
+    weight_decay: f64,
+) -> SelfOptimizingMeta {
+    let cfg = SelfOptimizingMetaConfig {
+        lr,
+        weight_decay,
+        ..Default::default()
+    };
+    SelfOptimizingMeta::new(vars, cfg)
+}
