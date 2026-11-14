@@ -11,7 +11,7 @@
 
 The engine features a multi-tiered architecture:
 1. **Master Native Rust Candle Engine** (`crates/utilities`): Pure-Rust end-to-end training, dataset preprocessing, acoustic feature extraction, and SafeTensors model export without Python or CUDA runtime dependencies.
-2. **PyTorch Deep Learning & Research Suite** (`src/`): Automated hyperparameter profiling, physical loss formulation development, and multi-backend export pipeline (ONNX, SafeTensors, WASM).
+2. **PyTorch Deep Learning & Research Suite** (`src/`): Automated hyperparameter profiling, physical loss formulation development, and SafeTensors/research export scripts (`src/export/`). The Rust inference runtime (`crates/inference`) executes natively via Candle SafeTensors, custom CPU SIMD micro-kernels, and `wgpu` WGSL compute shaders.
 3. **Cross-Platform Studio & Edge Runtimes** (`crates/`): Zero-allocation audio callback loop with egui UI targeting native desktop (Windows, macOS, Linux), terminal TUI studio, and high-performance WebAssembly/WebGPU browser runtimes.
 4. **Continuous-Time Neural ODE Steering & Stochastic Driver**: Driven by a correlated leaky brown noise process ($-6\text{ dB/oct}$) so the latent state continuously evolves without fixed-point convergence, feeding 16-band real-time dynamic resonant frequency drifts (`apply_drifts`).
 5. **Zero-Copy Explainable AI (XAI)**: Binary attribution dictionary (`RATT` binary format) compiled into the client for instantaneous $O(\log N)$ offline resolution of dataset contributions, surface tags, and licensing terms (CC-BY/CC0/proprietary).
@@ -77,7 +77,7 @@ RainAI/
 ├── src/                        # PyTorch Deep Learning & Research Suite
 │   ├── models/                 # Mamba-2 MoE, Spatial VAE, Meta-Controller, Quantizers
 │   ├── training/               # Automated training orchestration (auto_train, train_mamba, train_vae)
-│   ├── export/                 # Multi-backend deployment exporters (ONNX, SafeTensors, WASM)
+│   ├── export/                 # Research exporters (`SafeTensors` for Rust runtime, experimental ONNX)
 │   ├── data/                   # Dataset streaming, audio corruptions, synthetic soundfield generation
 │   ├── dsp/                    # Differentiable digital signal processing and physical losses
 │   ├── benchmarks/             # Latency benchmarks and numerical drift golden vector generation
@@ -166,15 +166,17 @@ The standardized RainAI acoustic corpus contains **1,504 high-resolution records
 | **3** | `slice_3_studio_int16.bin` | 16-bit | INT16 / FP16 | 10.87 MB | Desktop DAWs & VST3 plugins | $< 15\,\mu\text{s}$ |
 | **4** | `slice_4_master_fp32.bin` | 32-bit | Uncompressed FP32 | 21.75 MB | Master Studio Workstations | $< 20\,\mu\text{s}$ |
 
-### Latency Benchmark (128-Sample Blocks @ 48 kHz, Audio Frame Budget: 2,666.7 µs)
+### Latency Reference Targets (128-Sample Blocks @ 48 kHz, Audio Frame Budget: 2,666.7 µs)
+
+Active Rust runtime backends (`crates/inference`):
 
 | Engine / Backend | Mean (µs) | P50 (µs) | P95 (µs) | P99 (µs) | CPU % | Mem (MB) | RTF |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | **SIMD Micro-Kernel (Vector Baseline)** | 0.1 | 0.1 | 0.1 | 0.1 | 1.10% | 0.0 | 0.0000x |
-| **Tract (Pure-Rust Audio ONNX Engine)** | 0.0 | 0.0 | 0.1 | 0.1 | 2.30% | 8.0 | 0.0000x |
-| **ONNX Runtime (Hardware Graph Provider)** | 8.6 | 8.8 | 8.9 | 13.1 | 1.80% | 18.0 | 0.0032x |
 | **Candle (Pure Rust SafeTensors Engine)** | 15.8 | 15.5 | 24.7 | 63.6 | 3.40% | 5.0 | 0.0059x |
 | **WGSL (WebGPU Compute Shaders)** | 18.0 | 18.0 | 18.0 | 18.0 | 0.08% | 12.0 | 0.0067x |
+
+> **Offline Audio Export Dependency:** Exporting FLAC, MP3, or Opus files from the desktop Offline Audio Export Studio requires `ffmpeg` to be installed and available on `PATH`. Native 32-bit IEEE float WAV export works out of the box with no external dependencies.
 
 ---
 
@@ -241,7 +243,7 @@ python src/training/auto_train.py --profile balanced
 # Force complete synthetic audio regeneration and training
 python src/training/auto_train.py --profile production --rebuild-data
 
-# Run multi-backend export (SafeTensors, ONNX, WASM)
+# Run research SafeTensors / export scripts (Python)
 python src/export/export_all.py
 ```
 

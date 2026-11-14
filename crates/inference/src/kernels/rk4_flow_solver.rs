@@ -2,4 +2,4 @@
 //!
 //! Re-exported from centralized `sml-runtime` for unified ecosystem continuous flow solving.
 
-pub use spodeian_ml_utils::solvers::Rk4FlowSolver;
+pub use sml_runtime::solvers::Rk4FlowSolver;

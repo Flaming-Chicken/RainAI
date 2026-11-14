@@ -5,7 +5,7 @@
 
 use crate::kernels::rk4_flow_solver::Rk4FlowSolver;
 use candle_core::Device;
-use spodeian_ml_utils::VelocityFlowHead;
+use sml_runtime::VelocityFlowHead;
 use std::sync::Arc;
 
 /// Unified Hardware Compute Backend contract.

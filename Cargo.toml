@@ -31,7 +31,7 @@ spodeian-telemetry = { git = "https://github.com/Spodeian/spodeian-core", tag = 
 spodeian-export = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^2.0.0" }
 spodeian-web-utils = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^1.1.0" }
 spodeian-ui = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^1.0.0" }
-spodeian-ml-utils = { package = "sml-runtime", git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^0.1.0" }
+sml-runtime = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^0.1.0" }
 spodeian-parallel = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^1.0.0" }
 spodeian-core = { git = "https://github.com/Spodeian/spodeian-core", tag = "v2.0.0", version = "^2.0.0" }
 
