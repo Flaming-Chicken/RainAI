@@ -2,13 +2,13 @@
 //!
 //! Continuous Acoustic Scene Adaptation & Automatic Room Resonance Mode Inversion.
 //!
-//! Uses `spodeian-ml-utils::OnlineRlsFilter64` to continuously track room acoustic transfer
+//! Uses `sml_runtime::OnlineRlsFilter64` to continuously track room acoustic transfer
 //! functions, identify standing wave resonances (room modes), and synthesize dynamic parametric
 //! notch filters to invert coloration, ensuring the synthesized soundscape seamlessly integrates
 //! with the physical listening room.
 
 use serde::{Deserialize, Serialize};
-use spodeian_ml_utils::OnlineRlsFilter64;
+use sml_runtime::OnlineRlsFilter64;
 
 /// Peak acoustic room resonance mode (standing wave).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

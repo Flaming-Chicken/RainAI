@@ -47,7 +47,6 @@ pub fn render_provenance_dialog(app: &mut TemplateApp, ui: &mut egui::Ui) {
                 ui.add_space(6.0);
 
                 let corpora = [
-                    ("Spodeian Studio Recordings", "Flaming Chicken / Liam", "Proprietary / CC-BY-NC-SA 4.0", "Calibrated multi-surface field microphones: Corrugated tin, glass windows, tent canvas, gravel pavement."),
                     ("Ulbrich DSD Drop Spectra", "Ulbrich (1983) / Marshall-Palmer", "Public Domain / Academic", "Empirical gamma distribution governing raindrop diameter spectra from 0.1mm to 7.0mm."),
                     ("Gunn-Kinzer Terminal Velocity", "Gunn & Kinzer (1949)", "Public Domain / Physical", "Non-linear drag and terminal velocity equations for falling water spheres in atmosphere."),
                     ("Minnaert Bubble Acoustics", "Minnaert (1933) / Pumphrey & Crum", "Public Domain / Physical", "Frequency f0 = 3.26/r for underwater bubble resonance and impact cavitation chirps."),

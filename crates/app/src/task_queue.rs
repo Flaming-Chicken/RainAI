@@ -5,8 +5,7 @@
 //! Handles asynchronous execution, progress tracking, pausing, resuming, cancelling,
 //! and user confirmation checkpoints for:
 //! 1. Storage Asset Preloading ("Preload All Assets")
-//! 2. Data Contribution uploads (multi-author submission to R2/D1)
-//! 3. Offline Lossless/Lossy Audio Export (FLAC-8, Opus, MP3 with ID3v2.4)
+//! 2. Offline Lossless/Lossy Audio Export (FLAC-8, Opus, MP3 via `ffmpeg`, or native WAV)
 
 use serde::{Deserialize, Serialize};
 use std::sync::{
@@ -65,7 +64,6 @@ impl TaskStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskKind {
     AssetPreload { asset_id: String },
-    DataContribution { title: String },
     AudioExport { format: String },
 }
 

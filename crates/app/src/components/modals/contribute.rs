@@ -1,7 +1,6 @@
 //! Community Data Contribution modal dialog.
 
 use crate::TemplateApp;
-use crate::task_queue::{TaskItem, TaskKind};
 use eframe::egui::{self, Color32};
 
 pub fn render_contribute_dialog(app: &mut TemplateApp, ui: &mut egui::Ui) {
@@ -241,19 +240,41 @@ pub fn render_contribute_dialog(app: &mut TemplateApp, ui: &mut egui::Ui) {
                 let warranty_confirmed = app.contribute_state.confirmed_rights_warranty;
                 ui.horizontal(|ui| {
                     ui.add_enabled_ui(warranty_confirmed, |ui| {
-                        if ui.button("🚀 Queue for Staging").clicked() {
-                            if app.contribute_state.file_or_url.trim().is_empty() {
-                                app.contribute_state.status_message = Some(Err("Please specify an audio file path or remote URL.".to_string()));
-                            } else {
-                                let title = if app.contribute_state.submission_mode == 0 {
-                                    format!("Upload: {}", app.contribute_state.file_or_url)
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            if ui
+                                .button("🌐 Open Web Contribution Portal (Turnstile Verified)")
+                                .clicked()
+                            {
+                                let portal_url = std::env::var("RAINAI_CONTRIBUTE_URL")
+                                    .or_else(|_| std::env::var("RAINAI_PORTAL_URL"))
+                                    .unwrap_or_else(|_| {
+                                        "https://rainai.spodeian.trade/#contribute".to_string()
+                                    });
+                                ui.ctx().open_url(egui::OpenUrl::new_tab(&portal_url));
+                                app.contribute_state.status_message = Some(Ok(format!(
+                                    "Opened Web Contribution Portal ({portal_url}) in your browser — community submissions require Cloudflare Turnstile verification in the web app."
+                                )));
+                            }
+                        }
+
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            if ui
+                                .button("🚀 Submit Contribution (Turnstile Verified)")
+                                .clicked()
+                            {
+                                if app.contribute_state.file_or_url.trim().is_empty() {
+                                    app.contribute_state.status_message = Some(Err(
+                                        "Please specify an audio file path or remote URL."
+                                            .to_string(),
+                                    ));
                                 } else {
-                                    format!("Remote Catalog: {}", app.contribute_state.file_or_url)
-                                };
-                                let task = TaskItem::new("contrib_task", title, TaskKind::DataContribution { title: app.contribute_state.file_or_url.clone() });
-                                app.task_queue.enqueue(task);
-                                app.show_task_queue_tray = true;
-                                app.contribute_state.status_message = Some(Ok("Task enqueued! Track progress in the background queue at the bottom right.".to_string()));
+                                    app.contribute_state.status_message = Some(Ok(
+                                        "Ready for Cloudflare Turnstile verification and upload to /api/contribute/submit."
+                                            .to_string(),
+                                    ));
+                                }
                             }
                         }
                     });

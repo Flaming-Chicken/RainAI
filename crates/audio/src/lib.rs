@@ -55,3 +55,4 @@ pub use physical::*;
 pub use procedural::*;
 pub use ray_tracing::*;
 pub use session::*;
+pub use spodeian_audio;

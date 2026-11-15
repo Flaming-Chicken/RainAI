@@ -642,7 +642,7 @@ pub fn compute_multiscale_envelope_loss(
 /// Ultrasonic Nyquist Anti-Aliasing Penalty (L_alias) for the Neural Waveshaper.
 /// Penalizes high-frequency energy in the upper 10% of the spectrum (near Nyquist)
 /// approximated by second-order finite differences (Laplacian high-pass filter):
-/// HPF(x)[n] = x[n] - 2*x[n-1] + x[n-2].
+/// `HPF(x)[n] = x[n] - 2*x[n-1] + x[n-2]`.
 pub fn compute_waveshaper_anti_aliasing_loss(audio_shaped: &Tensor) -> Result<Tensor> {
     let dims = audio_shaped.dims();
     let len = dims[dims.len() - 1];

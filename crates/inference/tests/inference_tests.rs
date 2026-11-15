@@ -270,7 +270,7 @@ fn test_hardware_compute_router_candle_and_wgsl() {
     use candle_core::{DType, Device, Tensor};
     use candle_nn::VarBuilder;
     use inference::compute_router::{CandleFlowBackend, HardwareComputeRouter, WgslComputeBackend};
-    use spodeian_ml_utils::VelocityFlowHead;
+    use sml_runtime::VelocityFlowHead;
     use std::collections::HashMap;
     use std::sync::Arc;
 

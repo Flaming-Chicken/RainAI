@@ -62,6 +62,7 @@ test = false
 [dependencies]
 shared = { workspace = true }
 audio = { workspace = true }
+sml-runtime = { workspace = true }
 candle-core = { workspace = true }
 candle-nn = { workspace = true }
 anyhow = { workspace = true }

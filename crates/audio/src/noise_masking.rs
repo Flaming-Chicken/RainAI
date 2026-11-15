@@ -43,7 +43,7 @@ pub struct MaskingRecommendation {
     pub low_cut_hz: f32,
 }
 
-use spodeian_ml_utils::OnlineRlsFilter64;
+use sml_runtime::OnlineRlsFilter64;
 
 /// Dynamic noise masking controller with RLS adaptive tracking.
 #[derive(Debug, Clone)]

@@ -2,4 +2,4 @@
 //!
 //! Re-exported from central `spodeian-core::sml-runtime::ssm`.
 
-pub use spodeian_ml_utils::ssm::step_recurrence_f32;
+pub use sml_runtime::ssm::step_recurrence_f32;

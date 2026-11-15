@@ -10,6 +10,20 @@ use eframe::egui::{self, Color32};
 #[cfg(not(target_arch = "wasm32"))]
 use shared::rain::RainState;
 
+#[cfg(not(target_arch = "wasm32"))]
+fn has_ffmpeg() -> bool {
+    static FFMPEG_AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FFMPEG_AVAILABLE.get_or_init(|| {
+        std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    })
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum OfflineAudioFormat {
     #[default]
@@ -127,6 +141,15 @@ pub fn render_export_audio_dialog(app: &mut TemplateApp, ui: &mut egui::Ui) {
 
                 for fmt in formats {
                     ui.radio_value(&mut app.audio_export_state.format, fmt, fmt.label());
+                }
+
+                #[cfg(not(target_arch = "wasm32"))]
+                if !has_ffmpeg() {
+                    ui.add_space(4.0);
+                    ui.colored_label(
+                        Color32::from_rgb(240, 160, 40),
+                        "⚠ ffmpeg was not detected on PATH. WAV (32-Bit Float) works natively; FLAC, MP3, and Opus encoding require ffmpeg installed on PATH.",
+                    );
                 }
 
                 ui.add_space(6.0);

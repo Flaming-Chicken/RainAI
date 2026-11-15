@@ -23,6 +23,7 @@ pub mod models;
 pub mod paths;
 pub mod preset;
 pub mod rain;
+pub mod sleep_timer;
 pub mod surface;
 
 pub use attribution::*;
@@ -32,6 +33,8 @@ pub use models::*;
 pub use paths::*;
 pub use preset::*;
 pub use rain::*;
+pub use sleep_timer::*;
+pub use spodeian_provenance;
 pub use surface::*;
 
 pub use spodeian_tokens::ThemeMode;

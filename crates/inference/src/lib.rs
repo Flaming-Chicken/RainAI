@@ -7,7 +7,7 @@
 //! Neural Inference Runtime for Continuous Mixed-Precision RainAI Models.
 //!
 //! Exposes unified execution engines across CPU SIMD vector baselines, Hugging Face Candle
-//! SafeTensors, ONNX Runtime graphs, and WebGPU WGSL compute shaders. Supports multi-tier
+//! SafeTensors, and WebGPU WGSL compute shaders. Supports multi-tier
 //! quantization slices ranging from 1.58-bit Ternary ($\{-1, 0, +1\}$) to Master-Class FP32.
 //!
 //! # Architecture & Modules
@@ -20,7 +20,7 @@
 //!   ternary weight packing/unpacking, and continuous Box-Cox inverse activation mappings.
 //! - [`asset_manager`]: Multi-tier model artifact loader fetching weights from local cache,
 //!   embedded static slices, or remote distribution endpoints.
-//! - [`weight_loader`]: Safe parser for custom binary quantization slices, SafeTensors, and ONNX files.
+//! - [`weight_loader`]: Safe parser for custom binary quantization slices and SafeTensors files.
 //! - [`weight_cache_manager`]: In-memory weight cache with instant LRU eviction and memory-mapped buffers.
 //! - [`model`]: Data models representing layer weights, precision formats, and model manifests.
 
