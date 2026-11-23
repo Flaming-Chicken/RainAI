@@ -81,18 +81,13 @@ TRUNK_BIN=$(command -v trunk || echo "$CARGO_HOME/bin/trunk")
 echo "Purging previous build distribution caches..."
 rm -rf "$DIST_DIR" dist
 
-# Dependency check for sibling crates
-if [ ! -d "../spodeian-core" ]; then
-    echo "[*] Cloning spodeian-core dependency into parent directory..."
-    SPODEIAN_REPO="https://github.com/Spodeian/spodeian-core.git"
-    if [ -n "${PRIVATE_READ_ACCESS:-}" ]; then
-        SPODEIAN_REPO="https://x-access-token:${PRIVATE_READ_ACCESS}@github.com/Spodeian/spodeian-core.git"
-    elif [ -n "${SPODEIAN_CORE_TOKEN:-}" ]; then
-        SPODEIAN_REPO="https://x-access-token:${SPODEIAN_CORE_TOKEN}@github.com/Spodeian/spodeian-core.git"
-    elif [ -n "${GH_PAT:-}" ]; then
-        SPODEIAN_REPO="https://x-access-token:${GH_PAT}@github.com/Spodeian/spodeian-core.git"
-    fi
-    git clone --depth 1 --branch dev "$SPODEIAN_REPO" ../spodeian-core
+# Optional authenticated git rewrite for private spodeian-core dependencies
+SPODEIAN_GIT_TOKEN="${SPODEIAN_CORE_TOKEN:-${PRIVATE_READ_ACCESS:-${GH_PAT:-}}}"
+if [ -n "$SPODEIAN_GIT_TOKEN" ]; then
+    export CARGO_NET_GIT_FETCH_WITH_CLI=true
+    export GIT_CONFIG_COUNT=1
+    export GIT_CONFIG_KEY_0="url.https://x-access-token:${SPODEIAN_GIT_TOKEN}@github.com/.insteadOf"
+    export GIT_CONFIG_VALUE_0="https://github.com/"
 fi
 
 export RUSTFLAGS="-C target-feature=+simd128,+bulk-memory,+mutable-globals,+nontrapping-fptoint,+sign-ext,+reference-types,+multivalue -C link-arg=-zstack-size=2097152 ${RUSTFLAGS:-}"
@@ -159,7 +154,7 @@ fi
 
 cp -f crates/web/_headers "$DIST_DIR/_headers" 2>/dev/null || true
 cp -f crates/web/_redirects "$DIST_DIR/_redirects" 2>/dev/null || true
-cp -f crates/web/_worker.js "$DIST_DIR/_worker.js" 2>/dev/null || true
+rm -f "$DIST_DIR/_worker.js" "$DIST_DIR/_routes.json"
 cp -f data/rain/attributions.bin "$DIST_DIR/attributions.bin" 2>/dev/null || true
 
 # ==========================================
@@ -167,9 +162,14 @@ cp -f data/rain/attributions.bin "$DIST_DIR/attributions.bin" 2>/dev/null || tru
 # ==========================================
 echo -e "\n--- Stage 5: Cloudflare Deployment ---"
 if [ "${CLOUDFLARE_WORKER_DEPLOY:-false}" = "true" ]; then
-    wrangler deploy
+    echo "Executing Cloudflare Workers Deploy..."
+    if command -v wrangler &> /dev/null; then
+        wrangler deploy
+    else
+        npx --yes wrangler@4 deploy
+    fi
 else
-    echo "Pages / Static CDN deployment context detected. Build ready for publishing."
+    echo "Workers Static Assets build complete. Deploy with: npx --yes wrangler@4 deploy"
 fi
 
 if [ "${RUN_BENCHMARKS:-false}" = "true" ]; then
