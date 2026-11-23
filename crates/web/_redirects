@@ -1,1 +1,1 @@
-/*    /index.html   200
+# SPA fallback is handled by Cloudflare Workers Static Assets (not_found_handling = "single-page-application").
