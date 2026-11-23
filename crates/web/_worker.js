@@ -127,6 +127,8 @@ function requireMaintainer(request, env, corsHeaders) {
   return null;
 }
 
+let dbInitialized = false;
+
 async function ensureDbSchema(db) {
   if (!db || dbInitialized) return;
   try {

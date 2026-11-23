@@ -623,7 +623,7 @@ function setupOOMAndCrashRecovery() {
 // ============================================================================
 window.__turnstileWidgetId = null;
 
-window.__getTurnstileToken = async function (sitekey = "1x00000000000000000000AA") {
+window.__getTurnstileToken = async function (sitekey = "0x4AAAAAAGPIUJKtZeh_NRqN") {
   if (!window.turnstile) {
     console.warn('[RainAI] Turnstile API not loaded, checking ad-blockers');
     return null;

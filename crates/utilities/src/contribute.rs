@@ -453,6 +453,11 @@ pub struct ContributionReport {
 
 /// Enforces that data ingestion and staging cannot be executed on the main branch.
 pub fn assert_not_main_branch() -> Result<()> {
+    // CI runs workspace tests on main after merge; opt in explicitly via env.
+    if std::env::var_os("RAINAI_ALLOW_MAIN_BRANCH_TESTS").is_some_and(|v| !v.is_empty() && v != "0")
+    {
+        return Ok(());
+    }
     if let Ok(output) = std::process::Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .output()
